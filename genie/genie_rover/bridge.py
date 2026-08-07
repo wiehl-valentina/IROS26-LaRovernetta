@@ -290,22 +290,25 @@ class Bridge:
         # Si el obstáculo está demasiado cerca y ocupa más de la mitad de la visión frontal,
         # el robot da un paso atrás para recuperar la perspectiva y poder planificar un escape lateral.
         # Chequeo de colisión y atasco por proximidad (Cuña Roja)
+        # Chequeo de colisión y atasco por proximidad (Cuña Roja)
         if front_is_blocked(res.traversability, self.resolution):
             self.stats.blocked += 1
             
             if is_red_wedge(res.traversability, self.resolution) and self._retrocesos_seguidos < 2:
                 self._retrocesos_seguidos += 1
                 print(f"[bridge] CUÑA ROJA: retrocedo para abrir perspectiva ({self._retrocesos_seguidos}/2)")
-                self.send(DriveCommand(-0.15, 0.0, "retroceso tactico"))
                 
+                # 1. Marcha atrás para ganar espacio físico
+                self.send(DriveCommand(-0.15, 0.0, "retroceso tactico"))
                 t_back = time.time()
                 while time.time() - t_back < 1.0 and not self._stop_requested:
                     time.sleep(0.1)
-                
                 self.send(DriveCommand(0.0, 0.0, "fin del retroceso"))
-                self.heading_est.reset_track()  # El retroceso rompe la estimación GPS
                 
-                # Volcar debug aunque no haya plan
+                # 2. NUEVO: Forzamos un giro de recuperación para romper el loop frontal
+                # (Nota: _recover() ya se encarga de llamar a reset_track por nosotros)
+                self._recover()
+                
                 self._maybe_dump_debug(rgb, res, plan=None)
                 return
 
