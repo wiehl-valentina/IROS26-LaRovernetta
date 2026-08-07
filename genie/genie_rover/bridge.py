@@ -291,6 +291,7 @@ class Bridge:
         # el robot da un paso atrás para recuperar la perspectiva y poder planificar un escape lateral.
         # Chequeo de colisión y atasco por proximidad (Cuña Roja)
         # Chequeo de colisión y atasco por proximidad (Cuña Roja)
+        # Chequeo de colisión y atasco por proximidad (Cuña Roja)
         if front_is_blocked(res.traversability, self.resolution):
             self.stats.blocked += 1
             
@@ -305,9 +306,23 @@ class Bridge:
                     time.sleep(0.1)
                 self.send(DriveCommand(0.0, 0.0, "fin del retroceso"))
                 
-                # 2. NUEVO: Forzamos un giro de recuperación para romper el loop frontal
-                # (Nota: _recover() ya se encarga de llamar a reset_track por nosotros)
-                self._recover()
+                # 2. NUEVO: Evaluar de qué lado hay más camino transitable
+                h_bev, w_bev = res.traversability.shape
+                mid_w = w_bev // 2
+                
+                # Contamos píxeles transitables (> 0.4) en la mitad izquierda y derecha
+                left_score = np.sum(res.traversability[:, :mid_w] > 0.4)
+                right_score = np.sum(res.traversability[:, mid_w:] > 0.4)
+                
+                # Convención estándar en robótica: velocidad angular positiva (+1.0) es giro a la izquierda
+                best_sign = 1.0 if left_score >= right_score else -1.0
+                lado_txt = "izquierda" if best_sign > 0 else "derecha"
+                
+                print(f"[bridge] Evaluación de escape: Izquierda={left_score} vs Derecha={right_score}. "
+                      f"Girando hacia la {lado_txt}.")
+                
+                # 3. Forzamos el giro de recuperación hacia el lado más despejado
+                self._recover(preferred_sign=best_sign)
                 
                 self._maybe_dump_debug(rgb, res, plan=None)
                 return
@@ -439,16 +454,16 @@ class Bridge:
         return DriveCommand(cmd.linear, 0.0,
                             f"mantengo el rumbo (evito titubeo, {error_deg:+.0f} grados)")
 
-    def _recover(self) -> None:
+    def _recover(self, preferred_sign: float | None = None) -> None:
         """Recuperacion minima: girar en el lugar para buscar salida.
-
-        GeNIE usa un VLM para esto (mirar en 4 direcciones y elegir). Esta es la
-        version sin VLM: gira a ciegas. Si te importa el puntaje del ERC, aca es
-        donde conviene meter el modulo del paper.
+        Si se provee preferred_sign (+1.0 izq, -1.0 der), gira hacia ese lado.
         """
         print("[bridge] RECUPERACION: girando para buscar terreno transitable")
-        self.send(DriveCommand(0.0, self.follower.angular_sign * self.follower.turn_speed,
-                               "barrido de recuperacion"))
+        
+        # Usamos el signo elegido, o el de por defecto si no se pasa ninguno
+        sign = preferred_sign if preferred_sign is not None else self.follower.angular_sign
+        
+        self.send(DriveCommand(0.0, sign * self.follower.turn_speed, "barrido de recuperacion"))
         time.sleep(self.recovery_turn_s)
         self.send(DriveCommand(0.0, 0.0, "fin del barrido"))
         self.heading_est.reset_track()  # el track GPS previo ya no dice el rumbo
