@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rover-traversability"
+version = "0.1.0"
+description = "SAM-TP traversability perception + mission navigation for the FrodoBots Earth Rover Mini+"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "pillow>=9.4",
+    "requests>=2.25",
+]
+
+[project.optional-dependencies]
+# huggingface_hub is only needed if you want automatic checkpoint download
+# via SAMTP_HF_REPO. A manually-provided SAMTP_CHECKPOINT path needs nothing.
+hf = ["huggingface_hub>=0.23"]
+dev = ["pytest>=7"]
+
+# Deliberately NOT declared as dependencies:
+#   torch / torchvision — install manually (platform-specific wheels)
+#   sam2               — provided by the vendored genie package: pip install -e ./genie
+# Both are checked at TraversabilityPredictor construction with an actionable
+# error message. `import rover_traversability` never requires torch, so the
+# policy / client / mission utilities and the test suite work without it.
+
+[tool.setuptools.packages.find]
+include = ["rover_traversability*"]
+
+[tool.setuptools.package-data]
+rover_traversability = ["data/*.npy"]
