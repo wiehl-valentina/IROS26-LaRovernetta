@@ -1,0 +1,134 @@
+  # Config del puente GeNIE <-> Earth Rovers SDK
+# Earth Rover Mini+ — calibrado el 2026-07-31
+#
+# Calibracion propia de ESTE robot:
+#   intrinsecos: 24/24 vistas, error de reproyeccion 0.42 px
+#   pose:        error 0.67 px, altura 0.1502 m (regla: 0.15 m — coinciden)
+#
+# Si cambia IMAGE_QUALITY o IMAGE_FORMAT en el .env del SDK, o si le pegas un
+# golpe a la camara, hay que recalibrar.
+
+rover:
+  base_url: "http://localhost:8000"
+  timeout_s: 5.0
+
+samtp:
+  config_path: "sam2/configs/sam2.1_inference_tiny/sam2.1_custom2.yaml"
+  checkpoint_path: "sam2_logs/configs/sam2.1_training_tiny/sam2_training_custom2_freezeNoneNone_f57.yaml/checkpoints/checkpoint_2.pt"
+  device: null            # null = autodetectar cuda
+  precision: "auto"       # auto -> fp16 en Turing (RTX 2080)
+  score_thresh: 0.0
+
+camera:
+  calibrated: true
+
+  image_size: [1920, 1080]
+
+  intrinsics:
+    - [925.265722853314, 0.0, 962.3052531643399]
+    - [0.0, 924.6288195383473, 528.3891677741947]
+    - [0.0, 0.0, 1.0]
+
+  # k1 = -0.263: barril marcado, tipico de un gran angular de ~92 grados.
+  # Corregirlo NO es opcional: project_score_to_bev asume pinhole puro.
+  dist_coeffs: [-0.26257227523222204, 0.06503885855790396, -0.00031427372195389234, -0.0011895820486559178, -0.0073726075647136185]
+
+  # Solo se usan si 'pose' es null. Se dejan como referencia.
+  height_m: 0.150
+  pitch_down_deg: 1.85
+
+  # T_world_camera de pose_D (el de menor error). Tiene prioridad sobre
+  # height_m y pitch_down_deg.
+  pose:
+    - [-0.000313571, -0.032360666, 0.999476207, 0.000000000]
+    - [-0.999953056, 0.009689420, -0.000000000, 0.000000000]
+    - [-0.009684345, -0.999429288, -0.032362186, 0.150244633]
+    - [0.000000000, 0.000000000, 0.000000000, 1.000000000]
+
+projection:
+  ground_z: 0.0
+  resolution_m_per_px: 0.03
+
+  # PENDIENTE: con la camara a 15 cm, el suelo lejano se ve muy comprimido y
+  # la mascara se vuelve poco confiable a partir de cierta distancia. Mirar el
+  # BEV sobre una foto de vereda y bajar esto a 2.5-3.0 si hace falta.
+  forward_range_m: 2.0
+  side_range_m: 2.0
+  max_ray_distance_m: 2.5
+  projection_downscale: 2
+navigation:
+  # Determinar con tools/check_angular_sign.py:
+  #   -1.0  si angular positivo hace girar a la IZQUIERDA
+  #   +1.0  si angular positivo hace girar a la DERECHA
+  angular_sign: -1.0
+
+  max_linear: 0.30        # bien lento para las primeras corridas
+  max_angular: 0.45
+  turn_speed: 0.40
+  kp_angular: 0.9
+  lookahead_m: 1.5
+  align_threshold_deg: 90.0
+
+  goal_range_m: 3.5
+  claim_radius_m: 15.0    # tolerancia oficial del ERC
+
+  # El rumbo sale del track GPS (ruidoso pero sin sesgo). El magnetometro va
+  # montado al lado de los motores y suele tener offset variable.
+  heading_min_displacement_m: 1.5
+  trust_orientation: false
+  orientation_offset_deg: 0.0
+  orientation_sign: 1.0
+  commit_hold_s: 2.0
+  commit_min_deg: 8.0
+  commit_override_deg: 30.0
+planner:
+  grid_size: 240
+  unknown_cost: 0.2
+  smooth_kernel: 3
+  num_goals: 30
+  num_mid_points_per_goal: 20
+  path_num_samples: 100
+  footprint_px: 12        # ~0.30 m de ancho de robot. Medir el Mini y ajustar.
+  threshold_cost: 0.35
+  threshold_points_ratio: 0.02
+  number_of_points_to_filter: 60
+  alpha: 1.0
+  best_k: 12
+  use_clustering: true    # el path fusion del paper
+  max_clusters: 2
+  cluster_angle_threshold_deg: 40.0
+  random_seed: 42
+  include_goal_in_path_bank: false
+  include_random_goals: true
+
+safety:
+  stale_frame_s: 2.0
+  max_consecutive_errors: 5
+  recovery_after_empty_plans: 3
+  recovery_turn_s: 1.5
+  loop_period_s: 0.2
+  max_consecutive_turns: 4
+  unstick_forward_s: 2.5
+
+odometry:
+  wheel_radius_m: 0.0527
+  track_width_m: 0.15
+  left_rpm_indices: [0, 2]
+  right_rpm_indices: [1, 3]
+  # El firmware del Mini invierte la convencion diferencial estandar:
+  # rueda izquierda adelante + derecha atras = giro a la IZQUIERDA.
+  # Verificado con el control manual el 2026-08-01.
+  rotation_sign:  1.0
+  use_gyro_for_rotation: true
+  gps_correction: true
+  min_gps_displacement_m: 1.0
+
+memory:
+  enabled: true
+  map_size_m: 8.0
+  update_weight: 0.45
+  decay_per_s: 0.08
+  recenter_margin_m: 1.5
+  min_confidence: 0.15
+  plan_forward_m: 3.0
+  plan_side_m: 2.0
