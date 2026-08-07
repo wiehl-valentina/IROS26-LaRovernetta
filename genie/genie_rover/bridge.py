@@ -32,6 +32,7 @@ from .navigation import (
     PathFollower,
     front_is_blocked,
     goal_from_gps,
+    is_red_wedge,
 )
 from .odometry import Odometry, OdometryConfig, Pose
 from .perception import PerceptionPipeline
@@ -133,6 +134,7 @@ class Bridge:
         self._last_frame_change = time.time()
         self._consecutive_errors = 0
         self._consecutive_empty = 0
+        self._retrocesos_seguidos = 0  # <-- Estado para la cuña roja
         # Deteccion de giro sin avance: el planner puede quedar en un ciclo
         # donde cada giro revela una escena que vuelve a pedir girar. Sin
         # memoria entre frames, eso no se rompe solo.
@@ -287,26 +289,32 @@ class Bridge:
         # MODIFICACIÓN: Solución geométrica al atasco por proximidad excesiva (Cuña Roja).
         # Si el obstáculo está demasiado cerca y ocupa más de la mitad de la visión frontal,
         # el robot da un paso atrás para recuperar la perspectiva y poder planificar un escape lateral.
+        # Chequeo de colisión y atasco por proximidad (Cuña Roja)
         if front_is_blocked(res.traversability, self.resolution):
-            # Analizamos la ocupación directa en la franja central cercana del mapa BEV
-            h_bev, w_bev = res.traversability.shape
-            center_x = w_bev // 2
-            strip_width = int(w_bev * 0.5)  # El 50% central del campo visual
-            front_strip = res.traversability[:h_bev // 2, center_x - strip_width // 2 : center_x + strip_width // 2]
+            self.stats.blocked += 1
             
-            # Si más de la mitad de esa zona central cercana está bloqueada por la "cuña roja":
-            if front_strip.size > 0 and np.mean(front_strip == 0) > 0.5:
-                print("[bridge] ATASCADO POR PROXIMIDAD: Obstáculo demasiado cerca (>50% de la visión). Doy marcha atrás para abrir perspectiva.")
-                self.send(DriveCommand(-0.2, 0.0, "retroceso táctico por cuña roja"))
+            if is_red_wedge(res.traversability, self.resolution) and self._retrocesos_seguidos < 2:
+                self._retrocesos_seguidos += 1
+                print(f"[bridge] CUÑA ROJA: retrocedo para abrir perspectiva ({self._retrocesos_seguidos}/2)")
+                self.send(DriveCommand(-0.15, 0.0, "retroceso tactico"))
+                
                 t_back = time.time()
                 while time.time() - t_back < 1.0 and not self._stop_requested:
                     time.sleep(0.1)
-                self.send(DriveCommand(0.0, 0.0, "fin de retroceso táctico"))
+                
+                self.send(DriveCommand(0.0, 0.0, "fin del retroceso"))
+                self.heading_est.reset_track()  # El retroceso rompe la estimación GPS
+                
+                # Volcar debug aunque no haya plan
+                self._maybe_dump_debug(rgb, res, plan=None)
                 return
 
-            self.stats.blocked += 1
             self.send(DriveCommand(0.0, 0.0, "OBSTACULO al frente"))
+            self._maybe_dump_debug(rgb, res, plan=None)
             return
+
+        # Si el frente está libre, reseteamos los retrocesos
+        self._retrocesos_seguidos = 0
 
         plan = plan_on_bev(
             bev_traversability=plan_bev,
@@ -443,15 +451,19 @@ class Bridge:
         self.heading_est.reset_track()  # el track GPS previo ya no dice el rumbo
         self._consecutive_empty = 0
 
-    def _maybe_dump_debug(self, rgb, res, plan) -> None:
+    def _maybe_dump_debug(self, rgb, res, plan=None) -> None:
         if not self.debug_dir:
             return
         try:
             from PIL import Image
             n = self.stats.iterations
             Image.fromarray(rgb).save(self.debug_dir / f"{n:05d}_rgb.jpg", quality=80)
-            Image.fromarray(plan.visualization).save(self.debug_dir / f"{n:05d}_plan.png")
             np.save(self.debug_dir / f"{n:05d}_bev.npy", res.traversability)
+            
+            # Solo guardamos la imagen del plan si el plan existe
+            if plan is not None:
+                Image.fromarray(plan.visualization).save(self.debug_dir / f"{n:05d}_plan.png")
+                
             if self.pmap is not None and self.odometry is not None:
                 Image.fromarray(self.pmap.to_image(self.odometry.pose)).save(
                     self.debug_dir / f"{n:05d}_mapa.png")
