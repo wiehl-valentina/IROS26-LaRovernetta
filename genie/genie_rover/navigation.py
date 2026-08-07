@@ -253,17 +253,10 @@ def front_is_blocked(bev: np.ndarray, resolution_m: float,
 # --------------------------------------------------------------------- chequeo de cuña roja
 
 def is_red_wedge(bev_traversability: np.ndarray, resolution_m_per_px: float) -> bool:
-    """
-    Detecta si el campo cercano está bloqueado masivamente (cuña roja),
-    dejando al robot sin opciones de escape lateral.
-    """
     h_bev, w_bev = bev_traversability.shape
     
-    # Rango de profundidad: 0.15m a 0.60m frente al robot
     r0 = max(0, h_bev - 1 - int(0.60 / resolution_m_per_px))
     r1 = min(h_bev, h_bev - int(0.15 / resolution_m_per_px))
-    
-    # Rango lateral: 0.90m de ancho total (0.45m para cada lado)
     c_half = int(0.45 / resolution_m_per_px)
     c0 = max(0, w_bev // 2 - c_half)
     c1 = min(w_bev, w_bev // 2 + c_half + 1)
@@ -271,12 +264,19 @@ def is_red_wedge(bev_traversability: np.ndarray, resolution_m_per_px: float) -> 
     patch = bev_traversability[r0:r1, c0:c1]
     conocido = patch >= 0.0
 
-    # Si no hay datos suficientes en esa zona, no asumimos bloqueo masivo
     if patch.size == 0 or np.mean(conocido) < 0.3:
+        # PRINTEO 1: Falla porque la cámara no ve el piso (punto ciego)
+        print(f"[debug-cuña] Falla por falta de datos: conocido={np.mean(conocido)*100:.1f}% (necesita 30%)")
         return False
 
-    # Si menos del 40% del área conocida es transitable, estamos atascados
-    return float(np.mean(patch[conocido] > 0.4)) < 0.4
+    ratio_transitable = float(np.mean(patch[conocido] > 0.4))
+    is_wedge = ratio_transitable < 0.4
+
+    if not is_wedge:
+        # PRINTEO 2: Falla porque cree que el piso está libre de obstáculos
+        print(f"[debug-cuña] Falla por piso libre: {ratio_transitable*100:.1f}% es transitable (tiene que ser < 40%)")
+
+    return is_wedge
 
 
 # --------------------------------------------------------------------- tests
