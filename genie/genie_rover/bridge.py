@@ -12,7 +12,6 @@ enviarlos. Para que el robot se mueva de verdad hace falta pasar --go.
 """
 
 from __future__ import annotations
-
 import argparse
 import math
 import signal
@@ -32,7 +31,6 @@ from .navigation import (
     PathFollower,
     front_is_blocked,
     goal_from_gps,
-    is_red_wedge,
 )
 from .odometry import Odometry, OdometryConfig, Pose
 from .perception import PerceptionPipeline
@@ -124,7 +122,11 @@ class Bridge:
         self.max_consecutive_errors = int(safety.get("max_consecutive_errors", 5))
         self.recovery_after_empty = int(safety.get("recovery_after_empty_plans", 3))
         self.recovery_turn_s = float(safety.get("recovery_turn_s", 1.5))
-        self.loop_period_s = float(safety.get("loop_period_s", 0.0))
+        
+        # --- SOLUCIÓN: TASA COGNITIVA A 2 HZ ---
+        # Forzamos 0.5s por ciclo (2Hz) por defecto. Evita que el robot 
+        # re-decida frenéticamente sobre la misma información (parálisis por análisis).
+        self.loop_period_s = float(safety.get("loop_period_s", 0.5))
 
         self.stats = LoopStats()
         self._stop_requested = False
@@ -134,7 +136,6 @@ class Bridge:
         self._last_frame_change = time.time()
         self._consecutive_errors = 0
         self._consecutive_empty = 0
-        self._retrocesos_seguidos = 0  # <-- Estado para la cuña roja
         # Deteccion de giro sin avance: el planner puede quedar en un ciclo
         # donde cada giro revela una escena que vuelve a pedir girar. Sin
         # memoria entre frames, eso no se rompe solo.
@@ -148,7 +149,7 @@ class Bridge:
         # a mitad de maniobra. Ese titubeo consume el margen que hacia falta
         # para cualquiera de los dos lados. Aca recordamos el lado elegido y
         # exigimos una diferencia grande para cambiarlo.
-        self._commit_side = 0         # -1 izquierda, +1 derecha, 0 sin compromiso
+        self._commit_side = 0          # -1 izquierda, +1 derecha, 0 sin compromiso
         self._commit_until = 0.0       # timestamp hasta el que vale el compromiso
         self.commit_hold_s = float(nav.get("commit_hold_s", 2.0))
         self.commit_min_deg = float(nav.get("commit_min_deg", 8.0))
@@ -286,53 +287,12 @@ class Bridge:
               f"({self.heading_est.source})  meta: {goal_desc}  "
               f"celdas BEV={res.stats['bev_observed_cells']:.0f}{nota_mapa}")
 
-        # MODIFICACIÓN: Solución geométrica al atasco por proximidad excesiva (Cuña Roja).
-        # Si el obstáculo está demasiado cerca y ocupa más de la mitad de la visión frontal,
-        # el robot da un paso atrás para recuperar la perspectiva y poder planificar un escape lateral.
-        # Chequeo de colisión y atasco por proximidad (Cuña Roja)
-        # Chequeo de colisión y atasco por proximidad (Cuña Roja)
-        # Chequeo de colisión y atasco por proximidad (Cuña Roja)
+        # El chequeo de colision usa SIEMPRE la observacion fresca: si algo se
+        # cruzo recien, no queremos que el promedio del mapa lo diluya.
         if front_is_blocked(res.traversability, self.resolution):
             self.stats.blocked += 1
-            
-            if is_red_wedge(res.traversability, self.resolution) and self._retrocesos_seguidos < 2:
-                self._retrocesos_seguidos += 1
-                print(f"[bridge] CUÑA ROJA: retrocedo para abrir perspectiva ({self._retrocesos_seguidos}/2)")
-                
-                # 1. Marcha atrás para ganar espacio físico
-                self.send(DriveCommand(-0.15, 0.0, "retroceso tactico"))
-                t_back = time.time()
-                while time.time() - t_back < 1.0 and not self._stop_requested:
-                    time.sleep(0.1)
-                self.send(DriveCommand(0.0, 0.0, "fin del retroceso"))
-                
-                # 2. NUEVO: Evaluar de qué lado hay más camino transitable
-                h_bev, w_bev = res.traversability.shape
-                mid_w = w_bev // 2
-                
-                # Contamos píxeles transitables (> 0.4) en la mitad izquierda y derecha
-                left_score = np.sum(res.traversability[:, :mid_w] > 0.4)
-                right_score = np.sum(res.traversability[:, mid_w:] > 0.4)
-                
-                # Convención estándar en robótica: velocidad angular positiva (+1.0) es giro a la izquierda
-                best_sign = 1.0 if left_score >= right_score else -1.0
-                lado_txt = "izquierda" if best_sign > 0 else "derecha"
-                
-                print(f"[bridge] Evaluación de escape: Izquierda={left_score} vs Derecha={right_score}. "
-                      f"Girando hacia la {lado_txt}.")
-                
-                # 3. Forzamos el giro de recuperación hacia el lado más despejado
-                self._recover(preferred_sign=best_sign)
-                
-                self._maybe_dump_debug(rgb, res, plan=None)
-                return
-
             self.send(DriveCommand(0.0, 0.0, "OBSTACULO al frente"))
-            self._maybe_dump_debug(rgb, res, plan=None)
             return
-
-        # Si el frente está libre, reseteamos los retrocesos
-        self._retrocesos_seguidos = 0
 
         plan = plan_on_bev(
             bev_traversability=plan_bev,
@@ -454,34 +414,30 @@ class Bridge:
         return DriveCommand(cmd.linear, 0.0,
                             f"mantengo el rumbo (evito titubeo, {error_deg:+.0f} grados)")
 
-    def _recover(self, preferred_sign: float | None = None) -> None:
+    def _recover(self) -> None:
         """Recuperacion minima: girar en el lugar para buscar salida.
-        Si se provee preferred_sign (+1.0 izq, -1.0 der), gira hacia ese lado.
+
+        GeNIE usa un VLM para esto (mirar en 4 direcciones y elegir). Esta es la
+        version sin VLM: gira a ciegas. Si te importa el puntaje del ERC, aca es
+        donde conviene meter el modulo del paper.
         """
         print("[bridge] RECUPERACION: girando para buscar terreno transitable")
-        
-        # Usamos el signo elegido, o el de por defecto si no se pasa ninguno
-        sign = preferred_sign if preferred_sign is not None else self.follower.angular_sign
-        
-        self.send(DriveCommand(0.0, sign * self.follower.turn_speed, "barrido de recuperacion"))
+        self.send(DriveCommand(0.0, self.follower.angular_sign * self.follower.turn_speed,
+                               "barrido de recuperacion"))
         time.sleep(self.recovery_turn_s)
         self.send(DriveCommand(0.0, 0.0, "fin del barrido"))
         self.heading_est.reset_track()  # el track GPS previo ya no dice el rumbo
         self._consecutive_empty = 0
 
-    def _maybe_dump_debug(self, rgb, res, plan=None) -> None:
+    def _maybe_dump_debug(self, rgb, res, plan) -> None:
         if not self.debug_dir:
             return
         try:
             from PIL import Image
             n = self.stats.iterations
             Image.fromarray(rgb).save(self.debug_dir / f"{n:05d}_rgb.jpg", quality=80)
+            Image.fromarray(plan.visualization).save(self.debug_dir / f"{n:05d}_plan.png")
             np.save(self.debug_dir / f"{n:05d}_bev.npy", res.traversability)
-            
-            # Solo guardamos la imagen del plan si el plan existe
-            if plan is not None:
-                Image.fromarray(plan.visualization).save(self.debug_dir / f"{n:05d}_plan.png")
-                
             if self.pmap is not None and self.odometry is not None:
                 Image.fromarray(self.pmap.to_image(self.odometry.pose)).save(
                     self.debug_dir / f"{n:05d}_mapa.png")
@@ -491,9 +447,9 @@ class Bridge:
     def _print_summary(self) -> None:
         s = self.stats
         print("\n--- resumen ---")
-        print(f"  iteraciones:           {s.iterations}")
-        print(f"  planes exitosos:       {s.plans_ok}")
-        print(f"  planes vacios:         {s.plans_empty}")
+        print(f"  iteraciones:            {s.iterations}")
+        print(f"  planes exitosos:        {s.plans_ok}")
+        print(f"  planes vacios:          {s.plans_empty}")
         print(f"  frenadas por obstaculo: {s.blocked}")
         print(f"  desatascos forzados:    {s.unstucks}")
         if self.pmap is not None and self.odometry is not None:
@@ -527,7 +483,7 @@ def main() -> int:
 
     if args.start_mission:
         print("[bridge] iniciando mision ...")
-        print(f"    {bridge.client.start_mission()}")
+        print(f"   {bridge.client.start_mission()}")
 
     if args.go:
         print("\n" + "=" * 62)
