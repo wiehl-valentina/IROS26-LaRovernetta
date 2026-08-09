@@ -109,7 +109,11 @@ safety:
   loop_period_s: 0.2
   max_consecutive_turns: 4
   unstick_forward_s: 2.5
+  use_vlm_recovery: true
+  vlm_recovery_timeout_s: 4.0
+  vlm_recovery_min_confidence: 0.35
 
+  
 odometry:
   wheel_radius_m: 0.0527
   track_width_m: 0.15
