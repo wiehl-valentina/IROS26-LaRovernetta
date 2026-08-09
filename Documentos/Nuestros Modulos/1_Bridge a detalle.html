@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>El puente — SDK ↔ GeNIE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-void:#0B0F14;
+    --bg-panel:#131A22;
+    --bg-panel-2:#171F28;
+    --line:#1D2731;
+    --line-strong:#33404C;
+    --signal:#5FD8CE;      /* video / percepción */
+    --signal-dim:#2C6F69;
+    --control:#F0AE4E;     /* comandos de movimiento */
+    --control-dim:#8A6323;
+    --text:#EAEFF3;
+    --text-body:#C7D1DA;
+    --text-muted:#93A0AC;
+    --text-faint:#5C6873;
+    --danger:#E27B5F;
+    --danger-dim:#7A3527;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:var(--bg-void);
+    color:var(--text-body);
+    font-family:'IBM Plex Sans', sans-serif;
+    font-size:17px;
+    line-height:1.7;
+    -webkit-font-smoothing:antialiased;
+  }
+  @media (prefers-reduced-motion: reduce){
+    *{animation-duration:0.001ms !important; animation-iteration-count:1 !important; transition-duration:0.001ms !important;}
+  }
+  .wrap{max-width:760px; margin:0 auto; padding:0 28px;}
+  .wrap-wide{max-width:960px; margin:0 auto; padding:0 28px;}
+  code, .mono{font-family:'IBM Plex Mono', monospace;}
+  code{
+    background:rgba(255,255,255,0.06);
+    padding:0.12em 0.4em;
+    border-radius:3px;
+    font-size:0.86em;
+    color:var(--signal);
+  }
+
+  /* ---------- TOC lateral (navegación de lectura) ---------- */
+  nav.toc{
+    position:sticky;
+    top:0;
+    z-index:20;
+    background:rgba(11,15,20,0.92);
+    backdrop-filter:blur(6px);
+    border-bottom:1px solid var(--line);
+    padding:14px 0;
+  }
+  nav.toc .wrap-wide{display:flex; align-items:center; gap:22px; overflow-x:auto;}
+  nav.toc a{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    color:var(--text-faint);
+    text-decoration:none;
+    white-space:nowrap;
+    letter-spacing:0.03em;
+    transition:color 0.15s;
+    padding-bottom:2px;
+    border-bottom:1px solid transparent;
+  }
+  nav.toc a:hover, nav.toc a:focus-visible{color:var(--signal); border-bottom-color:var(--signal-dim);}
+
+  /* ---------- HERO ---------- */
+  header.hero{
+    padding:80px 0 60px;
+    border-bottom:1px solid var(--line);
+    background:
+      radial-gradient(ellipse 600px 280px at 20% 0%, rgba(240,174,78,0.10), transparent 65%),
+      radial-gradient(ellipse 600px 280px at 90% 20%, rgba(95,216,206,0.12), transparent 65%);
+  }
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12.5px;
+    letter-spacing:0.14em;
+    color:var(--text-muted);
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-bottom:26px;
+  }
+  .eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--danger);box-shadow:0 0 8px var(--danger);}
+  .eyebrow .sep{color:var(--text-faint);}
+  h1{
+    font-family:'IBM Plex Mono', monospace;
+    font-weight:700;
+    font-size:clamp(30px, 4.4vw, 46px);
+    line-height:1.22;
+    margin:0 0 24px;
+    letter-spacing:-0.01em;
+    color:var(--text);
+  }
+  h1 .a{color:var(--signal);}
+  h1 .b{color:var(--control);}
+  .hero p.lede{
+    font-size:19px;
+    line-height:1.65;
+    color:var(--text-muted);
+    max-width:58ch;
+    margin:0;
+  }
+  .hero p.lede strong{color:var(--text); font-weight:600;}
+
+  section{padding:68px 0; border-bottom:1px solid var(--line);}
+  section:last-of-type{border-bottom:none;}
+  section.wide > .wrap-wide{max-width:960px;}
+  .section-head{margin-bottom:34px;}
+  .section-num{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12.5px;
+    color:var(--text-faint);
+    letter-spacing:0.12em;
+    display:block;
+    margin-bottom:12px;
+  }
+  h2{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:25px;
+    line-height:1.3;
+    margin:0 0 14px;
+    font-weight:600;
+    color:var(--text);
+  }
+  .section-sub{color:var(--text-muted); font-size:16.5px; line-height:1.65; max-width:64ch; margin:0;}
+  p{margin:0 0 16px; color:var(--text-body);}
+  strong{color:var(--text); font-weight:600;}
+
+  /* ---------- DIAGRAM ---------- */
+  .diagram-panel{
+    background:var(--bg-panel);
+    border:1px solid var(--line-strong);
+    border-radius:8px;
+    padding:30px 24px 26px;
+  }
+  .diagram-panel svg{width:100%;height:auto;display:block;}
+  .node-label{font-family:'IBM Plex Mono', monospace; font-size:13.5px; fill:var(--text); font-weight:600;}
+  .node-sub{font-family:'IBM Plex Mono', monospace; font-size:11px; fill:var(--text-muted);}
+  .stage-box{fill:#0F151C; stroke:var(--line-strong); stroke-width:1.3; transition:stroke 0.25s, fill 0.25s;}
+  .stage-box.active{stroke:var(--signal); fill:rgba(95,216,206,0.12);}
+  .pulse-frame{r:4.5; fill:var(--signal); filter:drop-shadow(0 0 7px var(--signal)); opacity:0;}
+  .pulse-cmd{r:4.5; fill:var(--control); filter:drop-shadow(0 0 7px var(--control)); opacity:0;}
+  .pulse-frame.run{animation:travelF 1.6s ease-in-out forwards;}
+  .pulse-cmd.run{animation:travelC 1.6s ease-in-out forwards; animation-delay:2.6s;}
+  @keyframes travelF{
+    0%{opacity:0; offset-distance:0%;}
+    8%{opacity:1;}
+    92%{opacity:1;}
+    100%{opacity:0; offset-distance:100%;}
+  }
+  @keyframes travelC{
+    0%{opacity:0; offset-distance:0%;}
+    8%{opacity:1;}
+    92%{opacity:1;}
+    100%{opacity:0; offset-distance:100%;}
+  }
+  .diagram-actions{
+    display:flex;
+    align-items:center;
+    gap:16px;
+    margin-top:22px;
+    flex-wrap:wrap;
+  }
+  button.trigger{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:13px;
+    background:transparent;
+    border:1px solid var(--control-dim);
+    color:var(--control);
+    padding:10px 18px;
+    border-radius:5px;
+    cursor:pointer;
+    letter-spacing:0.02em;
+    transition:background 0.15s, border-color 0.15s;
+  }
+  button.trigger:hover{background:rgba(240,174,78,0.10); border-color:var(--control);}
+  button.trigger:focus-visible{outline:2px solid var(--signal); outline-offset:2px;}
+  .diagram-note{font-size:13.5px; color:var(--text-faint);}
+  #status-line{font-family:'IBM Plex Mono', monospace; font-size:13px; color:var(--signal); min-height:20px;}
+
+  /* ---------- GPU TABLE ---------- */
+  table.gpu{width:100%; border-collapse:collapse; margin-top:6px;}
+  table.gpu th{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    color:var(--text-faint);
+    text-align:left;
+    padding:0 12px 12px;
+    border-bottom:1px solid var(--line-strong);
+  }
+  table.gpu td{
+    padding:16px 12px;
+    border-bottom:1px solid var(--line);
+    font-size:15.5px;
+    line-height:1.6;
+    color:var(--text-body);
+    vertical-align:top;
+  }
+  table.gpu td:first-child{color:var(--text); font-family:'IBM Plex Mono', monospace; font-size:14px; white-space:nowrap; font-weight:600;}
+  table.gpu td.time{color:var(--signal); font-family:'IBM Plex Mono', monospace; white-space:nowrap; font-weight:600;}
+
+  /* ---------- FILE TREE ---------- */
+  .filetree{
+    background:var(--bg-panel);
+    border:1px solid var(--line-strong);
+    border-radius:8px;
+    padding:24px 28px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:14.5px;
+    line-height:1.9;
+    color:var(--text-muted);
+    white-space:pre;
+    overflow-x:auto;
+  }
+  .filetree .new{color:var(--control); font-weight:600;}
+  .filetree .old{color:var(--text-faint);}
+  .filetree .root{color:var(--text);}
+
+  /* ---------- STEPS ---------- */
+  .steps{list-style:none; margin:0; padding:0;}
+  .step{
+    display:grid;
+    grid-template-columns:50px 1fr;
+    gap:20px;
+    padding:26px 0;
+    border-bottom:1px solid var(--line);
+  }
+  .step:last-child{border-bottom:none;}
+  .step-num{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:23px;
+    color:var(--text-faint);
+    font-weight:600;
+    line-height:1.4;
+  }
+  .step.critical .step-num{color:var(--danger);}
+  .step h4{
+    margin:0 0 10px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:16px;
+    color:var(--text);
+    display:flex;
+    align-items:center;
+    gap:10px;
+    flex-wrap:wrap;
+  }
+  .step code.cmd{
+    display:block;
+    background:#0F151C;
+    border:1px solid var(--line-strong);
+    border-radius:5px;
+    padding:12px 14px;
+    font-size:13.5px;
+    line-height:1.55;
+    color:var(--signal);
+    margin:10px 0;
+    overflow-x:auto;
+  }
+  .step p{margin:0 0 8px; color:var(--text-muted); font-size:15.5px; line-height:1.65;}
+  .step p:last-child{margin-bottom:0;}
+  .critical-tag{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:10.5px;
+    letter-spacing:0.07em;
+    color:var(--danger);
+    border:1px solid var(--danger-dim);
+    padding:3px 8px;
+    border-radius:3px;
+    text-transform:uppercase;
+  }
+
+  /* ---------- DETAIL CARDS ---------- */
+  .details{display:grid; grid-template-columns:1fr 1fr; gap:20px;}
+  @media (max-width:680px){.details{grid-template-columns:1fr;}}
+  .detail-card{
+    background:var(--bg-panel);
+    border:1px solid var(--line-strong);
+    border-radius:8px;
+    padding:24px;
+  }
+  .detail-card.full{grid-column:1 / -1;}
+  .detail-tag{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11.5px;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    color:var(--danger);
+    margin-bottom:12px;
+  }
+  .detail-card p{color:var(--text-muted); font-size:15.5px; line-height:1.65; margin:0 0 10px;}
+  .detail-card p:last-child{margin-bottom:0;}
+  .detail-card strong{color:var(--text); font-weight:600;}
+
+  /* ---------- TROUBLESHOOTING ---------- */
+  table.trouble{width:100%; border-collapse:collapse;}
+  table.trouble tr{border-bottom:1px solid var(--line);}
+  table.trouble tr:last-child{border-bottom:none;}
+  table.trouble td{padding:15px 12px; vertical-align:top; font-size:15px; line-height:1.6;}
+  table.trouble td.symptom{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:13px;
+    color:var(--danger);
+    width:36%;
+  }
+  table.trouble td.cause{color:var(--text-muted);}
+
+  /* ---------- MISSING (roadmap) ---------- */
+  .missing-list{list-style:none; margin:0; padding:0;}
+  .missing-item{
+    display:flex;
+    gap:18px;
+    padding:22px 0;
+    border-bottom:1px solid var(--line);
+  }
+  .missing-item:last-child{border-bottom:none;}
+  .missing-icon{
+    flex-shrink:0;
+    width:28px; height:28px;
+    border-radius:50%;
+    border:1px dashed var(--text-faint);
+    display:flex; align-items:center; justify-content:center;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:13.5px;
+    color:var(--text-faint);
+    margin-top:2px;
+  }
+  .missing-item h4{margin:0 0 6px; font-family:'IBM Plex Mono', monospace; font-size:15.5px; color:var(--text);}
+  .missing-item p{margin:0; color:var(--text-muted); font-size:15.5px; line-height:1.65;}
+
+  .key-warning{
+    margin-top:30px;
+    background:linear-gradient(180deg, rgba(226,123,95,0.12), rgba(226,123,95,0.03));
+    border:1px solid rgba(226,123,95,0.4);
+    border-left:3px solid var(--danger);
+    border-radius:5px;
+    padding:20px 24px;
+    font-size:15.5px;
+    line-height:1.65;
+    color:var(--text);
+  }
+
+  footer{padding:44px 0 64px;}
+  footer p{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12.5px;
+    color:var(--text-faint);
+    display:flex;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap:8px;
+    margin:0;
+  }
+
+  /* back to top */
+  a.top-link{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    margin-top:36px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12.5px;
+    color:var(--text-faint);
+    text-decoration:none;
+  }
+  a.top-link:hover{color:var(--signal);}
+</style>
+</head>
+<body>
+
+<nav class="toc">
+  <div class="wrap-wide">
+    <a href="#arquitectura">01 arquitectura</a>
+    <a href="#gpu">02 gpu</a>
+    <a href="#instalacion">03 instalación</a>
+    <a href="#pasos">04 pasos</a>
+    <a href="#detalles">05 detalles</a>
+    <a href="#troubleshooting">06 fallas</a>
+    <a href="#falta">07 lo que falta</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">
+      <span class="dot"></span>
+      SISTEMA ROVER <span class="sep">/</span> CAPA 3 <span class="sep">/</span> EL PUENTE
+    </div>
+    <h1>Dos procesos<br>que no se <span class="a">conocen</span>,<br>hablando por <span class="b">HTTP</span>.</h1>
+    <p class="lede">
+      <strong>README_BRIDGE.md</strong> describe algo deliberado: el SDK del rover y GeNIE
+      (SAM-TP + planner) nunca comparten proceso ni entorno. <code>genie_rover.bridge</code>
+      es la única pieza que conoce a los dos.
+    </p>
+  </div>
+</header>
+
+<section id="arquitectura" class="wide">
+  <div class="wrap-wide">
+    <div class="section-head">
+      <span class="section-num">01 — LOS DOS PROCESOS</span>
+      <h2>Proceso A y Proceso B</h2>
+      <p class="section-sub">
+        Ninguno importa al otro. Se sincronizan pidiendo un frame de video y
+        devolviendo un comando de movimiento — nada más cruza la frontera.
+        Probá el botón para ver un ciclo completo del bridge.
+      </p>
+    </div>
+
+    <div class="diagram-panel">
+      <svg viewBox="0 0 900 300" xmlns="http://www.w3.org/2000/svg">
+        <!-- Process A box -->
+        <rect x="20" y="20" width="230" height="260" rx="6" fill="#0F151C" stroke="#33404C" stroke-dasharray="4 3"/>
+        <text x="135" y="42" text-anchor="middle" class="node-sub">PROCESO A</text>
+        <rect x="45" y="60" width="180" height="50" rx="4" class="stage-box"/>
+        <text x="135" y="82" text-anchor="middle" class="node-label">hypercorn main:app</text>
+        <text x="135" y="98" text-anchor="middle" class="node-sub">:8000</text>
+        <rect x="45" y="130" width="180" height="50" rx="4" class="stage-box"/>
+        <text x="135" y="152" text-anchor="middle" class="node-label">Chrome headless</text>
+        <text x="135" y="168" text-anchor="middle" class="node-sub">Agora RTC / RTM</text>
+        <rect x="45" y="200" width="180" height="50" rx="4" class="stage-box" id="box-rover"/>
+        <text x="135" y="222" text-anchor="middle" class="node-label">rover físico</text>
+        <text x="135" y="238" text-anchor="middle" class="node-sub">frodobots</text>
+
+        <!-- Process B box -->
+        <rect x="650" y="20" width="230" height="260" rx="6" fill="#0F151C" stroke="#33404C" stroke-dasharray="4 3"/>
+        <text x="765" y="42" text-anchor="middle" class="node-sub">PROCESO B</text>
+        <rect x="665" y="60" width="200" height="42" rx="4" class="stage-box" id="box-samtp"/>
+        <text x="765" y="86" text-anchor="middle" class="node-label" style="font-size:12.5px">SAM-TP</text>
+        <rect x="665" y="112" width="200" height="42" rx="4" class="stage-box" id="box-bev"/>
+        <text x="765" y="138" text-anchor="middle" class="node-label" style="font-size:12.5px">proyección BEV</text>
+        <rect x="665" y="164" width="200" height="42" rx="4" class="stage-box" id="box-planner"/>
+        <text x="765" y="190" text-anchor="middle" class="node-label" style="font-size:12.5px">planner</text>
+        <rect x="665" y="216" width="200" height="42" rx="4" class="stage-box" id="box-ctrl"/>
+        <text x="765" y="242" text-anchor="middle" class="node-label" style="font-size:12.5px">controlador</text>
+
+        <!-- connecting paths -->
+        <path id="p-frame" d="M 250 85 L 480 85 L 480 81 L 665 81" fill="none" stroke="#33404C" stroke-width="1.5"/>
+        <path id="p-cmd" d="M 665 237 L 480 237 L 480 233 L 250 233" fill="none" stroke="#33404C" stroke-width="1.5"/>
+        <text x="480" y="70" text-anchor="middle" class="node-sub">GET /v2/front</text>
+        <text x="480" y="255" text-anchor="middle" class="node-sub">POST /control</text>
+
+        <circle class="pulse-frame" id="pulseF" style="offset-path:path('M 250 85 L 480 85 L 480 81 L 665 81')"/>
+        <circle class="pulse-cmd" id="pulseC" style="offset-path:path('M 665 237 L 480 237 L 480 233 L 250 233')"/>
+      </svg>
+
+      <div class="diagram-actions">
+        <button class="trigger" id="btn-run">▶ simular un ciclo del bridge</button>
+        <span class="diagram-note" id="status-line">esperando…</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="gpu">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="section-num">02 — ANTES DE ARRANCAR</span>
+      <h2>¿Tenés GPU?</h2>
+      <p class="section-sub">
+        La versión que corre acá es Hiera-<strong>tiny</strong> a 1024 px
+        (<code>sam2.1_inference_tiny</code>), no la large del paper — por eso CPU
+        es viable, aunque incómodo.
+      </p>
+    </div>
+
+    <table class="gpu">
+      <tr><th>Hardware</th><th>Tiempo / frame</th><th>Qué significa</th></tr>
+      <tr>
+        <td>GPU NVIDIA (≥6 GB)</td>
+        <td class="time">~30–60 ms</td>
+        <td>El modelo va a ~10 Hz, como en el paper. El cuello de botella pasa a ser el video del rover, que llega a 3–5 Hz.</td>
+      </tr>
+      <tr>
+        <td>Solo CPU</td>
+        <td class="time">~1–4 s</td>
+        <td>Usable, pero hay que bajar <code>max_linear</code> a ~0.15 y aceptar que el robot avanza a tramos.</td>
+      </tr>
+    </table>
+  </div>
+</section>
+
+<section id="instalacion">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="section-num">03 — DÓNDE VA CADA COSA</span>
+      <h2>Todo el puente vive adentro de GENIE-SAMTP</h2>
+      <p class="section-sub">
+        No dentro del SDK. Son entornos conda separados a propósito: el SDK pinnea
+        <code>numpy==1.26.4</code> y necesita Chrome; SAM2 necesita torch y hydra.
+      </p>
+    </div>
+
+    <div class="filetree">GENIE-SAMTP/
+├── <span class="old">sam2/                    (ya estaba)</span>
+├── <span class="old">genie_path_planner/      (ya estaba)</span>
+├── <span class="new">genie_rover/             ← nuevo — el puente en sí</span>
+├── <span class="new">tools/                   ← nuevo — calibración</span>
+└── <span class="new">configs/frodobot_rover.yaml  ← nuevo</span></div>
+  </div>
+</section>
+
+<section id="pasos">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="section-num">04 — PUESTA EN MARCHA, EN ORDEN</span>
+      <h2>7 pasos, cada uno valida algo concreto</h2>
+      <p class="section-sub">
+        No te saltees ninguno. Los pasos 4 y 6 son los que evitan que el robot
+        se vaya contra una pared.
+      </p>
+    </div>
+
+    <ol class="steps">
+      <li class="step">
+        <span class="step-num">1</span>
+        <div>
+          <h4>¿Habla el SDK?</h4>
+          <code class="cmd">python -m genie_rover.sdk_client</code>
+          <p>Devuelve un frame, GPS con <code>gps_signal &gt; 0</code> y la lista de checkpoints. Anotá la resolución del frame — la vas a necesitar. No manda ningún comando de movimiento.</p>
+        </div>
+      </li>
+      <li class="step">
+        <span class="step-num">2</span>
+        <div>
+          <h4>¿Carga el modelo?</h4>
+          <code class="cmd">python -m genie_rover.perception --config configs/frodobot_rover.yaml --image alguna_foto.jpg --out debug/</code>
+          <p>Todavía con la calibración del Stretch, así que el BEV va a salir mal — acá solo se valida que el checkpoint carga y que SAM-TP segmenta. El suelo transitable tiene que salir rojo en el panel del medio.</p>
+        </div>
+      </li>
+      <li class="step">
+        <span class="step-num">3</span>
+        <div>
+          <h4>Calibrá la cámara</h4>
+          <code class="cmd">python tools/calibrate_camera.py capture --out calib_frames/
+python tools/calibrate_camera.py solve --frames calib_frames/ --square-size 0.025 --out calib.yaml</code>
+          <p>No es opcional: <code>project_score_to_bev</code> asume pinhole puro y no corrige nada, y la óptica del rover distorsiona bastante.</p>
+        </div>
+      </li>
+      <li class="step critical">
+        <span class="step-num">4</span>
+        <div>
+          <h4>Medí la cámara con una regla <span class="critical-tag">crítico</span></h4>
+          <p><code>height_m</code> (piso al centro del lente) y <code>pitch_down_deg</code> (cuánto mira hacia abajo). Poné <code>calibrated: true</code> y repetí el paso 2.</p>
+          <p><strong>Verificación concreta:</strong> una caja a 2 m exactos del robot tiene que aparecer a 2 m en el BEV. Si aparece a 1,4 m o a 3 m, el pitch está mal.</p>
+        </div>
+      </li>
+      <li class="step">
+        <span class="step-num">5</span>
+        <div>
+          <h4>El signo de angular</h4>
+          <code class="cmd">python tools/check_angular_sign.py</code>
+          <p>Gira 2 segundos, mirás para dónde fue, y escribís el valor en el config.</p>
+        </div>
+      </li>
+      <li class="step critical">
+        <span class="step-num">6</span>
+        <div>
+          <h4>Simulacro <span class="critical-tag">crítico</span></h4>
+          <code class="cmd">python -m genie_rover.bridge --config configs/frodobot_rover.yaml</code>
+          <p>Corre el bucle completo e imprime los comandos <strong>sin enviarlos</strong>. Con el robot mirando un pasillo libre tiene que decir <code>linear≈0.30 angular≈0</code>; girado hacia una pared, <code>OBSTACULO al frente</code>.</p>
+        </div>
+      </li>
+      <li class="step">
+        <span class="step-num">7</span>
+        <div>
+          <h4>Primera corrida real</h4>
+          <code class="cmd">python -m genie_rover.bridge --config configs/frodobot_rover.yaml --go --max-seconds 30 --debug-dir debug/run1</code>
+          <p>Al aire libre, con espacio, y con la mano en Ctrl-C. Empezá con <code>max_linear: 0.15</code> y subilo de a poco. Recién cuando esto ande, agregá <code>--start-mission</code>.</p>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section id="detalles" class="wide">
+  <div class="wrap-wide">
+    <div class="section-head">
+      <span class="section-num">05 — DETALLES QUE IMPORTAN</span>
+      <h2>Lo que no es obvio leyendo el diagrama</h2>
+    </div>
+
+    <div class="details">
+      <div class="detail-card full">
+        <div class="detail-tag">⚠ el freno es lo más importante del código</div>
+        <p>
+          El SDK mantiene el último comando de movimiento indefinidamente. Si el
+          proceso del bridge muere sin frenar, <strong>el rover se sigue moviendo solo</strong>.
+        </p>
+        <p>
+          Por eso <code>bridge.run()</code> frena dentro de un <code>finally</code>, dos veces,
+          y hay un <strong>watchdog</strong> que frena si el video se congela más de 2 segundos.
+        </p>
+      </div>
+
+      <div class="detail-card">
+        <div class="detail-tag" style="color:var(--signal)">convención de ejes</div>
+        <p>El planner trabaja en <code>[x_right_m, y_forward_m]</code> centrado en el robot.</p>
+        <p><code>camera_pose_from_height_pitch()</code> arma la <code>T_world_camera</code> en frame óptico (x=derecha, y=abajo, z=adelante) — lo que <code>projection.py</code> espera.</p>
+      </div>
+
+      <div class="detail-card">
+        <div class="detail-tag" style="color:var(--signal)">el rumbo sale del GPS</div>
+        <p>No de la brújula: el magnetómetro va al lado de los motores y su offset varía. <code>HeadingEstimator</code> usa el desplazamiento GPS acumulado — ruidoso, pero no sesgado.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="troubleshooting">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="section-num">06 — SI ALGO FALLA</span>
+      <h2>Síntoma → causa probable</h2>
+    </div>
+
+    <table class="trouble">
+      <tr><td class="symptom">FileNotFoundError del checkpoint</td><td class="cause">El directorio <code>...yaml</code> no está creado con ese nombre literal.</td></tr>
+      <tr><td class="symptom">CUDA out of memory</td><td class="cause">Poné <code>device: "cpu"</code> en el config.</td></tr>
+      <tr><td class="symptom">El BEV sale casi todo vacío</td><td class="cause"><code>pitch_down_deg</code> mal: la cámara "mira" arriba del horizonte y los rayos nunca cortan el piso.</td></tr>
+      <tr><td class="symptom">Obstáculos a la distancia equivocada</td><td class="cause"><code>height_m</code> mal, o la K no corresponde a la resolución actual.</td></tr>
+      <tr><td class="symptom">El robot gira siempre para el lado contrario</td><td class="cause"><code>angular_sign</code> invertido.</td></tr>
+      <tr><td class="symptom">"El frame es 640x480 pero la calibración es para..."</td><td class="cause"><code>IMAGE_QUALITY</code> / <code>IMAGE_FORMAT</code> del <code>.env</code> cambiaron la resolución.</td></tr>
+      <tr><td class="symptom">El planner nunca encuentra camino</td><td class="cause"><code>threshold_cost</code> muy estricto para el terreno, o el BEV está casi todo desconocido.</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="falta">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="section-num">07 — LO QUE ESTE PUENTE NO TIENE</span>
+      <h2>Distancia respecto del sistema que ganó el ERC</h2>
+      <p class="section-sub">Para que quede claro qué falta, no para restarle mérito a lo que ya anda.</p>
+    </div>
+
+    <ul class="missing-list">
+      <li class="missing-item">
+        <span class="missing-icon">1</span>
+        <div>
+          <h4>Recuperación con VLM</h4>
+          <p><code>Bridge._recover()</code> gira a ciegas. El paper usa un VLM en dos etapas (clasificar on-road/off-road, después barrido de 360° en cuatro headings). Es lo primero a agregar — la infraestructura de Gemini ya está lista en <code>programs/genai_program.py</code>.</p>
+        </div>
+      </li>
+      <li class="missing-item">
+        <span class="missing-icon">2</span>
+        <div>
+          <h4>Fusión temporal de observaciones</h4>
+          <p><code>observation_fusion</code> existe en el planner y acá no se usa: cada frame se planifica de cero. Activarlo requiere llevar la pose del robot entre frames.</p>
+        </div>
+      </li>
+      <li class="missing-item">
+        <span class="missing-icon">3</span>
+        <div>
+          <h4>Memoria del entorno</h4>
+          <p>Limitación que los propios autores señalan: sin memoria, el robot no sabe dónde estuvo y cae en mínimos locales.</p>
+        </div>
+      </li>
+    </ul>
+
+    <div class="key-warning">
+      Recordá revocar la clave de OpenRouter que quedó filtrada en <code>control_nube.py</code> — está en el historial de git, así que revocarla es lo único que la desactiva de verdad.
+    </div>
+
+    <a class="top-link" href="#top">↑ volver arriba</a>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>
+      <span>capa 3 de 4 — el puente</span>
+      <span>fuente: README_BRIDGE.md</span>
+    </p>
+  </div>
+</footer>
+
+<script>
+  const btn = document.getElementById('btn-run');
+  const status = document.getElementById('status-line');
+  const pulseF = document.getElementById('pulseF');
+  const pulseC = document.getElementById('pulseC');
+  const stageIds = ['box-samtp', 'box-bev', 'box-planner', 'box-ctrl'];
+
+  function clearStages(){
+    stageIds.forEach(id => document.getElementById(id).classList.remove('active'));
+  }
+
+  btn.addEventListener('click', () => {
+    clearStages();
+    pulseF.classList.remove('run'); void pulseF.offsetWidth; pulseF.classList.add('run');
+    pulseC.classList.remove('run'); void pulseC.offsetWidth; pulseC.classList.add('run');
+
+    status.textContent = '→ GET /v2/front — pidiendo frame al SDK (proceso A)';
+
+    setTimeout(() => { document.getElementById('box-samtp').classList.add('active');
+      status.textContent = '→ SAM-TP segmenta transitabilidad'; }, 900);
+    setTimeout(() => { document.getElementById('box-samtp').classList.remove('active');
+      document.getElementById('box-bev').classList.add('active');
+      status.textContent = '→ proyección a BEV centrado en el robot'; }, 1500);
+    setTimeout(() => { document.getElementById('box-bev').classList.remove('active');
+      document.getElementById('box-planner').classList.add('active');
+      status.textContent = '→ planner elige ruta y calcula costo'; }, 2100);
+    setTimeout(() => { document.getElementById('box-planner').classList.remove('active');
+      document.getElementById('box-ctrl').classList.add('active');
+      status.textContent = '→ controlador arma {linear, angular}'; }, 2600);
+    setTimeout(() => { clearStages();
+      status.textContent = '✓ POST /control enviado al SDK — ciclo completo'; }, 4300);
+  });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Conectar traversability/ con IROS26_ERC_UNLP_Equipo1</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --border:#2a2f3a;
+    --text:#e7e9ee; --muted:#9aa3b2; --accent:#5fb3ff; --accent2:#8b7cff;
+    --ok:#4fd18b; --warn:#ffb454; --danger:#ff6b6b; --code:#c9d1d9;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.6;
+  }
+  .wrap{max-width:920px;margin:0 auto;padding:48px 24px 96px}
+  h1{font-size:1.9rem;margin:0 0 6px;letter-spacing:-.02em}
+  .subtitle{color:var(--muted);margin:0 0 40px;font-size:1.02rem}
+  h2{font-size:1.25rem;margin:48px 0 14px;padding-top:8px;border-top:1px solid var(--border);
+     display:flex;align-items:center;gap:10px}
+  h2 .num{
+    display:inline-flex;align-items:center;justify-content:center;
+    width:28px;height:28px;border-radius:8px;background:var(--accent);color:#0b0d12;
+    font-size:.85rem;font-weight:700;flex:none;
+  }
+  h3{font-size:1.02rem;margin:22px 0 8px;color:var(--accent)}
+  p{margin:0 0 12px}
+  .muted{color:var(--muted)}
+  code{
+    background:#0b0d12;border:1px solid var(--border);border-radius:4px;
+    padding:1px 6px;font-size:.88em;color:var(--code);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  pre{
+    background:#0b0d12;border:1px solid var(--border);border-radius:10px;
+    padding:14px 16px;overflow-x:auto;font-size:.86rem;line-height:1.55;
+    color:var(--code);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  pre code{background:none;border:none;padding:0}
+  .callout{
+    border:1px solid var(--border); border-left:3px solid var(--accent);
+    background:var(--panel); border-radius:8px; padding:14px 16px; margin:14px 0;
+  }
+  .callout.warn{border-left-color:var(--warn)}
+  .callout.danger{border-left-color:var(--danger)}
+  .callout.ok{border-left-color:var(--ok)}
+  .callout b{display:block;margin-bottom:4px;font-size:.85rem;letter-spacing:.02em;text-transform:uppercase;color:var(--muted)}
+  .diagram{
+    background:var(--panel2); border:1px solid var(--border); border-radius:12px;
+    padding:22px; margin:18px 0; overflow-x:auto;
+  }
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
+  .box{
+    border-radius:10px; padding:12px 16px; font-size:.85rem; text-align:center;
+    border:1px solid var(--border); min-width:130px;
+  }
+  .box.sdk{background:rgba(95,179,255,.1); border-color:rgba(95,179,255,.4)}
+  .box.genie{background:rgba(139,124,255,.1); border-color:rgba(139,124,255,.4)}
+  .box.trav{background:rgba(79,209,139,.1); border-color:rgba(79,209,139,.4)}
+  .box.rover{background:rgba(255,180,84,.1); border-color:rgba(255,180,84,.4)}
+  .box small{display:block;color:var(--muted);margin-top:4px;font-size:.75rem}
+  .arrow{color:var(--muted);font-size:1.1rem}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:.9rem}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border)}
+  th{color:var(--muted);font-weight:600;font-size:.8rem;text-transform:uppercase;letter-spacing:.03em}
+  tr:last-child td{border-bottom:none}
+  ul{margin:0 0 12px;padding-left:22px}
+  li{margin-bottom:6px}
+  .step{
+    display:flex;gap:14px;margin:16px 0;padding:16px;background:var(--panel);
+    border:1px solid var(--border);border-radius:10px;
+  }
+  .step .n{
+    flex:none;width:26px;height:26px;border-radius:50%;background:var(--accent2);
+    color:#0b0d12;font-weight:700;font-size:.8rem;display:flex;align-items:center;justify-content:center;
+  }
+  .step .c{flex:1;min-width:0}
+  .step h4{margin:0 0 6px;font-size:.95rem}
+  .badge{
+    display:inline-block;font-size:.72rem;padding:2px 8px;border-radius:20px;
+    background:rgba(255,180,84,.15);color:var(--warn);border:1px solid rgba(255,180,84,.3);
+    margin-left:6px;
+  }
+  footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--border);color:var(--muted);font-size:.82rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Conectar <code>traversability/</code> (PR #1) con tu proyecto</h1>
+  <p class="subtitle">IROS26_ERC_UNLP_Equipo1 — guía basada en tu <code>.gitmodules</code>, <code>setup_earth_rover.ps1</code>, el README de GeNIE y tu <code>README_BRIDGE.md</code></p>
+
+  <div class="callout ok">
+    <b>Punto clave</b>
+    A pesar del nombre "submódulo" que le diste, <code>traversability/</code> <b>no es un git submodule</b>.
+    Tu <code>.gitmodules</code> solo registra <code>earth-rovers-sdk</code> como submódulo real. El PR agrega
+    <code>traversability/</code> como una carpeta común dentro del repo, instalable con <code>pip</code>, que habla
+    con el resto por HTTP. No hay que tocar <code>.gitmodules</code> para nada de esto.
+  </div>
+
+  <h2><span class="num">1</span>Cómo encaja con lo que ya tenés armado</h2>
+  <p>Vos ya corrés <b>dos entornos separados</b> (lo confirma tu <code>setup_earth_rover.ps1</code>): uno para el SDK
+  (raíz, Chrome + FastAPI) y otro para <code>genie/</code> (PyTorch + SAM2). <code>traversability/</code> se suma
+  como un <b>tercer paquete</b>, pero se instala <u>dentro del entorno de genie</u> — necesita torch y el <code>sam2</code>
+  que ya tenés vendoreado ahí. No toca el entorno del SDK para nada.</p>
+
+  <div class="diagram">
+    <div class="row">
+      <div class="box rover">🤖 Rover<small>Earth Rover Mini+</small></div>
+      <span class="arrow">⇄</span>
+      <div class="box sdk">SDK<small>entorno "sdk" (raíz)<br>hypercorn :8000</small></div>
+      <span class="arrow">— HTTP —▶</span>
+      <div class="box trav">traversability/<small>entorno "genie"<br>NUEVO — este PR</small></div>
+    </div>
+    <div class="row" style="margin-top:16px">
+      <div class="box genie">genie/<small>SAM-TP + planner<br>ya lo tenías</small></div>
+      <span class="arrow">▲ pip install -e ./genie</span>
+    </div>
+  </div>
+
+  <table>
+    <tr><th>Pieza</th><th>Entorno</th><th>Qué cambia con este PR</th></tr>
+    <tr><td><code>earth-rovers-sdk/</code> (raíz)</td><td>entorno <b>sdk</b></td><td>nada — <code>traversability</code> solo le pega por HTTP a <code>localhost:8000</code></td></tr>
+    <tr><td><code>genie/</code></td><td>entorno <b>genie / sam_tp</b></td><td>nada tampoco — <code>traversability</code> lo usa como dependencia (<code>-e ./genie</code>), no lo modifica</td></tr>
+    <tr><td><code>traversability/</code></td><td>entorno <b>genie / sam_tp</b> ⬅ acá va</td><td>carpeta nueva, se instala con <code>pip install -e</code></td></tr>
+  </table>
+
+  <h2><span class="num">2</span>Pasos para integrarlo</h2>
+
+  <div class="step">
+    <div class="n">1</div>
+    <div class="c">
+      <h4>Traer la rama del PR</h4>
+      <p>Sin tocar <code>.gitmodules</code> ni submódulos: es un merge normal.</p>
+<pre><code>git fetch origin feature/traversability-module
+git checkout main
+git merge origin/feature/traversability-module
+# o, si preferís revisar antes de mergear a main:
+git checkout -b review-traversability origin/feature/traversability-module</code></pre>
+      <p class="muted">Confirmá que no rompe nada tuyo: <code>git diff main -- . ':(exclude)traversability'</code> tiene que dar vacío (así lo probó <code>sanatem</code>).</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="n">2</div>
+    <div class="c">
+      <h4>Instalar dentro del entorno de <code>genie</code> (no en el del SDK)</h4>
+      <p>Activá el <code>.venv</code> que ya te crea <code>setup_earth_rover.ps1</code> dentro de <code>genie\</code>:</p>
+<pre><code>cd genie
+.venv\Scripts\Activate.ps1
+
+# torch ya lo tenés instalado (cu126) por el script — no reinstalar
+pip install --no-build-isolation -e .          # genie, si no estaba ya en editable
+cd ..
+pip install -e './traversability[hf]'           # el paquete nuevo</code></pre>
+      <div class="callout warn">
+        <b>GPU — RTX 2080 (Turing, SM 7.5)</b>
+        El PR no fija versión de torch, así que se queda con la que ya tenés (cu126). SAM-TP en modo "tiny" corre bien en
+        Turing. No hace falta cambiar nada de lo que instaló <code>setup_earth_rover.ps1</code>.
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="n">3</div>
+    <div class="c">
+      <h4>Pesos: se bajan solos</h4>
+      <p>La primera corrida descarga automáticamente el checkpoint fine-tuneado (~130 MB) desde
+      Hugging Face (<code>sanatem/samtp-mini-traversability</code>, público). No es el mismo checkpoint que usa
+      tu <code>genie/</code> vanilla (<code>checkpoint_2.pt</code>, calibrado para Stretch) — este viene entrenado
+      con ~50k frames reales del Mini+, así que en principio no necesitás repetir la calibración manual que describe
+      tu <code>README_BRIDGE.md</code> (pasos 3 y 4).</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="n">4</div>
+    <div class="c">
+      <h4>Probar sin mover el robot</h4>
+<pre><code>python -m rover_traversability.demo predict screenshots/imagen.jpg --out overlay.png</code></pre>
+      <p>Esto no habla con el SDK ni con el robot, solo corre el modelo sobre una imagen guardada. Es el equivalente al
+      paso 2 (<code>genie_rover.perception</code>) de tu puente actual, pero con el checkpoint del Mini+.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="n">5</div>
+    <div class="c">
+      <h4>Levantar el SDK y probar en vivo (sin mandar comandos)</h4>
+<pre><code># Terminal 1 — igual que siempre
+cd .  &&  .venv\Scripts\Activate.ps1  &&  hypercorn main:app --reload
+
+# Terminal 2 — entorno de genie
+python -m rover_traversability.demo live</code></pre>
+      <p><code>demo live</code> lee video real del rover vía el SDK pero <b>no manda comandos de movimiento</b> — es el
+      equivalente al paso 6 (simulacro) de tu bridge actual.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="n">6</div>
+    <div class="c">
+      <h4>Recién ahí, mover el robot</h4>
+<pre><code>python -m rover_traversability.demo drive --yes-i-want-the-rover-to-move</code></pre>
+      <p>Al aire libre, espacio abierto, mano en Ctrl-C — misma precaución que ya usás en el paso 7 de tu
+      <code>README_BRIDGE.md</code>.</p>
+    </div>
+  </div>
+
+  <h2><span class="num">3</span>Qué reemplaza y qué no de tu puente actual</h2>
+  <table>
+    <tr><th>Tu <code>README_BRIDGE.md</code> (<code>genie_rover.bridge</code>)</th><th>Este PR (<code>rover_traversability</code>)</th></tr>
+    <tr><td>Corre localmente, importa <code>sam2</code> directo</td><td>Corre localmente también, mismo <code>sam2</code> vía <code>genie/</code> instalado</td></tr>
+    <tr><td>Calibración manual con regla (<code>height_m</code>, <code>pitch_down_deg</code>)</td><td>Trae calibración propia del Mini+ (<code>mini_camera_K.npy</code>, <code>mini_T_base_camera.npy</code>) — revisá si coincide con tu robot físico antes de confiar en ella a ciegas</td></tr>
+    <tr><td>Rumbo desde GPS acumulado (<code>HeadingEstimator</code>)</td><td>Tiene su propia estimación de heading en <code>geo.py</code> — no son intercambiables sin revisar</td></tr>
+    <tr><td>Navegación por checkpoints + planner BEV completo</td><td>Navegación por checkpoints GPS también, pero <b>steering por corredor</b> (más simple), no el planner BEV con banco de trayectorias que ya tenés en <code>genie_path_planner</code></td></tr>
+    <tr><td>Sin recuperación VLM (limitación conocida)</td><td>Tampoco la tiene</td></tr>
+  </table>
+  <div class="callout">
+    <b>Decisión pendiente para el equipo</b>
+    El PR queda como <b>draft</b> a propósito hasta la primera prueba de campo. Conviene decidir si lo usan como
+    reemplazo directo de <code>genie_rover.bridge</code> o si toman de acá solo la calibración del Mini+ y los pesos
+    fine-tuneados, y siguen usando el planner BEV completo que ya armaron.
+  </div>
+
+  <h2><span class="num">4</span>Checklist rápido</h2>
+  <ul>
+    <li>✅ No hay que editar <code>.gitmodules</code> — <code>traversability/</code> no es submódulo.</li>
+    <li>✅ Instalar <code>traversability</code> en el <b>mismo</b> <code>.venv</code> que <code>genie/</code>, no en el del SDK.</li>
+    <li>✅ Correr <code>demo predict</code> → <code>demo live</code> → <code>demo drive</code> en ese orden, igual que tu puente actual.</li>
+    <li><span class="badge">pendiente</span> Revocar la API key de OpenRouter hardcodeada en <code>control_nube.py</code> (ya lo tenías anotado).</li>
+    <li><span class="badge">pendiente</span> Verificar en campo que la calibración del Mini+ que trae el PR coincide con la posición real de la cámara en <i>su</i> robot.</li>
+  </ul>
+
+  <footer>Generado a partir de tu <code>.gitmodules</code>, <code>setup_earth_rover.ps1</code>, <code>README_BRIDGE.md</code>, <code>environment.yml</code> y el PR #1 de <code>IROS26_ERC_UNLP_Equipo1</code>.</footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Earth Rover Challenge · Guía técnica para el equipo UNLP</title>
+<style>
+  :root{
+    color-scheme: light;
+    --surface-0:#f6f6f4;
+    --surface-1:#fcfcfb;
+    --surface-2:#f0efec;
+    --ink-1:#0b0b0b;
+    --ink-2:#52514e;
+    --ink-3:#87857e;
+    --line:#e0dfd9;
+    --line-2:#cfcdc4;
+    --blue:#2a78d6;
+    --orange:#eb6834;
+    --aqua:#1baf7a;
+    --red:#e34948;
+    --yellow:#eda100;
+    --violet:#4a3aa7;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      color-scheme: dark;
+      --surface-0:#141413;
+      --surface-1:#1a1a19;
+      --surface-2:#232321;
+      --ink-1:#ffffff;
+      --ink-2:#c3c2b7;
+      --ink-3:#8f8d83;
+      --line:#333330;
+      --line-2:#454540;
+      --blue:#3987e5;
+      --orange:#d95926;
+      --aqua:#199e70;
+      --red:#e66767;
+      --yellow:#c98500;
+      --violet:#9085e9;
+    }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--surface-0);color:var(--ink-1);
+    font:16px/1.65 ui-sans-serif,-apple-system,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:940px;margin:0 auto;padding:0 24px 120px}
+  header{padding:64px 0 40px;border-bottom:1px solid var(--line)}
+  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+  h1{font-size:34px;line-height:1.2;margin:14px 0 12px;letter-spacing:-.02em;font-weight:650}
+  .sub{color:var(--ink-2);font-size:17px;max-width:70ch;margin:0}
+  .meta{margin-top:22px;font-size:13px;color:var(--ink-3);font-family:var(--mono)}
+  h2{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);
+     font-weight:700;margin:64px 0 6px;padding-top:20px;border-top:1px solid var(--line)}
+  h2 .n{color:var(--ink-1);font-family:var(--mono);margin-right:10px}
+  h3{font-size:23px;line-height:1.3;margin:6px 0 18px;letter-spacing:-.015em;font-weight:640}
+  h4{font-size:16px;margin:30px 0 8px;font-weight:640}
+  p{margin:0 0 14px;color:var(--ink-2);max-width:74ch}
+  p strong,li strong{color:var(--ink-1);font-weight:620}
+  ul,ol{margin:0 0 16px;padding-left:22px;color:var(--ink-2);max-width:74ch}
+  li{margin-bottom:7px}
+  code{font-family:var(--mono);font-size:.88em;background:var(--surface-2);
+       padding:1px 5px;border-radius:4px;color:var(--ink-1);border:1px solid var(--line)}
+  pre{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;
+      padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:13px;
+      line-height:1.6;color:var(--ink-1);margin:0 0 18px}
+  pre .c{color:var(--ink-3)}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin:26px 0 8px}
+  .card{background:var(--surface-1);border:1px solid var(--line);border-radius:12px;padding:18px 18px 16px}
+  .card .q{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+           color:var(--ink-3);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .dot{width:8px;height:8px;border-radius:50%;flex:none}
+  .card .a{font-size:16px;font-weight:640;color:var(--ink-1);line-height:1.4;margin-bottom:8px}
+  .card p{font-size:14px;margin:0;color:var(--ink-2)}
+  table{width:100%;border-collapse:collapse;margin:6px 0 22px;font-size:14px}
+  th{text-align:left;font-weight:640;color:var(--ink-3);font-size:11px;letter-spacing:.09em;
+     text-transform:uppercase;padding:0 12px 8px 0;border-bottom:1px solid var(--line-2);vertical-align:bottom}
+  td{padding:9px 12px 9px 0;border-bottom:1px solid var(--line);color:var(--ink-2);vertical-align:top}
+  td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;padding-right:26px}
+  td:last-child,th:last-child{padding-right:0}
+  td.k{color:var(--ink-1);font-weight:600}
+  .box{border:1px solid var(--line-2);border-radius:12px;padding:18px 20px 4px;margin:22px 0;background:var(--surface-1)}
+  .box.hi{border-color:var(--orange);background:color-mix(in srgb,var(--orange) 6%,var(--surface-1))}
+  .box.ok{border-color:var(--aqua);background:color-mix(in srgb,var(--aqua) 6%,var(--surface-1))}
+  .box .lbl{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+            color:var(--ink-3);margin-bottom:8px}
+  .box.hi .lbl{color:var(--orange)}
+  .box.ok .lbl{color:var(--aqua)}
+  figure{margin:24px 0 28px}
+  figcaption{font-size:13px;color:var(--ink-3);margin-top:10px;max-width:72ch}
+  .bars{margin:4px 0 8px}
+  .barrow{display:grid;grid-template-columns:88px 1fr 92px;align-items:center;gap:12px;margin-bottom:7px}
+  .barrow .lab{font-family:var(--mono);font-size:12px;color:var(--ink-2);text-align:right}
+  .bartrack{height:16px;background:var(--surface-2);border-radius:4px;overflow:hidden}
+  .bar{height:100%;border-radius:0 4px 4px 0;background:var(--blue)}
+  .barrow .val{font-family:var(--mono);font-size:12px;color:var(--ink-1);font-variant-numeric:tabular-nums}
+  .tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+       padding:2px 8px;border-radius:20px;border:1px solid currentColor;margin-right:6px}
+  .t-p1{color:var(--red)} .t-p2{color:var(--orange)} .t-p3{color:var(--ink-3)}
+  .snippet{background:var(--surface-1);border:1px solid var(--line-2);border-left:3px solid var(--blue);
+           border-radius:0 10px 10px 0;padding:16px 18px;margin:0 0 16px}
+  .snippet .who{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);
+                font-weight:700;margin-bottom:8px}
+  .snippet p{font-size:14.5px;color:var(--ink-1);margin:0 0 10px}
+  .snippet p:last-child{margin-bottom:0}
+  nav.toc{background:var(--surface-1);border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin:34px 0 0}
+  nav.toc ol{margin:0;padding-left:20px;columns:2;column-gap:32px;font-size:14px}
+  nav.toc li{margin-bottom:6px;break-inside:avoid}
+  nav.toc a{color:var(--ink-2);text-decoration:none;border-bottom:1px solid transparent}
+  nav.toc a:hover{color:var(--ink-1);border-bottom-color:var(--line-2)}
+  .lede2{font-size:20px;line-height:1.5;color:var(--ink-1);max-width:66ch;margin:0 0 18px;font-weight:560}
+  .st{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+      padding:3px 9px;border-radius:20px;margin-right:11px;vertical-align:2px;color:#fff}
+  .st.ok{background:var(--aqua)} .st.a{background:var(--blue)}
+  .st.b{background:var(--orange)} .st.c{background:var(--red)}
+  .stats4{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:12px;margin:24px 0 30px}
+  .s4{background:var(--surface-1);border:1px solid var(--line);border-radius:12px;padding:15px 16px}
+  .s4 .v{font-family:var(--mono);font-size:27px;font-weight:700;line-height:1;letter-spacing:-.03em}
+  .s4 .l{font-size:12px;color:var(--ink-3);margin-top:7px}
+  .qt{border-left:3px solid var(--line-2);padding:2px 0 2px 16px;margin:0 0 16px;max-width:74ch}
+  .qt p{font-family:var(--mono);font-size:13px;line-height:1.6;color:var(--ink-2);margin:0 0 6px}
+  .qt .src{font-size:11.5px;color:var(--ink-3);font-family:var(--mono)}
+  .steps{counter-reset:st;list-style:none;padding-left:0;max-width:74ch}
+  .steps>li{counter-increment:st;position:relative;padding-left:42px;margin-bottom:16px}
+  .steps>li::before{content:counter(st);position:absolute;left:0;top:-1px;width:26px;height:26px;
+    border-radius:50%;border:1px solid var(--line-2);background:var(--surface-1);
+    font-family:var(--mono);font-size:12px;font-weight:700;color:var(--ink-1);
+    display:flex;align-items:center;justify-content:center}
+  .steps>li b{color:var(--ink-1)}
+  .sim{border:1px solid var(--line-2);border-radius:14px;background:var(--surface-1);padding:18px;margin:22px 0 30px}
+  .simgrid{display:grid;grid-template-columns:1fr 250px;gap:20px;align-items:start}
+  .simctl label{display:block;font-size:12px;color:var(--ink-2);margin-bottom:14px;font-weight:600}
+  .simctl label b{float:right;font-family:var(--mono);color:var(--ink-1);font-weight:700}
+  .simctl input[type=range]{width:100%;margin-top:8px;accent-color:var(--blue);height:18px}
+  .readout{border-top:1px solid var(--line);padding-top:12px;margin-top:4px}
+  .readout div{display:flex;justify-content:space-between;align-items:baseline;font-size:12.5px;
+               color:var(--ink-2);padding:5px 0;border-bottom:1px solid var(--line)}
+  .readout div:last-child{border-bottom:none}
+  .readout b{font-family:var(--mono);color:var(--ink-1);font-size:13px}
+  .readout .hero{padding-top:10px;margin-top:4px;border-top:1px solid var(--line-2)}
+  .readout .hero b{font-size:16px;font-weight:700}
+  .simnote{font-size:12.5px;line-height:1.5;margin:12px 0 0;min-height:3em;color:var(--ink-2)}
+  .simnote b{color:var(--ink-1)}
+  @media (max-width:720px){ .simgrid{grid-template-columns:1fr} }
+  .foot{margin-top:70px;padding-top:22px;border-top:1px solid var(--line);font-size:13px;color:var(--ink-3)}
+  @media (max-width:640px){
+    h1{font-size:27px} h3{font-size:20px}
+    nav.toc ol{columns:1}
+    .barrow{grid-template-columns:74px 1fr 78px;gap:8px}
+    table{font-size:13px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Earth Rover Challenge · IROS 2026</div>
+  <h1>Guía técnica: profundidad, velocidad y toma de decisiones en el Mini</h1>
+  <p class="sub">Respuesta a las tres preguntas del equipo UNLP, apoyada en los números de su propia bitácora. La conclusión corta: los tres síntomas son la misma cosa vista desde tres lados, y ninguno se arregla con un modelo mejor.</p>
+  <div class="meta">5 de agosto de 2026 · sobre "Bitácora técnica · Earth Rover Mini + GeNIE" · faltan 8 semanas para Pittsburgh</div>
+
+  <p style="margin-top:18px;font-size:14.5px;color:var(--ink-2)">¿Poco tiempo? Hay un <a href="Resumen_UNLP_EarthRover.html" style="color:var(--blue)">resumen de cinco minutos</a> con la conclusión, el orden de trabajo y lo que conviene no hacer, sin las derivaciones.</p>
+
+  <nav class="toc">
+    <ol>
+      <li><a href="#s1">La geometría que explica casi todo</a></li>
+      <li><a href="#s2">Profundidad: la pregunta correcta es otra</a></li>
+      <li><a href="#s3">Velocidad: no es la lineal, es la de decisión</a></li>
+      <li><a href="#s4">Por qué se congela cuando el obstáculo está cerca</a></li>
+      <li><a href="#s5">Pasto y caminos de tierra</a></li>
+      <li><a href="#s6">Lo que falta y no es técnico: medir</a></li>
+      <li><a href="#s7">Estado: qué está resuelto y qué falta</a></li>
+      <li><a href="#s8">Plan de acá a Pittsburgh</a></li>
+      <li><a href="#s9">Cierre: lo único de esta semana</a></li>
+    </ol>
+  </nav>
+</header>
+
+<section>
+<h2><span class="n">00</span>Respuesta corta</h2>
+<h3>Las tres preguntas, en una línea cada una</h3>
+
+<div class="cards">
+  <div class="card">
+    <div class="q"><span class="dot" style="background:var(--blue)"></span>Profundidad</div>
+    <div class="a">No es el cuello de botella. El pitch dinámico sí.</div>
+    <p>A 2 m, un grado de error de pitch son 61 cm. La suspensión se mueve más de un grado al acelerar. Compensar pitch por frame con la IMU son unas 30 líneas y le gana a cualquier red de profundidad monocular.</p>
+  </div>
+  <div class="card">
+    <div class="q"><span class="dot" style="background:var(--orange)"></span>Velocidad</div>
+    <div class="a">No van rápido. Deciden rápido.</div>
+    <p>A 0,25 m/s y 5 Hz avanzan 5 cm por frame, con celdas de 3 cm. Cada frame re-decide sobre información casi idéntica. Hay que bajar la frecuencia de decisión, no la velocidad.</p>
+  </div>
+  <div class="card">
+    <div class="q"><span class="dot" style="background:var(--red)"></span>Se queda ahí</div>
+    <div class="a">Geometría, no percepción.</div>
+    <p>Un obstáculo más alto que 15 cm pinta una cuña roja de profundidad completa. A 1,5 m ocupa 14 % del campo visual; a 0,3 m ocupa 66 %. Girar en el lugar no lo resuelve nunca. Solo retroceder.</p>
+  </div>
+</div>
+
+<div class="box hi">
+  <div class="lbl">Lo más importante de todo el documento</div>
+  <p>La bitácora es excelente y el diagnóstico de fondo ya está escrito en su última sección: <em>"falta una línea base medida, metros entre intervenciones en una ruta fija"</em>. Sin ese número, cada uno de estos temas se discute por intuición. Con ese número, la mitad de las discusiones se cierran solas en una tarde. <strong>Eso es lo primero que hay que construir, antes que cualquier fix de los que siguen.</strong></p>
+</div>
+</section>
+
+<section id="s1">
+<h2><span class="n">01</span>La geometría</h2>
+<h3>Casi todos los síntomas salen de tener la cámara a 15 cm</h3>
+
+<p>Con los intrínsecos y la pose que ya calibraron (<code>fy = 924,63</code>, <code>cy = 528,39</code>, <code>h = 0,150 m</code>, <code>pitch = 1,85°</code>) la geometría del sensor queda completamente determinada. Estos números salen de su calibración, no de un supuesto:</p>
+
+<table>
+  <thead><tr><th>Magnitud</th><th class="num">Valor</th><th>De dónde sale</th></tr></thead>
+  <tbody>
+    <tr><td class="k">Campo visual horizontal</td><td class="num">92,3°</td><td>2·atan(cx / fx), coincide con su nota de gran angular</td></tr>
+    <tr><td class="k">Campo visual vertical</td><td class="num">60,6°</td><td>29,8° arriba del eje + 30,8° abajo</td></tr>
+    <tr><td class="k">Rayo inferior de la imagen</td><td class="num">32,7°</td><td>30,8° + 1,85° de pitch, medido desde la horizontal</td></tr>
+    <tr><td class="k">Punto de suelo más cercano visible</td><td class="num">0,234 m</td><td>h / tan(32,7°). Más cerca de eso no hay píxeles</td></tr>
+    <tr><td class="k">Fila del horizonte</td><td class="num">498</td><td>cy − fy·tan(1,85°). Todo lo de arriba es incalculable</td></tr>
+    <tr><td class="k">Error de distancia por 1° de pitch a 2 m</td><td class="num">61 cm</td><td>confirma el orden de magnitud que ustedes estimaron</td></tr>
+  </tbody>
+</table>
+
+<figure>
+<svg viewBox="0 0 900 400" width="100%" role="img" aria-label="Vista lateral del rover mostrando la zona ciega de 23 cm y las bandas de distancia">
+  <defs>
+    <pattern id="hatch" width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="0" y2="7" stroke="currentColor" stroke-width="2" opacity=".28"/>
+    </pattern>
+  </defs>
+  <g style="color:var(--red)">
+    <rect x="0" y="248" width="140" height="52" fill="url(#hatch)"/>
+  </g>
+  <!-- suelo -->
+  <line x1="0" y1="300" x2="890" y2="300" stroke="var(--ink-1)" stroke-width="2"/>
+  <!-- horizonte optico -->
+  <line x1="60" y1="249" x2="880" y2="249" stroke="var(--ink-3)" stroke-width="1.5" stroke-dasharray="5 5"/>
+  <text x="878" y="242" text-anchor="end" font-size="12" fill="var(--ink-3)" font-family="ui-monospace,monospace">horizonte · fila 498</text>
+  <!-- cuerpo del rover -->
+  <rect x="4" y="262" width="58" height="38" rx="5" fill="var(--surface-2)" stroke="var(--ink-2)" stroke-width="1.5"/>
+  <circle cx="20" cy="300" r="9" fill="var(--surface-1)" stroke="var(--ink-2)" stroke-width="1.5"/>
+  <circle cx="48" cy="300" r="9" fill="var(--surface-1)" stroke="var(--ink-2)" stroke-width="1.5"/>
+  <circle cx="60" cy="249" r="5" fill="var(--blue)"/>
+  <text x="2" y="232" font-size="12" fill="var(--blue)" font-weight="700" font-family="ui-monospace,monospace">cámara · 0,15 m</text>
+  <!-- rayos -->
+  <line x1="60" y1="249" x2="140" y2="300" stroke="var(--red)" stroke-width="2"/>
+  <line x1="60" y1="249" x2="740" y2="300" stroke="var(--blue)" stroke-width="2"/>
+  <!-- marcas de suelo -->
+  <g font-size="11.5" font-family="ui-monospace,monospace">
+    <line x1="140" y1="296" x2="140" y2="316" stroke="var(--red)" stroke-width="2"/>
+    <text x="140" y="332" text-anchor="middle" fill="var(--red)" font-weight="700">0,23</text>
+    <line x1="230" y1="298" x2="230" y2="310" stroke="var(--ink-3)" stroke-width="1.5"/>
+    <text x="230" y="326" text-anchor="middle" fill="var(--ink-3)">0,5</text>
+    <line x1="400" y1="298" x2="400" y2="310" stroke="var(--ink-3)" stroke-width="1.5"/>
+    <text x="400" y="326" text-anchor="middle" fill="var(--ink-3)">1,0</text>
+    <line x1="570" y1="298" x2="570" y2="310" stroke="var(--ink-3)" stroke-width="1.5"/>
+    <text x="570" y="326" text-anchor="middle" fill="var(--ink-3)">1,5</text>
+    <line x1="740" y1="296" x2="740" y2="316" stroke="var(--blue)" stroke-width="2"/>
+    <text x="740" y="332" text-anchor="middle" fill="var(--blue)" font-weight="700">2,0 m</text>
+  </g>
+  <!-- etiquetas de banda -->
+  <text x="70" y="358" font-size="12.5" fill="var(--red)" font-weight="700">zona ciega</text>
+  <text x="70" y="374" font-size="11.5" fill="var(--ink-3)">sin píxeles</text>
+  <text x="185" y="358" font-size="12.5" fill="var(--ink-2)" font-weight="600">59 % de las filas útiles</text>
+  <text x="185" y="374" font-size="11.5" fill="var(--ink-3)">0,23 a 0,50 m</text>
+  <text x="600" y="358" font-size="12.5" fill="var(--ink-2)" font-weight="600">5 %</text>
+  <text x="600" y="374" font-size="11.5" fill="var(--ink-3)">1,5 a 2,0 m</text>
+  <!-- obstaculo cerca -->
+  <rect x="213" y="215" width="16" height="85" rx="2" fill="var(--orange)" opacity=".92"/>
+  <text x="244" y="196" font-size="11.5" fill="var(--orange)" font-weight="700" font-family="ui-monospace,monospace">obstáculo de 25 cm a 0,45 m</text>
+  <text x="244" y="212" font-size="11.5" fill="var(--ink-2)" font-family="ui-monospace,monospace">su tope queda ARRIBA del horizonte:</text>
+  <text x="244" y="228" font-size="11.5" fill="var(--ink-2)" font-family="ui-monospace,monospace">se proyecta a distancia infinita</text>
+  <line x1="60" y1="249" x2="213" y2="215" stroke="var(--orange)" stroke-width="1.5" stroke-dasharray="3 3"/>
+  <line x1="213" y1="215" x2="870" y2="69" stroke="var(--orange)" stroke-width="1" stroke-dasharray="2 4" opacity=".45"/>
+</svg>
+<figcaption>Vista lateral a escala. La zona rayada es lo que la cámara no puede ver. El obstáculo naranja mide 25 cm y está a 35 cm: la mitad de arriba proyecta por encima del horizonte, o sea a distancia infinita sobre el plano del suelo.</figcaption>
+</figure>
+
+<h4>Simulador: muevan el obstáculo y miren qué le llega al planner</h4>
+<p>Vista cenital del mapa que recibe el planner, calculada con la geometría real del Mini. Los 12 arcos son los caminos candidatos. Muevan la distancia de 1,5 m hacia 0,3 m y observen el momento en que dejan de sobrevivir caminos, sin que cambie nada del obstáculo ni del modelo.</p>
+
+<div class="sim">
+  <div class="simgrid">
+    <div class="simviz">
+      <svg id="bev" viewBox="0 0 520 392" width="100%" role="img" aria-label="Mapa cenital interactivo con la cuña del obstáculo y los caminos candidatos"></svg>
+    </div>
+    <div class="simctl">
+      <label>Distancia al obstáculo <b><span id="vD">1.50</span> m</b>
+        <input id="cD" type="range" min="0.20" max="2.00" step="0.01" value="1.50"></label>
+      <label>Altura del obstáculo <b><span id="vH">0.25</span> m</b>
+        <input id="cH" type="range" min="0.03" max="0.40" step="0.01" value="0.25"></label>
+      <label>Ancho del obstáculo <b><span id="vW">0.35</span> m</b>
+        <input id="cW" type="range" min="0.10" max="0.80" step="0.01" value="0.35"></label>
+      <label>Corrimiento lateral <b><span id="vL">0.00</span> m</b>
+        <input id="cL" type="range" min="-0.70" max="0.70" step="0.01" value="0"></label>
+
+      <div class="readout">
+        <div><span>Cuña angular</span><b id="rAng">13.3°</b></div>
+        <div><span>Del campo visual</span><b id="rFov">14 %</b></div>
+        <div><span>La mancha llega a</span><b id="rReach">infinito</b></div>
+        <div><span>Mapa marcado rojo</span><b id="rArea">11 %</b></div>
+        <div class="hero"><span>Caminos que sobreviven</span><b id="rPaths">11 de 12</b></div>
+      </div>
+      <p class="simnote" id="simMsg"></p>
+    </div>
+  </div>
+</div>
+
+<h4>Consecuencia 1: el presupuesto de píxeles está casi todo en los primeros 50 cm</h4>
+<p>Repartiendo las filas de imagen entre bandas de distancia sobre el suelo, con <code>forward_range_m: 2.0</code>:</p>
+
+<div class="bars">
+  <div class="barrow"><span class="lab">0,23 – 0,5 m</span><div class="bartrack"><div class="bar" style="width:100%"></div></div><span class="val">292 filas</span></div>
+  <div class="barrow"><span class="lab">0,5 – 1,0 m</span><div class="bartrack"><div class="bar" style="width:47%"></div></div><span class="val">137 filas</span></div>
+  <div class="barrow"><span class="lab">1,0 – 1,5 m</span><div class="bartrack"><div class="bar" style="width:15.8%"></div></div><span class="val">46 filas</span></div>
+  <div class="barrow"><span class="lab">1,5 – 2,0 m</span><div class="bartrack"><div class="bar" style="width:7.9%"></div></div><span class="val">23 filas</span></div>
+  <div class="barrow"><span class="lab">2,0 – 4,0 m</span><div class="bartrack"><div class="bar" style="width:12%"></div></div><span class="val">35 filas</span></div>
+</div>
+
+<p>Y traducido a resolución efectiva contra sus celdas de 3 cm, ya contando <code>projection_downscale: 2</code>:</p>
+
+<table>
+  <thead><tr><th>Banda</th><th class="num">cm de suelo por fila</th><th class="num">con downscale 2</th><th class="num">vs celda de 3 cm</th></tr></thead>
+  <tbody>
+    <tr><td class="k">0,23 – 0,5 m</td><td class="num">0,09</td><td class="num">0,18</td><td class="num">0,1×</td></tr>
+    <tr><td class="k">0,5 – 1,0 m</td><td class="num">0,37</td><td class="num">0,73</td><td class="num">0,2×</td></tr>
+    <tr><td class="k">1,0 – 1,5 m</td><td class="num">1,09</td><td class="num">2,18</td><td class="num">0,7×</td></tr>
+    <tr><td class="k">1,5 – 2,0 m</td><td class="num">2,17</td><td class="num">4,35</td><td class="num">1,4×</td></tr>
+    <tr><td class="k">2,0 – 3,0 m</td><td class="num">4,34</td><td class="num">8,68</td><td class="num">2,9×</td></tr>
+    <tr><td class="k">3,0 – 4,0 m</td><td class="num">8,67</td><td class="num">17,34</td><td class="num">5,8×</td></tr>
+  </tbody>
+</table>
+
+<p>Esta tabla <strong>explica cuantitativamente su hallazgo de la sección 3</strong>. A partir de 2 m cada fila cubre más de una celda, así que el mapa se llena de rayas radiales con huecos entre medio. No fue mala suerte con un parámetro: es la única salida posible de esa geometría. Y da la respuesta a la pregunta que sigue naturalmente, que es hasta dónde se puede subir <code>forward_range_m</code>: <strong>hasta 2,0 m con downscale 2, o hasta 2,5 m si vuelven a downscale 1 en la mitad superior de la imagen</strong>. Vale la pena probar esa asimetría, porque la mitad superior son pocas filas y submuestrearlas es donde más duele.</p>
+
+<h4>Consecuencia 2: cualquier objeto más alto que la cámara pinta la profundidad completa</h4>
+<p>La proyección de plano fijo asume que todo píxel está sobre el suelo. Para un objeto vertical eso es falso, y el error tiene una forma concreta: un píxel del objeto a altura <em>y</em> y distancia <em>d</em> se proyecta a <code>d · h / (h − y)</code>. Es decir:</p>
+<ul>
+  <li>Un objeto de <strong>5 cm</strong> de alto se estira 1,5×.</li>
+  <li>Uno de <strong>10 cm</strong> se estira 3×.</li>
+  <li>Uno de <strong>15 cm o más</strong> (o sea prácticamente todo: macetas, sillas, mochilas, postes, personas) se estira <strong>hasta el infinito</strong>. Pinta de rojo toda la cuña angular que ocupa, desde su base hasta el borde del mapa.</li>
+</ul>
+
+<p>Y el ancho de esa cuña depende brutalmente de la distancia. Para una maceta de 35 cm de ancho:</p>
+
+<table>
+  <thead><tr><th>Distancia</th><th class="num">Cuña angular</th><th class="num">% del campo visual</th><th>Qué le queda al planner</th></tr></thead>
+  <tbody>
+    <tr><td class="k">0,3 m</td><td class="num">60,5°</td><td class="num">66 %</td><td>casi nada, y lo poco libre está en los bordes</td></tr>
+    <tr><td class="k">0,5 m</td><td class="num">38,6°</td><td class="num">42 %</td><td>hay hueco, pero no espacio para llegar a él</td></tr>
+    <tr><td class="k">1,0 m</td><td class="num">19,9°</td><td class="num">22 %</td><td>margen cómodo</td></tr>
+    <tr><td class="k">1,5 m</td><td class="num">13,3°</td><td class="num">14 %</td><td>trivial</td></tr>
+  </tbody>
+</table>
+
+<div class="box ok">
+  <div class="lbl">Esto es literalmente la pregunta de Tomi</div>
+  <p><em>"cuando llega a un obstáculo muy cercano como que se queda ahí, pero si lo ve de lejos sí lo esquiva"</em>. El mismo objeto, con el mismo modelo de percepción y el mismo planner, produce <strong>una mancha compacta del 14 % del mapa a 1,5 m y una cuña del 66 % a 0,3 m</strong>. No cambió nada del software entre esos dos momentos. Cambió la geometría de la proyección. El planner ve dos escenas completamente distintas y actúa distinto, correctamente, según lo que se le muestra.</p>
+</div>
+
+<h4>Consecuencia 3: el jitter del borde de máscara se amplifica con la distancia</h4>
+<p>Un temblor de 8 filas en el borde de la máscara (normal en terreno de textura, ver sección 5) vale <strong>6 cm a 1 m, 14 cm a 1,5 m y 26 cm a 2 m</strong>. En celdas de 3 cm eso son 2, 5 y 9 celdas de ruido. El corredor libre "respira" varias celdas por frame y el planner elige distinto. Es la mitad del titubeo.</p>
+</section>
+
+<section id="s2">
+<h2><span class="n">02</span>Profundidad</h2>
+<h3>Tienen razón en el diagnóstico. Falta un paso más</h3>
+
+<p>Su sección 8 ya llegó a la conclusión correcta y por las razones correctas: el 80 % del peso viene de un config de Stretch, el modo <code>rgb</code> es de primera clase en <code>pipeline.py:444</code>, el ganador del ERC 2025 tampoco tenía sensor de profundidad, y meter profundidad relativa en un umbral métrico de 0,20 m da basura. Todo eso está bien y no hace falta rediscutirlo.</p>
+
+<p>El paso que falta es este: <strong>la preocupación de fondo es correcta pero está mal atribuida</strong>. Lo frágil no es la falta de profundidad de los obstáculos. Lo frágil es que <code>pitch = 1,85°</code> es una constante en el config y en la realidad no es constante.</p>
+
+<table>
+  <thead><tr><th>Distancia</th><th class="num">Error por 1° de pitch</th><th class="num">Error por 2°</th></tr></thead>
+  <tbody>
+    <tr><td class="k">0,5 m</td><td class="num">3,4 cm</td><td class="num">7 cm</td></tr>
+    <tr><td class="k">1,0 m</td><td class="num">13,5 cm</td><td class="num">28 cm</td></tr>
+    <tr><td class="k">1,5 m</td><td class="num">32,0 cm</td><td class="num">68 cm</td></tr>
+    <tr><td class="k">2,0 m</td><td class="num">61,0 cm</td><td class="num">1,32 m</td></tr>
+  </tbody>
+</table>
+
+<p>Fuentes de pitch dinámico en un rover chico, todas de más de un grado:</p>
+<ul>
+  <li><strong>Aceleración y frenado.</strong> El cabeceo de la suspensión al arrancar y al frenar. Es la más grande y la más sistemática: cada vez que el detector de atasco fuerza un avance, el mapa se corre hacia adelante medio metro durante un segundo.</li>
+  <li><strong>Baldosas, badenes, rampas, cordones bajos.</strong> Un desnivel de 2 cm bajo una rueda delantera con 15 cm de trocha son varios grados.</li>
+  <li><strong>Pendiente del terreno.</strong> La vereda de La Plata tiene pendiente transversal hacia la calzada. Ahí también entra el roll.</li>
+</ul>
+
+<h4>Qué hacer, en orden</h4>
+<ol>
+  <li><strong>Estimar pitch y roll por frame con la IMU.</strong> Filtro complementario: el acelerómetro da la dirección de la gravedad (buena en promedio, ruidosa en el instante), el giróscopo da la tasa (buena en el instante, deriva en el largo plazo). Constante de tiempo de 0,5 a 1 s. Usar el valor interpolado al timestamp del frame, no el último recibido.
+    <br><em>Ojo con esto:</em> su propia bitácora dice que la telemetría llega en ráfagas, con 88 % de muestras duplicadas y huecos de hasta 441 ms. Un hueco de 441 ms durante una aceleración es exactamente el momento donde más lo necesitan. Hay que loguear la antigüedad del dato de pitch por frame, y si supera unos 200 ms, <strong>recortar <code>forward_range_m</code> a 1,0 m para ese frame</strong> en vez de proyectar con información vieja.</li>
+  <li><strong>Verificar el sesgo estático primero.</strong> Con el rover quieto en el piso calibrado, la IMU debería dar 1,85° de pitch y −0,55° de roll. Si no coincide, hay un offset de montaje que hay que restar. Es un test de dos minutos que valida toda la cadena.</li>
+  <li><strong>Recién después, el experimento que ya definieron.</strong> Y vale la pena precisarle un criterio de aprobación para que cierre el tema de una vez.</li>
+</ol>
+
+<div class="box">
+  <div class="lbl">Experimento · plano fijo contra realidad</div>
+  <p>Manejar 30 m de una ruta que incluya al menos un badén y una rampa, con RTK activo, logueando todo. Para cada frame <em>t</em> y cada celda del mapa a distancia <em>d</em>, guardar la distancia proyectada. Después, con la trayectoria GPS posterior como verdad de terreno, calcular el error de la posición de cada celda cuando el robot efectivamente pasó por ahí. Graficar percentil 90 del error contra <em>d</em>, en tres condiciones: pitch fijo, pitch de IMU, y pitch de IMU sin compensar sesgo.</p>
+  <p><strong>Criterio:</strong> si con pitch de IMU el percentil 90 queda por debajo de 25 cm a 1,5 m, <strong>el tema profundidad se cierra y no se vuelve a abrir hasta después de Pittsburgh</strong>. Si queda arriba, ya saben exactamente cuántos centímetros hay que ganar, y ahí sí la conversación de profundidad monocular tiene un número al lado.</p>
+</div>
+
+<p>Si eventualmente hicieran profundidad monocular, la forma que plantearon es la correcta (relativa para inclinación local, escala anclada a los 0,15 m medidos, descarte con vuelta al plano fijo). Pero <strong>no antes de Pittsburgh</strong>. Es semanas de trabajo con riesgo alto y con un techo de mejora que todavía no midieron.</p>
+</section>
+
+<section id="s3">
+<h2><span class="n">03</span>Velocidad</h2>
+<h3>Hay dos velocidades y la que importa no es la del robot</h3>
+
+<h4>La velocidad lineal no es su problema</h4>
+<p>Con el radio calibrado, 45,8 rpm dan <strong>0,253 m/s</strong>. El presupuesto de latencia es aproximadamente:</p>
+
+<pre><span class="c"># cadena de latencia, extremo a extremo</span>
+video del rover al servidor      ~500 ms   <span class="c">(latencia declarada por la competencia)</span>
+percepción + proyección           182 ms   <span class="c">(medido por ustedes, con downscale 2)</span>
+planner + envío del comando      ~150 ms   <span class="c">(estimado, hay que medirlo)</span>
+                                --------
+tiempo muerto total              ~830 ms
+
+a 0,253 m/s  ->  21 cm recorridos a ciegas por decisión
+</pre>
+
+<p>Contra un horizonte confiable de aproximadamente 1,5 m, 21 cm es holgado. <strong>Podrían ir bastante más rápido sin problemas de latencia.</strong> Bajar la velocidad no va a arreglar ninguno de los tres síntomas de su sección 5, y de hecho empeora uno de ellos, como se ve abajo.</p>
+
+<h4>La velocidad que sí es el problema: 5 cm de avance por decisión</h4>
+<p>A 0,253 m/s y 5 Hz de video, el robot avanza <strong>5,1 cm entre frames consecutivos</strong>. Las celdas del mapa miden 3 cm. Dos frames seguidos ven prácticamente la misma escena, con una diferencia de menos de dos celdas. Y sin embargo:</p>
+
+<div class="box hi">
+  <div class="lbl">El mecanismo del titubeo</div>
+  <p>El planner vuelve a decidir desde cero sobre información que no cambió. La única diferencia real entre frame y frame es <strong>ruido</strong>: jitter del borde de máscara (2 a 9 celdas según la distancia, ver sección 1), ruido de la segmentación, y cabeceo de la suspensión. Cuando dos rutas tienen costos parecidos, cualquiera de esos ruidos da vuelta la elección. En su <code>debug/run5</code>, entre la iteración 3 y la 5 hay 10 cm de avance real: <strong>el robot no cambió de opinión porque aprendió algo, cambió de opinión porque el ruido superó a la diferencia de costo.</strong></p>
+</div>
+
+<p>Y acá está el detalle contraintuitivo que responde a "tema de velocidad de movimiento": <strong>ir más lento empeora el titubeo</strong>. Menos avance por frame significa menos información nueva por decisión, con la misma cantidad de ruido. La relación señal a ruido de la decisión baja.</p>
+
+<h4>La solución: desacoplar la frecuencia de percepción de la de decisión</h4>
+<p>Percibir a 5 Hz, integrar al mapa a 5 Hz, y <strong>replanificar por disparo espacial, no temporal</strong>:</p>
+
+<pre><span class="c"># en vez de: cada frame -> plan nuevo -> comando nuevo</span>
+<span class="c"># hacer:</span>
+
+cada frame:
+    integrar BEV al mapa persistente
+    chequeo de colisión frontal con observación fresca   <span class="c"># esto sí a 5 Hz</span>
+
+replanificar solo si alguna de estas:
+    avancé más de 0.30 m desde el último plan            <span class="c"># disparo espacial</span>
+    el plan actual se agotó
+    el chequeo frontal vetó el plan actual
+    pasaron más de 2.0 s                                 <span class="c"># red de seguridad</span>
+
+entre replanificaciones:
+    seguir el plan comprometido con un controlador de seguimiento puro
+</pre>
+
+<p>Esto reemplaza el parche de histéresis por el primitivo correcto, que es <strong>compromiso</strong>. La histéresis intenta simular compromiso desde un planner sin estado. Con un plan que dura 30 cm, el compromiso es real, y además:</p>
+<ul>
+  <li>Se replanifica cada 1,2 s a 0,25 m/s, o sea 6 veces menos seguido, y cada replanificación ve 30 cm de información nueva en vez de 5 cm. La relación señal a ruido de la decisión sube <strong>seis veces</strong>, sin tocar la percepción.</li>
+  <li>El bug de <code>costs.py</code> que ya detectaron (la mezcla pondera proporcional al costo, así que el peor de los 12 caminos es el que más tira) pesa 6 veces menos por metro recorrido. <strong>Igual arréglenlo</strong>, es de una línea y es la causa individual más barata de eliminar. Softmax sobre el costo negativo, o directamente quedarse con el mejor camino.</li>
+</ul>
+
+<h4>Perfil de velocidad recomendado</h4>
+<p>Con esa estructura, la velocidad puede modularse por espacio libre en vez de ser constante:</p>
+
+<table>
+  <thead><tr><th>Distancia libre al frente</th><th class="num">v lineal</th><th>Notas</th></tr></thead>
+  <tbody>
+    <tr><td class="k">&gt; 1,5 m</td><td class="num">0,45 m/s</td><td>abierto. Recorren la ruta al doble de velocidad</td></tr>
+    <tr><td class="k">0,8 – 1,5 m</td><td class="num">0,25 m/s</td><td>régimen actual</td></tr>
+    <tr><td class="k">0,4 – 0,8 m</td><td class="num">0,15 m/s</td><td>maniobra fina, plan más corto (0,15 m)</td></tr>
+    <tr><td class="k">&lt; 0,4 m</td><td class="num">política de campo cercano</td><td>el planner ya no es confiable acá. Ver sección 4</td></tr>
+  </tbody>
+</table>
+
+<p>Y una regla dura: <strong>nunca velocidad lineal cero con velocidad angular distinta de cero</strong>, salvo dentro de la rutina de recuperación explícita. Girar en el lugar es la única acción que no produce información nueva sobre lo que tienen adelante ni avance neto hacia la meta. Es la definición operativa de estar trabado. Mantener siempre <code>v ≥ 0,08 m/s</code> mientras haya plan, y curvar en vez de pivotear. Su ajuste propuesto de <code>align_threshold_deg: 90</code> apunta a esto y va en la dirección correcta.</p>
+</section>
+
+<section id="s4">
+<h2><span class="n">04</span>El congelamiento</h2>
+<h3>La cadena causal completa, de la geometría al síntoma</h3>
+
+<p>Juntando todo lo anterior, esto es lo que pasa cuando el rover se acerca a una maceta. Cada eslabón se puede verificar en sus propios logs:</p>
+
+<ol>
+  <li><strong>A 1,5 m</strong>, la maceta ocupa 13° del campo visual. Su proyección es una cuña roja delgada de 1,5 m al borde del mapa. Hay 3,1 m de ancho visible a esa distancia y la cuña tapa 40 cm. El planner encuentra hueco fácil y esquiva. <em>Esto funciona bien y es lo que ustedes observan.</em></li>
+  <li><strong>A 0,5 m</strong>, la misma maceta ocupa 39°. El ancho visible a esa distancia es de 1,04 m y la cuña tapa un tercio de él, justo en el centro. Todavía hay hueco a los costados, pero para llegar ahí el rover necesitaría un arco lateral que a 0,5 m no tiene espacio para ejecutar.</li>
+  <li><strong>A 0,3 m</strong>, ocupa 60°, o sea <strong>dos tercios del campo visual</strong>. El ancho visible es de 62 cm. Lo libre está en los bordes extremos del cuadro, donde además la distorsión de barril (<code>k1 = −0,263</code>) es máxima y la rectificación es menos confiable. Los 12 caminos candidatos del planner arrancan derecho: los 12 atraviesan la cuña.</li>
+  <li><strong>El planner devuelve un desvío enorme</strong> (los 60° a 75° que ustedes ya registraron en la sección de abiertos) o directamente ningún camino.</li>
+  <li><strong><code>align_threshold_deg</code> dispara "girar primero".</strong> El rover pivotea. Avance neto: cero.</li>
+  <li><strong>Girar no resuelve nada.</strong> Y acá está el punto que hace que sea un lazo cerrado en vez de un retraso: <strong>la zona ciega gira con el robot</strong>. La maceta a 30 cm está igual de cerca en todas las orientaciones. La única acción que la aleja es retroceder, y retroceder no está en el espacio de acciones del planner.</li>
+  <li><strong>El detector de atasco fuerza un avance recto.</strong> Que es exactamente lo peor que se puede hacer estando trabado contra un obstáculo de frente. En el mejor caso choca suave y el operador interviene.</li>
+  <li><strong>La histéresis de lado agrava.</strong> Se comprometió con un lado hace 6 iteraciones, cuando todavía había hueco de ese lado. Ahora ya no hay, pero exige una diferencia grande para cambiar.</li>
+</ol>
+
+<div class="box hi">
+  <div class="lbl">La conclusión que hay que internalizar</div>
+  <p>Por debajo de aproximadamente 0,6 m, el BEV instantáneo <strong>no es una fuente de información válida</strong> para planificar. No es que sea de baja calidad: está estructuralmente degradado por la geometría de proyección. Cualquier intento de arreglar el comportamiento cercano tocando umbrales del planner va a fallar, porque el planner está haciendo lo correcto con datos malos.</p>
+</div>
+
+<h4>La arquitectura correcta: dos regímenes</h4>
+
+<pre><span class="c"># Régimen LEJANO  (frente libre > 0.6 m)</span>
+    fuente: mapa persistente + BEV fresco
+    GeNIE planifica, compromiso de 0.30 m, perfil de velocidad de §3
+    <span class="c"># acá es donde se debería resolver el 95 % de los obstáculos</span>
+
+<span class="c"># Régimen CERCANO  (frente libre < 0.6 m, o el planner no devuelve camino,</span>
+<span class="c">#                   o 5 iteraciones con desplazamiento < 5 cm y comando != 0)</span>
+    congelar el planner. NO consultar el BEV instantáneo.
+    consultar SOLO el mapa persistente, que tiene la memoria de
+    cuando el obstáculo estaba a 1.5 m y se veía bien:
+
+    1. retroceder 0.35 m a 0.15 m/s
+       <span class="c"># única acción que reduce la ocupación angular del obstáculo</span>
+       <span class="c"># y saca al obstáculo de la zona degenerada</span>
+    2. elegir el rumbo con más área libre acumulada dentro de 2 m
+       <span class="c"># del mapa, no de la cámara</span>
+    3. rotar hacia ese rumbo
+    4. volver a LEJANO con 2 s de bloqueo de re-disparo
+
+    escalamiento:
+      2 recuperaciones fallidas -> marcar el corredor bloqueado
+                                   por 30 s y replanificar la ruta al subobjetivo
+      3 recuperaciones fallidas -> pedir intervención
+                                   <span class="c"># cuesta MPI, cuesta mucho menos que un stall</span>
+</pre>
+
+<div class="box ok">
+  <div class="lbl">Por qué esto también valida el mapa persistente</div>
+  <p>El mapa persistente que ya construyeron es <strong>exactamente</strong> lo que hace posible el régimen cercano, y esa es su justificación más fuerte, más que la de reducir el titubeo. Cuando el obstáculo entra en la zona degenerada, el mapa todavía tiene la observación buena de hace 1,2 m. Sin mapa, el régimen cercano no tendría de dónde sacar el rumbo de escape. Con mapa, es una consulta. Prioricen validarlo en terreno: hoy figura como "sin validar" y es la pieza de la que cuelga toda la solución.</p>
+</div>
+
+<h4>Dos tests de una hora que cierran el tema</h4>
+<div class="box">
+  <div class="lbl">Test A · dónde deja de verse un obstáculo</div>
+  <p>Rover quieto en modo simulacro. Una caja de cartón de 25 cm de alto y 35 cm de ancho, movida hacia el rover en pasos de 5 cm, desde 2,0 m hasta 0,15 m. En cada paso, guardar el BEV y anotar tres números: distancia real, distancia del borde más cercano de la mancha roja, y fracción de celdas rojas del mapa.</p>
+  <p><strong>Predicción de este documento:</strong> la fracción roja crece de forma aproximadamente monótona y pasa de alrededor del 15 % a 1,5 m a más del 60 % por debajo de 0,4 m, y la distancia estimada del borde se mantiene bien hasta que la caja entra en los 0,25 m. Si la curva medida se parece a esa, la sección 1 queda confirmada y el régimen cercano queda justificado con datos propios. Si no se parece, hay algo más pasando y vale la pena mirarlo antes de escribir código.</p>
+</div>
+<div class="box">
+  <div class="lbl">Test B · el titubeo como test de regresión</div>
+  <p>Tomen los logs que ya tienen (<code>debug/run5</code> y los demás) y armen un modo replay que alimente el pipeline con frames y telemetría grabados. Después escriban una sola aserción: <em>en esta corrida, el lado elegido no cambia más de N veces</em>. Corre en segundos, no necesita robot ni batería ni buen clima, y convierte "titubea" en un número que sube o baja con cada commit. Es probablemente el mejor retorno por hora de trabajo de todo el proyecto.</p>
+</div>
+</section>
+
+<section id="s5">
+<h2><span class="n">05</span>Pasto y caminos de tierra</h2>
+<h3>Son tres problemas distintos que conviene no mezclar</h3>
+
+<p>"Caminos, pastitos" junta tres cosas que tienen causas y soluciones diferentes. Separarlas es la mitad del trabajo.</p>
+
+<h4>Problema 1: ambigüedad semántica, no error de segmentación</h4>
+<p>SAM-TP se entrenó con 15.347 frames de veredas. El pasto está fuera de distribución, así que el score se queda cerca del umbral en vez de irse a un extremo. Pero además hay un problema más profundo: <strong>la pregunta "¿es pasto transitable?" no tiene respuesta única</strong>. Depende de la altura del pasto y de la capacidad del Mini, que con 15 cm de trocha y ruedas de 9 cm de diámetro no es mucha. Píxeles idénticos, respuesta distinta. Ningún modelo de segmentación semántica puede resolver eso, porque la información no está en la imagen.</p>
+
+<h4>Problema 2: los bordes de textura no tienen geometría</h4>
+<p>Un cordón tiene un borde geométrico. Un sendero de tierra en el pasto tiene un borde de textura: gradual, sin discontinuidad clara, y con un umbral que cambia con la iluminación. El borde de la máscara se mueve varias filas entre frames. Aplicando los números de la sección 1, 8 filas de jitter son <strong>6 cm a 1 m, 14 cm a 1,5 m y 26 cm a 2 m</strong>. El corredor libre respira 5 a 9 celdas por frame. Es decir: <strong>el terreno ambiguo no causa un problema nuevo, amplifica el titubeo de la sección 3.</strong> Por eso lo notan más en pasto que en vereda.</p>
+
+<h4>Problema 3: la binarización destruye la única información útil que había</h4>
+<p>Acá está el fix más barato de esta sección. SAM-TP produce un score continuo. Umbralizarlo convierte un 0,48 y un 0,52 en "no" y "sí", que es la peor decisión posible justo en el régimen donde el modelo está diciendo "no sé". <strong>Pasen el score continuo al costo del planner en vez de binarizarlo.</strong> Un score de 0,5 debe producir un costo intermedio, no un muro. Con eso, un sendero de tierra ambiguo se vuelve "transitable pero preferible evitarlo", que es la semántica correcta y además es estable frame a frame.</p>
+
+<h4>Qué hacer, ordenado por costo</h4>
+<table>
+  <thead><tr><th>Acción</th><th>Costo</th><th>Efecto esperado</th></tr></thead>
+  <tbody>
+    <tr><td class="k"><span class="tag t-p1">1</span>Arreglar el bug de mezcla de <code>costs.py</code></td><td>1 línea</td><td>Alto. En terreno de bajo contraste los 12 caminos tienen costos parecidos, así que el bug domina justamente ahí</td></tr>
+    <tr><td class="k"><span class="tag t-p1">2</span>Score continuo al costo, sin binarizar</td><td>medio día</td><td>Alto. Elimina el flicker de umbral, que es la causa dominante en pasto</td></tr>
+    <tr><td class="k"><span class="tag t-p2">3</span>Exigir 2 observaciones antes de que una celda sea letal</td><td>1 día</td><td>Alto. Usa la capa de confianza que ya tienen. Mata el flicker de un frame sin agregar latencia real</td></tr>
+    <tr><td class="k"><span class="tag t-p2">4</span>Decaimiento por clase en el mapa</td><td>1 día</td><td>Medio. Terreno con vida media larga (5 s), obstáculos posiblemente dinámicos con vida media corta (1 s)</td></tr>
+    <tr><td class="k"><span class="tag t-p2">5</span>Recalibrar umbral por superficie</td><td>1 día</td><td>Medio. 50 frames del terreno real, histograma de scores, umbral en el valle. Distinto por pista</td></tr>
+    <tr><td class="k"><span class="tag t-p3">6</span>Etiquetado auto-supervisado desde la trayectoria manejada</td><td>1 semana</td><td>Alto pero después de Pittsburgh</td></tr>
+  </tbody>
+</table>
+
+<h4>Sobre el punto 6, que es la respuesta buena a "¿hace falta entrenar?"</h4>
+<p>Su sección 9 concluye bien que no hace falta entrenar para transitabilidad básica, y las 12 imágenes lo respaldan. Si en algún momento quieren mejorar específicamente pasto y tierra, <strong>hay una forma que no requiere etiquetar nada a mano</strong>:</p>
+<p>Cada metro que el rover maneja sin chocar es una etiqueta positiva gratis. Con la cadena de poses de la odometría, la huella del robot en el instante <em>t</em> se puede proyectar hacia atrás sobre el frame de cámara del instante <em>t−k</em>, donde ese pedazo de suelo todavía estaba adelante. Esos píxeles son transitables <em>para este robot en particular</em>, que es exactamente la pregunta que la ambigüedad semántica del problema 1 no puede responder. Unas horas manejando por La Plata dan miles de frames auto-etiquetados sobre las superficies reales.</p>
+<p><strong>Sesgo a tener presente:</strong> el etiquetado es solo positivo, así que aprende conservador. Lo no manejado va como "desconocido", nunca como negativo, y los negativos salen de choques e intervenciones. Es trabajo de después de Pittsburgh: la palanca de acá a septiembre es el mapa persistente, no el modelo.</p>
+
+<h4>El felpudo y el cordón son el mismo caso, y ya lo diagnosticaron bien</h4>
+<p>El felpudo marcado como intransitable es un error de prior aprendido (parche rectangular de textura distinta en una vereda suele ser rejilla o pozo), y se ataca con los puntos 2 y 3 de la tabla: con costo continuo, el felpudo pasa de muro a "preferible evitarlo", y si ocupa todo el ancho del pasillo el planner igual pasa. Es la conducta correcta.</p>
+<p>El cordón invisible detrás del auto es oclusión pura, y su conclusión es la correcta y además generaliza: <strong>a 15 cm de altura, la oclusión es la fuente dominante de pérdida de información, muy por encima de la calidad del modelo.</strong> Ningún fine-tuning trae píxeles que no están. El corolario práctico es fuerte: <strong>el mapa persistente vale más que cualquier mejora de percepción</strong>, porque es lo único que recupera estructura ocluida. Y como la plataforma es estandarizada y no pueden subir la cámara, no hay otra palanca. Las fotos del cordón a 40 a 50 cm confirmarían el diagnóstico, pero no cambian qué hay que hacer, así que son de baja prioridad.</p>
+
+<div class="box">
+  <div class="lbl">Nota sobre las pistas</div>
+  <p>El ERC tiene cuatro pistas (urbana con GPS, interior, off-road y maratón) y las superficies son muy distintas entre ellas. <strong>No hace falta una sola política que sirva para las cuatro</strong>, y probablemente no convenga. Umbrales distintos por pista es legítimo y barato. Y estratégicamente, dado el calendario, es mejor entrar fuerte en dos pistas que mediocre en cuatro.</p>
+</div>
+</section>
+
+<section id="s6">
+<h2><span class="n">06</span>Medición</h2>
+<h3>La instrumentación que convierte discusiones en números</h3>
+
+<p>Su propia bitácora lo dice mejor de lo que lo podría decir yo: <em>"lo más urgente para el proyecto no es técnico: falta una línea base medida"</em>. Concretamente, esto es lo que hay que construir, y son unas 200 líneas:</p>
+
+<h4>Métrica primaria</h4>
+<p><strong>MPI: metros entre intervenciones</strong>, sobre una ruta fija de aproximadamente 120 m que puedan repetir tres veces por sesión. Una intervención es cualquier momento en que un humano toca el control. Elijan la ruta esta semana y no la cambien más hasta Pittsburgh, aunque sea imperfecta. Su valor está en ser comparable consigo misma.</p>
+
+<h4>Métricas secundarias, todas del mismo log</h4>
+<table>
+  <thead><tr><th>Métrica</th><th>Qué detecta</th><th class="num">Meta inicial</th></tr></thead>
+  <tbody>
+    <tr><td class="k">Fracción de tiempo parado</td><td>congelamiento, giros en el lugar</td><td class="num">&lt; 10 %</td></tr>
+    <tr><td class="k">Cambios de lado por 10 m</td><td>titubeo. Es la métrica de las secciones 3 y 5</td><td class="num">&lt; 2</td></tr>
+    <tr><td class="k">Choques por 100 m</td><td>fallas de campo cercano</td><td class="num">0</td></tr>
+    <tr><td class="k">Velocidad media efectiva sobre ruta</td><td>si el perfil de velocidad sirve de algo</td><td class="num">&gt; 0,25 m/s</td></tr>
+    <tr><td class="k">Recuperaciones disparadas por 100 m</td><td>si el régimen cercano se usa o si nunca entra</td><td class="num">medir primero</td></tr>
+    <tr><td class="k">Antigüedad del pitch al proyectar (p90)</td><td>si los huecos de telemetría muerden</td><td class="num">&lt; 200 ms</td></tr>
+  </tbody>
+</table>
+
+<h4>Formato de log</h4>
+<pre><span class="c"># un jsonl por corrida, una línea por iteración del bucle</span>
+{
+  "t": 1754400000.123,
+  "pose": [x, y, theta],          <span class="c"># odometría</span>
+  "gps": [lat, lon, hdop],
+  "cmd": [v, omega],
+  "plan_id": 47,                  <span class="c"># incrementa solo al replanificar</span>
+  "side": "der",                  <span class="c"># para contar cambios de lado</span>
+  "planner_status": "ok",         <span class="c"># ok | sin_camino | recuperando</span>
+  "free_frac_frontal": 0.62,      <span class="c"># celdas libres en la banda de 0.6 m</span>
+  "pitch_used": 1.9, "pitch_age_ms": 40,
+  "map_coverage": 0.68,
+  "intervention": false           <span class="c"># marcado por el operador con una tecla</span>
+}
+</pre>
+<p>Un script que lea el jsonl y escupa las siete métricas. Después de cada sesión, una línea en una planilla. En dos semanas van a tener una curva que dice qué cambio sirvió y cuál no, y las discusiones de arquitectura se resuelven mirando la curva.</p>
+</section>
+
+<section id="s7">
+<h2><span class="n">07</span>Estado</h2>
+<h3>Qué está resuelto y qué falta, punto por punto</h3>
+
+<p>Esta sección no agrega análisis nuevo: ordena todo lo anterior en un tablero. Cada ítem resuelto viene con <strong>dónde deja de cubrir</strong>, y cada ítem pendiente con <strong>criterio de terminado</strong>, para que se pueda tildar sin discusión.</p>
+
+<div class="stats4">
+  <div class="s4"><div class="v" style="color:var(--aqua)">10</div><div class="l">resueltos</div></div>
+  <div class="s4"><div class="v" style="color:var(--blue)">4</div><div class="l">de una línea</div></div>
+  <div class="s4"><div class="v" style="color:var(--orange)">5</div><div class="l">de días</div></div>
+  <div class="s4"><div class="v" style="color:var(--red)">4</div><div class="l">de semanas</div></div>
+  <div class="s4"><div class="v" style="color:var(--ink-3)">4</div><div class="l">sin empezar</div></div>
+</div>
+
+<h4><span class="st ok">Resuelto</span> Diez cosas que ya están, y hasta dónde llegan</h4>
+
+<table>
+  <thead><tr><th style="width:24%">Qué está resuelto</th><th style="width:34%">Evidencia</th><th>Dónde deja de cubrir</th></tr></thead>
+  <tbody>
+    <tr><td class="k">Calibración intrínseca</td>
+        <td>fx 925,27 · fy 924,63 · cx 962,31 · cy 528,39</td>
+        <td>No cubre la <strong>distorsión</strong>. Si los coeficientes k1/k2 están en cero, el undistort es un no-op y el borde de la imagen proyecta a celdas equivocadas. Verificarlo es un <code>print</code>.</td></tr>
+    <tr><td class="k">Extrínsecos estáticos</td>
+        <td>h 0,150 m · pitch 1,85° · roll −0,55°</td>
+        <td>Cubre el valor <em>nominal</em>, en reposo. No cubre que el pitch cambia al andar, que es <strong>el error dominante de todo el stack</strong>.</td></tr>
+    <tr><td class="k">Proyección a BEV</td>
+        <td>Celdas de 3 cm, <code>forward_range_m: 2.0</code></td>
+        <td>Nada por encima de 2,0–2,5 m es confiable con esta geometría (sección 01). El techo ya está bien elegido: <strong>no subirlo</strong>.</td></tr>
+    <tr><td class="k">Percepción por frame</td>
+        <td>SAM-TP a 5 Hz, 182 ms medidos</td>
+        <td>La salida es continua, pero se <strong>binariza en 0,5</strong> antes de llegar al costo. Todo el matiz del modelo se tira justo antes de usarlo.</td></tr>
+    <tr><td class="k">Mapa persistente</td>
+        <td>Construido y funcionando</td>
+        <td>No se consulta en el régimen cercano, que es <strong>exactamente donde es la única fuente válida</strong>. Hoy está construido y sin explotar.</td></tr>
+    <tr><td class="k">Capa de confianza por celda</td>
+        <td>Existe por celda</td>
+        <td>No se usa para exigir 2 observaciones antes de declarar una celda letal. Está lista y desconectada.</td></tr>
+    <tr><td class="k">Instrumentación de telemetría</td>
+        <td>88 % de muestras duplicadas, huecos de hasta 441 ms</td>
+        <td>Está medido a nivel agregado, pero <strong>no se loguea la antigüedad del dato por frame</strong>, que es lo que permitiría actuar sobre un hueco puntual.</td></tr>
+    <tr><td class="k">Presupuesto de latencia</td>
+        <td>500 ms de competencia + 182 ms propios</td>
+        <td>Nada: acá la conclusión es que <strong>hay margen de sobra</strong>. La latencia no es el problema y se puede dejar de discutir.</td></tr>
+    <tr><td class="k">Planner GeNIE integrado</td>
+        <td>12 caminos candidatos, selección por costo</td>
+        <td>Replanifica <strong>por frame</strong>, no por distancia recorrida. Ahí nace el titubeo (sección 03).</td></tr>
+    <tr><td class="k">Histéresis y detector de atasco</td>
+        <td>Ambos implementados</td>
+        <td>El detector fuerza un <strong>avance recto</strong>, que es lo peor posible estando trabado de frente. La histéresis parchea un síntoma del replanteo por frame.</td></tr>
+  </tbody>
+</table>
+
+<div class="box ok">
+  <div class="lbl">Lectura de esta tabla</div>
+  <p>Siete de los diez ítems resueltos no fallan por estar mal hechos: fallan porque <strong>lo que producen no se usa donde más sirve</strong>. El score continuo se binariza, la confianza no entra al costo, el mapa persistente no se consulta cuando es lo único válido, la antigüedad del dato no se loguea. <strong>La mayor parte del trabajo pendiente es conectar cosas que ya existen</strong>, no construirlas.</p>
+</div>
+
+<h4><span class="st a">Falta · horas</span> Cuatro arreglos de una línea</h4>
+
+<table>
+  <thead><tr><th style="width:30%">Qué</th><th style="width:34%">Dónde</th><th>Criterio de terminado</th></tr></thead>
+  <tbody>
+    <tr><td class="k">Bug de mezcla de costos</td><td><code>costs.py</code>, la combinación de términos</td>
+        <td>Un test unitario con dos mapas de costo conocidos devuelve la mezcla esperada. Pesa más justo en terreno de bajo contraste, donde los 12 caminos empatan.</td></tr>
+    <tr><td class="k">Score continuo al costo</td><td>Donde hoy se umbraliza en 0,5</td>
+        <td>Ninguna celda pasa por un umbral antes de entrar al costo. Un 0,48 y un 0,52 dejan de ser "muro" y "libre".</td></tr>
+    <tr><td class="k"><code>align_threshold_deg: 90</code></td><td>Config del controlador</td>
+        <td>No se dispara giro en el lugar por debajo de 90° de error de rumbo. Corta el lazo de "girar sin salir" de la sección 04.</td></tr>
+    <tr><td class="k">Fijar <code>forward_range_m</code> en 2,0</td><td>Config de proyección</td>
+        <td>Queda documentado por qué no se sube, con el cálculo de la sección 01 al lado. Evita que alguien lo suba en tres semanas "para ver más lejos".</td></tr>
+  </tbody>
+</table>
+
+<h4><span class="st b">Falta · días</span> Cinco cambios de fondo, baratos</h4>
+
+<table>
+  <thead><tr><th style="width:30%">Qué</th><th style="width:14%">Costo</th><th>Criterio de terminado</th></tr></thead>
+  <tbody>
+    <tr><td class="k">Pitch y roll dinámicos por IMU</td><td>2 días</td>
+        <td>Filtro complementario, constante de 0,5 a 1 s. El log muestra pitch distinto de 1,85° cada vez que el rover acelera o pisa un badén. <strong>Es la respuesta real al tema profundidad.</strong></td></tr>
+    <tr><td class="k">Antigüedad del pitch por frame</td><td>medio día</td>
+        <td>Cada frame loguea <code>pitch_age_ms</code>. Si supera 200 ms, ese frame proyecta con <code>forward_range</code> recortado a 1,0 m en vez de usar datos viejos.</td></tr>
+    <tr><td class="k">Replanificar por avance, no por frame</td><td>2 días</td>
+        <td>El <code>plan_id</code> incrementa unas 3 veces por metro, no 20. Disparadores: 30 cm de avance, veto del chequeo frontal, o 2 s de red de seguridad.</td></tr>
+    <tr><td class="k">Dos observaciones antes de celda letal</td><td>1 día</td>
+        <td>Una celda vista una sola vez no puede bloquear un camino. Usa la capa de confianza que ya existe.</td></tr>
+    <tr><td class="k">Cargar el modelo afinado provisto</td><td>1 día</td>
+        <td>Se cambia la ruta del checkpoint, se corre la ruta fija, y si aparece margen se restauran los umbrales estrictos del planner. Ver el bloque al final de la sección.</td></tr>
+  </tbody>
+</table>
+
+<h4><span class="st c">Falta · semanas</span> Cuatro cosas grandes, en orden de riesgo</h4>
+
+<table>
+  <thead><tr><th style="width:30%">Qué</th><th style="width:14%">Costo</th><th>Criterio de terminado</th></tr></thead>
+  <tbody>
+    <tr><td class="k">Línea base de intervenciones<br><span style="color:var(--red);font-weight:400">bloquea todo lo demás</span></td><td>2 días</td>
+        <td>Ruta fija elegida, jsonl + script de métricas andando, <strong>MPI medido con 3 corridas</strong>. Sin este número no se puede saber si algo de lo que sigue sirvió.</td></tr>
+    <tr><td class="k">Régimen cercano con retroceso</td><td>1 semana</td>
+        <td>Por debajo de 0,6 m de frente libre: planner congelado, BEV instantáneo ignorado, solo mapa persistente, retroceso de 35 cm, rotación al rumbo más libre. Pasa la prueba de la caja de la sección 04.</td></tr>
+    <tr><td class="k"><strong>Capa de misión completa</strong><br><span style="color:var(--red);font-weight:400">el riesgo real</span></td><td>2 semanas</td>
+        <td>Una misión de 120 m completada de punta a punta, aunque sea con muchas intervenciones. Ver sección 08.</td></tr>
+    <tr><td class="k">Umbral por superficie</td><td>1 semana</td>
+        <td>Pasto y tierra dejan de ser "muro" y pasan a ser "preferible evitarlo". Solo si compiten en off-road.</td></tr>
+  </tbody>
+</table>
+
+<div class="box hi">
+  <div class="lbl">Sin empezar · de su propia lista</div>
+  <p>Navegación a checkpoints GPS · proponedor de subobjetivos · recuperación con VLM · las tres pistas sin GPS.</p>
+  <p><strong>Los cuatro juntos son la competencia.</strong> Y el diagnóstico ya está escrito en la bitácora: <em>"GeNIE resuelve los primeros metros. Las misiones son de ~120. Ese hueco es el proyecto, y sigue sin atacarse."</em> Es el único ítem de todo este tablero cuyo costo de no hacerlo es <strong>cero puntos</strong>, no "menos puntos".</p>
+</div>
+
+<h4>Percepción: dónde está el techo, y por qué no lo van a tener que tocar</h4>
+
+<p>Hay un límite real del modelo que conviene tener nombrado. <strong>El checkpoint público de GENIE-SAMTP está entrenado sobre FrodoBots-2K</strong>, que es el Earth Rover grande con la cámara a unos 30 cm. El Mini la tiene a 15. No es que el modelo vea peor: ve un manifold de imágenes que no vio nunca durante el entrenamiento.</p>
+
+<p>Y le falta un concepto puntual, que es el que la geometría del Mini vuelve crítico: <strong>distingue "suelo" de "no suelo", no "cosa apoyada sobre el suelo"</strong>. Por eso un objeto oscuro sobre piso claro le puede salir transitable. A 30 cm de altura eso importa poco porque el objeto se ve como un objeto; a 15 cm importa mucho porque se ve como una mancha sobre el piso.</p>
+
+<div class="box">
+  <div class="lbl">Tres atajos para compensarlo aguas abajo · los tres salen caros</div>
+  <ul style="margin-bottom:14px">
+    <li><strong>Reglas de brillo o color</strong> para marcar como obstáculo lo que se ve más oscuro que el piso. Convierte sombras y asfalto en obstáculos fantasma, y no ve nada claro.</li>
+    <li><strong>Una segunda red que aporte semántica</strong> sobre la primera. Sirve acotada a objetos que la principal no vio nunca; con categorías amplias enmascara medio mapa y el rover queda encerrado.</li>
+    <li><strong>Relajar los umbrales del planner</strong> hasta que deje de ser conservador. Es el más tentador y el más peligroso: le saca margen de seguridad al robot <em>en todas las escenas</em>, no solo en las que molestaba.</li>
+  </ul>
+</div>
+
+<div class="box ok">
+  <div class="lbl">Lo que les vamos a pasar · un modelo chico ya afinado</div>
+  <p>Nada de lo anterior hace falta que lo resuelvan ustedes. <strong>Les vamos a proveer un modelo chico de percepción ya afinado para la geometría del Mini</strong>, listo para cargar en lugar del checkpoint público. Cierra la brecha de dominio que describe el párrafo anterior sin que tengan que etiquetar un solo frame.</p>
+  <p>Y el punto de dárselos no es que mejoren percepción. <strong>Es exactamente lo contrario: que dejen de tener que mejorarla.</strong> Con ese modelo cargado, percepción sale del camino crítico y las semanas que quedan se pueden gastar enteras en misiones, que es donde están los puntos.</p>
+  <table style="margin:14px 0 6px">
+    <tbody>
+      <tr><td class="k" style="width:34%">Qué es</td><td>Un checkpoint afinado sobre imágenes del Mini a su altura real, con objetos apoyados en el suelo sobre-representados a corta distancia</td></tr>
+      <tr><td class="k">Cómo se usa</td><td>Se reemplaza la ruta del checkpoint en el config. No hay cambios de código ni de arquitectura</td></tr>
+      <tr><td class="k">Qué esperar</td><td>Menos ruido moteado en escenas del Mini, y sobre todo <strong>menos falsos "transitable" en objetos oscuros apoyados en el piso</strong></td></tr>
+      <tr><td class="k">Qué NO resuelve</td><td>Nada de la sección 01. La cuña de obstáculos, la zona ciega y el cabeceo son geometría: <strong>siguen igual con cualquier modelo</strong></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="box hi">
+  <div class="lbl">Cómo se integra, y cómo saber si sirvió</div>
+  <p>Es un cambio de un día, pero <strong>tiene un orden que importa</strong>. Primero la línea base con el modelo actual: sin ese número no hay contra qué comparar. Después se carga el modelo nuevo <em>sin tocar nada más</em> y se corre la misma ruta. Y recién ahí, si aparece margen, es el momento de volver atrás cualquier umbral que hayan tenido que relajar para compensar al modelo — ahí está buena parte de la ganancia real, porque un umbral relajado le saca margen de seguridad al robot en todas las escenas, no solo en las que molestaba.</p>
+  <p>Si el MPI no se mueve, también hay que saberlo: significa que el cuello de botella está en la geometría o en el momento de decidir, no en el modelo. Que es, por otra parte, lo que dice el resto de este documento.</p>
+</div>
+</section>
+
+<section id="s8">
+<h2><span class="n">08</span>Calendario</h2>
+<h3>Ocho semanas, y el riesgo real no es ninguno de estos tres temas</h3>
+
+<div class="box hi">
+  <div class="lbl">El riesgo</div>
+  <p>Su lista de "sin empezar" es: navegación a checkpoints GPS, proponedor de subobjetivos, recuperación con VLM, y las tres pistas sin GPS. <strong>Eso es toda la capa de misión, o sea la competencia entera.</strong> Y ustedes ya lo escribieron: <em>"GeNIE resuelve los primeros metros. Las misiones son de ~120. Ese hueco es el proyecto, y sigue sin atacarse."</em> El trabajo de calibración y percepción está muy bien hecho, pero <strong>tiene rendimientos decrecientes y la capa de misión tiene rendimientos cero hasta que exista</strong>. Un rover que navega perfecto 4 m y no sabe encadenar checkpoints puntúa igual que uno que no arranca.</p>
+</div>
+
+<table>
+  <thead><tr><th>Semana</th><th>Foco</th><th>Entregable con criterio</th></tr></thead>
+  <tbody>
+    <tr><td class="k">1<br><span style="color:var(--ink-3);font-weight:400">5 a 11 ago</span></td>
+        <td>Instrumentación + los fixes de una línea</td>
+        <td>Ruta fija elegida, jsonl + script de métricas andando, <strong>MPI base medido con 3 corridas</strong>. Bug de <code>costs.py</code>, score continuo, <code>align_threshold_deg: 90</code>. Test A de la sección 4.</td></tr>
+    <tr><td class="k">2<br><span style="color:var(--ink-3);font-weight:400">12 a 18 ago</span></td>
+        <td>Campo cercano + compromiso</td>
+        <td>Replanificación por disparo espacial, dos regímenes, retroceso en la recuperación. Pitch dinámico con IMU. Mapa persistente validado en terreno. <strong>Meta: duplicar el MPI base.</strong></td></tr>
+    <tr><td class="k">3 y 4<br><span style="color:var(--ink-3);font-weight:400">19 ago a 1 sep</span></td>
+        <td><strong>Capa de misión</strong></td>
+        <td>Encadenado de checkpoints GPS, proponedor de subobjetivos, manejo de "no llego a este subobjetivo, salteo al siguiente". <strong>Criterio: una misión de 120 m completada de punta a punta, aunque sea con muchas intervenciones.</strong> Congelar percepción durante estas dos semanas.</td></tr>
+    <tr><td class="k">5 y 6<br><span style="color:var(--ink-3);font-weight:400">2 a 15 sep</span></td>
+        <td>Elegir pistas y especializar</td>
+        <td>Decidir en cuáles compiten. Interior necesita otra fuente de subobjetivos (sin GPS). Off-road necesita el trabajo de umbral por superficie. <strong>MPI medido por pista.</strong></td></tr>
+    <tr><td class="k">7<br><span style="color:var(--ink-3);font-weight:400">16 a 22 sep</span></td>
+        <td>Recuperación con VLM, solo si sobra</td>
+        <td>Únicamente si el MPI ya es decente. Es reductor de intervenciones, no habilitador. <strong>Congelamiento de código el 22.</strong></td></tr>
+    <tr><td class="k">8<br><span style="color:var(--ink-3);font-weight:400">23 a 29 sep</span></td>
+        <td>Ensayos y logística</td>
+        <td>Corridas en seco con la config congelada, checklist de campo, plan de contingencia por pista, viaje.</td></tr>
+  </tbody>
+</table>
+
+<div class="box ok">
+  <div class="lbl">Cómo entra la sección 07 en este calendario</div>
+  <p><strong>Semana 1:</strong> los cuatro arreglos de una línea del tablero, más verificar que los coeficientes de distorsión no estén en cero. Todo junto es un día y no depende de nadie. En paralelo arranca la línea base, que es lo que le da sentido a medir cualquier cosa después.</p>
+  <p><strong>Semana 2:</strong> los cuatro cambios de días. Los cuatro son "conectar algo que ya existe": el score continuo al costo, la confianza al filtro de celdas letales, el mapa persistente al régimen cercano, la IMU al pitch. Ninguno agrega un componente nuevo.</p>
+  <p><strong>Percepción sale del camino crítico</strong> en cuanto carguen el modelo afinado que les vamos a pasar (un día de trabajo, sección 07). Eso libera las semanas 3 a 6 enteras para la capa de misión y para elegir pistas, que es donde están los puntos.</p>
+</div>
+
+<div class="box">
+  <div class="lbl">Dos cosas administrativas de la bitácora</div>
+  <p>La clave de OpenRouter hardcodeada en <code>control_nube.py</code> figura como "reportado para revocar". Conviene confirmar que efectivamente se revocó, y aprovechar para pasar todas las credenciales a variables de entorno antes de que el repo circule más.</p>
+  <p>Y sobre el <code>LICENSE</code> faltante en GENIE-SAMTP: si el plan incluye publicar algo del trabajo, conviene resolver el tema de licencia ahora y no en septiembre. El enfoque de cabeza chica sobre features congeladas de la sección 5 lo simplifica bastante.</p>
+</div>
+</section>
+
+<section id="s9">
+<h2><span class="n">09</span>Cierre</h2>
+<h3>Lo único que hay que hacer esta semana</h3>
+
+<p class="lede2">Elegir una ruta fija y medir cuántos metros hace el rover sin que nadie lo toque. Antes que cualquier otra cosa de este documento.</p>
+
+<p>Sin ese número, cada uno de los temas de acá se discute por intuición y nadie puede saber si un cambio mejoró algo. Con ese número, en dos semanas deja de ser un dato y pasa a ser una curva, y la curva contesta sola cuál de todos estos cambios sirvió. En septiembre eso es la diferencia entre saber qué config llevar a Pittsburgh y elegirla a ojo.</p>
+
+<p>El trabajo de calibración y percepción está muy bien hecho, mejor que el de la mayoría de los equipos. Pero está en la zona de rendimientos decrecientes, y el tablero de la sección 07 muestra por qué: <strong>siete de los diez ítems resueltos no fallan por estar mal hechos, fallan porque lo que producen no se usa donde más sirve.</strong> Conectar eso son cuatro cambios de un día. Es mucho menos trabajo del que parece, y libera las semanas que la capa de misión necesita.</p>
+
+<div class="box hi">
+  <div class="lbl">Y lo que no se puede postergar</div>
+  <p>Navegación a checkpoints, proponedor de subobjetivos y las tres pistas sin GPS siguen sin empezar. Eso es la competencia entera, y ya está escrito en la última sección de la bitácora: <em>"GeNIE resuelve los primeros metros. Las misiones son de ~120. Ese hueco es el proyecto, y sigue sin atacarse."</em></p>
+  <p>Quedan ocho semanas. Un rover que navega perfecto cuatro metros y no sabe encadenar checkpoints puntúa igual que uno que no arranca.</p>
+</div>
+</section>
+
+<div class="foot">
+  Preparado sobre la bitácora técnica del equipo UNLP (Earth Rover Mini + GeNIE). Todos los números geométricos derivan de los intrínsecos y la pose que el propio equipo calibró: fx 925,27 · fy 924,63 · cx 962,31 · cy 528,39 · h 0,150 m · pitch 1,85° · roll −0,55°. Las cifras de latencia, resolución y velocidad provienen de las mediciones registradas en la bitácora.
+  
+  <br><br>La sección 07 ordena en un tablero lo que la propia bitácora ya reporta; los criterios de terminado son propuestas, no mediciones.
+</div>
+
+</div>
+
+<script>
+(function(){
+  const H_CAM = 0.150, PITCH = 1.85, FX = 925.2657, CX = 962.3053;
+  const HALF_FOV = Math.atan(CX/FX);                 // 46.1 grados
+  const D_BLIND  = H_CAM/Math.tan((30.82+PITCH)*Math.PI/180);  // 0.234 m
+  const RANGE    = 2.0;                              // forward_range_m
+  const HALF_W   = 0.13;                             // semiancho del rover con margen
+  const N_PATHS  = 12, KMAX = 2.2;
+
+  const S = 143, OX = 260, OY = 350;                 // px por metro, origen del rover
+  const svg = document.getElementById('bev');
+  const NS = 'http://www.w3.org/2000/svg';
+  const X = m => OX + m*S, Y = m => OY - m*S;
+  const el = (t,a) => { const n = document.createElementNS(NS,t);
+                        for (const k in a) n.setAttribute(k,a[k]); return n; };
+
+  function paths(){                                  // 12 arcos candidatos
+    const out=[];
+    for(let i=0;i<N_PATHS;i++){
+      const k = -KMAX + 2*KMAX*i/(N_PATHS-1), pts=[];
+      for(let s=0;s<=RANGE+1e-9;s+=0.05){
+        pts.push(Math.abs(k)<1e-4 ? [0,s]
+              : [(1-Math.cos(k*s))/k, Math.sin(k*s)/k]);
+      }
+      out.push(pts);
+    }
+    return out;
+  }
+  const PATHS = paths();
+
+  function draw(){
+    const d = +cD.value, hh = +cH.value, w = +cW.value, lat = +cL.value;
+    const cAng = Math.atan2(lat, d);
+    const half = Math.atan((w/2)/Math.hypot(d,lat));
+    const a1 = cAng-half, a2 = cAng+half;
+    const reach = hh >= H_CAM ? Infinity : d*H_CAM/(H_CAM-hh);
+    const rOut  = Math.min(reach, RANGE*1.02);
+    const rIn   = Math.hypot(d,lat);
+
+    // un punto cae en la mancha roja proyectada
+    const hit = (x,y) => {
+      const r = Math.hypot(x,y), a = Math.atan2(x,y);
+      return r>=rIn-HALF_W && r<=rOut && a>=a1-Math.atan(HALF_W/Math.max(r,.2))
+                                      && a<=a2+Math.atan(HALF_W/Math.max(r,.2));
+    };
+
+    let free=0;
+    const pathEls = PATHS.map(pts=>{
+      let ok=true, cut=pts.length;
+      for(let i=0;i<pts.length;i++){
+        const [x,y]=pts[i];
+        if(Math.abs(Math.atan2(x,y))>HALF_FOV || Math.hypot(x,y)>RANGE){ cut=i; break; }
+        if(hit(x,y)){ ok=false; cut=i+1; break; }
+      }
+      if(ok) free++;
+      return {pts:pts.slice(0,Math.max(cut,2)), ok};
+    });
+
+    // area del mapa marcada roja, por muestreo
+    let tot=0, red=0;
+    for(let yy=0.05; yy<RANGE; yy+=0.05)
+      for(let xx=-2.1; xx<2.1; xx+=0.05){
+        if(Math.abs(Math.atan2(xx,yy))>HALF_FOV) continue;
+        tot++; if(hit(xx,yy)) red++;
+      }
+
+    svg.textContent='';
+    const g = f => svg.appendChild(f);
+    const ray = a => [X(rOut*Math.sin(a)*1.6), Y(rOut*Math.cos(a)*1.6)];
+    const [fx1,fy1]=ray(-HALF_FOV), [fx2,fy2]=ray(HALF_FOV);
+
+    g(el('path',{d:`M${X(0)},${Y(0)} L${fx1},${fy1} A${2.6*S},${2.6*S} 0 0 1 ${fx2},${fy2} Z`,
+                  fill:'var(--surface-2)'}));
+    // anillos de distancia
+    [0.5,1.0,1.5,2.0].forEach(r=>{
+      const p1=[X(-r*Math.sin(HALF_FOV)),Y(r*Math.cos(HALF_FOV))];
+      const p2=[X( r*Math.sin(HALF_FOV)),Y(r*Math.cos(HALF_FOV))];
+      g(el('path',{d:`M${p1[0]},${p1[1]} A${r*S},${r*S} 0 0 1 ${p2[0]},${p2[1]}`,
+                    fill:'none',stroke:'var(--line-2)','stroke-width':1,'stroke-dasharray':'3 4'}));
+      const t=el('text',{x:X(r*Math.sin(HALF_FOV))+8,y:Y(r*Math.cos(HALF_FOV))+4,'text-anchor':'start',
+                         'font-size':10,fill:'var(--ink-3)','font-family':'ui-monospace,monospace'});
+      t.textContent=r.toFixed(1)+' m'; g(t);
+    });
+    // zona ciega
+    g(el('path',{d:`M${X(0)},${Y(0)} L${X(-D_BLIND*Math.sin(HALF_FOV))},${Y(D_BLIND*Math.cos(HALF_FOV))} `+
+                   `A${D_BLIND*S},${D_BLIND*S} 0 0 1 ${X(D_BLIND*Math.sin(HALF_FOV))},${Y(D_BLIND*Math.cos(HALF_FOV))} Z`,
+                  fill:'var(--red)',opacity:.16}));
+    // la cuna roja proyectada
+    const wedge = (r,a)=>[X(r*Math.sin(a)),Y(r*Math.cos(a))];
+    const [ix1,iy1]=wedge(rIn,a1),[ix2,iy2]=wedge(rIn,a2),
+          [ox2,oy2]=wedge(rOut,a2),[ox1,oy1]=wedge(rOut,a1);
+    g(el('path',{d:`M${ix1},${iy1} A${rIn*S},${rIn*S} 0 0 1 ${ix2},${iy2} L${ox2},${oy2} `+
+                   `A${rOut*S},${rOut*S} 0 0 0 ${ox1},${oy1} Z`,
+                  fill:'var(--red)',opacity:.34,stroke:'var(--red)','stroke-width':1.2}));
+    // caminos
+    pathEls.forEach(p=>{
+      g(el('polyline',{points:p.pts.map(([x,y])=>`${X(x)},${Y(y)}`).join(' '),fill:'none',
+        stroke:p.ok?'var(--aqua)':'var(--ink-3)','stroke-width':p.ok?2:1.2,
+        opacity:p.ok?1:.35,'stroke-linecap':'round'}));
+    });
+    // obstaculo y rover
+    g(el('rect',{x:X(lat-w/2),y:Y(d)-5,width:w*S,height:10,rx:2,fill:'var(--orange)'}));
+    g(el('rect',{x:X(-0.11),y:Y(0)-2,width:0.22*S,height:24,rx:3,
+                 fill:'var(--surface-1)',stroke:'var(--ink-1)','stroke-width':1.6}));
+
+    // lecturas
+    const deg=(a2-a1)*180/Math.PI;
+    vD.textContent=d.toFixed(2); vH.textContent=hh.toFixed(2);
+    vW.textContent=w.toFixed(2); vL.textContent=lat.toFixed(2);
+    rAng.textContent=deg.toFixed(1)+'°';
+    rFov.textContent=Math.round(deg/92.25*100)+' %';
+    rReach.textContent = reach===Infinity||reach>RANGE ? 'infinito' : reach.toFixed(2)+' m';
+    rArea.textContent=Math.round(red/tot*100)+' %';
+    rPaths.textContent=free+' de 12';
+    rPaths.style.color = free===0?'var(--red)':(free<=3?'var(--orange)':'var(--aqua)');
+
+    simMsg.innerHTML = free===0
+      ? '<b>Ningún camino sobrevive.</b> Acá el planner devuelve un desvío enorme o nada, dispara "girar primero", y el rover pivotea sin avanzar. Girar no lo saca: la zona ciega gira con él.'
+      : free<=3
+      ? '<b>Quedan '+free+' caminos, todos en el borde del cuadro,</b> justo donde la distorsión de barril es máxima. Un frame de ruido en la máscara los borra y el rover se queda sin salida.'
+      : '<b>Margen cómodo.</b> Esta es la situación en la que el sistema esquiva bien, y es la que hay que provocar: decidir mientras el obstáculo todavía está lejos.';
+  }
+
+  ['cD','cH','cW','cL'].forEach(id=>document.getElementById(id).addEventListener('input',draw));
+  draw();
+})();
+</script>
+</body>
+</html>

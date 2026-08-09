@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guía de Integración: Traversability y Memoria en LaRovernetta</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        h1, h2, h3 {
+            color: #1a73e8;
+        }
+        h1 {
+            border-bottom: 2px solid #1a73e8;
+            padding-bottom: 10px;
+        }
+        h2 {
+            margin-top: 30px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 5px;
+        }
+        code {
+            background-color: #e8eaed;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: "Courier New", Courier, monospace;
+            font-size: 0.95em;
+        }
+        pre {
+            background-color: #202124;
+            color: #e8eaed;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+        }
+        pre code {
+            background-color: transparent;
+            color: inherit;
+        }
+        .note {
+            background-color: #e8f0fe;
+            border-left: 4px solid #1a73e8;
+            padding: 12px;
+            margin: 15px 0;
+        }
+        ul {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Guía de Integración: Módulo Traversability y Memoria</h1>
+    <p>Esta guía detalla los pasos conceptuales y modificaciones necesarias para que el módulo de <strong>Traversability</strong> (junto con el mapa persistente) complemente al sistema <strong>GeNIE</strong> en el archivo <code>bridge.py</code>, permitiendo que el robot mantenga memoria espacial y no pierda de foco el trayecto entre checkpoints.</p>
+
+    <h2>1. Concepto de la Integración</h2>
+    <ul>
+        <li><strong>Percepción Instantánea (GeNIE):</strong> Analiza el frame RGB actual del SDK para detectar obstáculos inmediatos en el campo de visión.</li>
+        <li><strong>Memoria y Transitabilidad (Traversability / PersistentMap):</strong> Proyecta esa información usando odometría para acumularla en un mapa global. Esto evita que el robot "olvide" un obstáculo que acaba de salir de cuadro o pierda el rumbo hacia el objetivo.</li>
+    </ul>
+
+    <h2>2. Verificación de la Configuración YAML</h2>
+    <p>El archivo <code>configs/frodobot_rover.yaml</code> debe contar con la sección <code>memory</code> correctamente habilitada para que el bridge active el mapa persistente:</p>
+    <pre><code>memory:
+  enabled: true
+  map_size_m: 12.0          # Tamaño del mapa global en metros
+  update_weight: 0.45       # Peso de actualización por frame
+  decay_per_s: 0.05         # Tasa de olvido temporal
+  plan_forward_m: 4.0       # Rango de planificación frontal con memoria
+  plan_side_m: 3.0          # Rango lateral del planificador</code></pre>
+
+    <h2>3. Modificaciones en el Loop de Control (<code>bridge.py</code>)</h2>
+    <p>Asegurate de que dentro del método <code>_step()</code> de tu bridge se esté aplicando correctamente la integración del mapa persistente sobre los resultados del pipeline:</p>
+    
+    <pre><code># Procesamiento de percepción actual
+res = self.perception.process(rgb)
+
+# Valores por defecto basados en la percepción instantánea
+plan_bev, plan_obs = res.traversability, res.observed
+nota_mapa = ""
+
+# Integración con Traversability y Memoria Espacial
+if self.use_map and self.odometry is not None and self.pmap is not None:
+    pose = self.odometry.update(telem.raw)
+    
+    # 1. Acumulamos el mapa de transitabilidad actual en la memoria global
+    self.pmap.integrate(res.traversability, res.observed, pose,
+                        self.forward_range, self.side_range, t=now)
+    
+    h, w = res.traversability.shape
+    
+    # 2. Extraemos la vista BEV histórica para alimentar al planificador con memoria
+    plan_bev, plan_obs = self.pmap.extract_bev(
+        pose, self.plan_forward_m, self.plan_side_m, h, w)
+    
+    st = self.pmap.stats()
+    nota_mapa = f" mapa: {st['celdas_vistas']} celdas vistas"</code></pre>
+
+    <div class="note">
+        <strong>Nota de seguridad:</strong> El chequeo de colisión frontal inmediato (<code>front_is_blocked</code>) debe seguir evaluando la <em>observación fresca</em> del frame actual, garantizando una reacción rápida ante peligros repentinos sin depender exclusivamente del promedio histórico del mapa.
+    </div>
+
+    <h2>4. Validación y Pruebas</h2>
+    <p>Para verificar que la integración de memoria y traversability está funcionando correctamente sin arriesgar el hardware del robot, ejecutá primero el entorno en modo simulación (DRY-RUN) con directorio de depuración:</p>
+    <pre><code>python -m genie_rover.bridge --config configs/frodobot_rover.yaml --debug-dir debug/run_test</code></pre>
+    <p>Revisá que en la carpeta de depuración se generen correctamente los mapas históricos acumulados (<code>*_mapa.png</code>) junto con las vistas de planificación.</p>
+
+</body>
+</html>

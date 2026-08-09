@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Capa 1 — El SDK del rover</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-void:#0B0F14;
+    --bg-panel:#121820;
+    --bg-panel-2:#161E27;
+    --line:#212B35;
+    --line-strong:#2E3A46;
+    --signal:#4CC9C0;      /* video / telemetría */
+    --signal-dim:#2C6F69;
+    --control:#E8A33D;     /* comandos de movimiento */
+    --control-dim:#8A6323;
+    --text:#DCE4EA;
+    --text-muted:#7C8896;
+    --text-faint:#4E5964;
+    --danger:#D9694F;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:var(--bg-void);
+    color:var(--text);
+    font-family:'IBM Plex Sans', sans-serif;
+    line-height:1.6;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size:48px 48px;
+    background-position:-1px -1px;
+  }
+  @media (prefers-reduced-motion: reduce){
+    *{animation-duration:0.001ms !important; animation-iteration-count:1 !important; transition-duration:0.001ms !important;}
+  }
+  .wrap{max-width:920px; margin:0 auto; padding:0 24px;}
+  code, .mono{font-family:'IBM Plex Mono', monospace;}
+
+  /* ---------- HERO ---------- */
+  header.hero{
+    padding:88px 0 64px;
+    border-bottom:1px solid var(--line);
+    background:
+      radial-gradient(ellipse 700px 300px at 15% 0%, rgba(76,201,192,0.10), transparent 60%),
+      radial-gradient(ellipse 700px 300px at 85% 10%, rgba(232,163,61,0.08), transparent 60%);
+  }
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    letter-spacing:0.16em;
+    color:var(--text-muted);
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-bottom:22px;
+  }
+  .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--control);box-shadow:0 0 8px var(--control);}
+  .eyebrow .sep{color:var(--text-faint);}
+  h1{
+    font-family:'IBM Plex Mono', monospace;
+    font-weight:700;
+    font-size:clamp(34px, 5vw, 54px);
+    line-height:1.08;
+    margin:0 0 20px;
+    letter-spacing:-0.01em;
+  }
+  h1 .accent{color:var(--signal);}
+  .hero p.lede{
+    font-size:18px;
+    color:var(--text-muted);
+    max-width:60ch;
+    margin:0;
+  }
+  .hero p.lede strong{color:var(--text); font-weight:600;}
+
+  /* ---------- SECTION SHELL ---------- */
+  section{padding:64px 0;border-bottom:1px solid var(--line);}
+  section:last-of-type{border-bottom:none;}
+  .section-head{margin-bottom:36px;}
+  .section-num{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    color:var(--text-faint);
+    letter-spacing:0.12em;
+    display:block;
+    margin-bottom:10px;
+  }
+  h2{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:26px;
+    margin:0 0 10px;
+    font-weight:600;
+  }
+  .section-sub{color:var(--text-muted); max-width:62ch; margin:0;}
+
+  /* ---------- DIAGRAM ---------- */
+  .diagram-panel{
+    background:var(--bg-panel);
+    border:1px solid var(--line-strong);
+    border-radius:6px;
+    padding:28px 20px 22px;
+  }
+  .diagram-panel svg{width:100%;height:auto;display:block;}
+  .node-label{font-family:'IBM Plex Mono', monospace; font-size:12.5px; fill:var(--text);}
+  .node-sub{font-family:'IBM Plex Mono', monospace; font-size:10px; fill:var(--text-faint);}
+  .pulse{
+    r:4;
+    fill:var(--control);
+    filter:drop-shadow(0 0 6px var(--control));
+    opacity:0;
+  }
+  .pulse.run{
+    animation:travel 1.8s ease-in-out;
+  }
+  @keyframes travel{
+    0%{opacity:0; offset-distance:0%;}
+    6%{opacity:1;}
+    94%{opacity:1;}
+    100%{opacity:0; offset-distance:100%;}
+  }
+  .diagram-actions{
+    display:flex;
+    align-items:center;
+    gap:14px;
+    margin-top:20px;
+    flex-wrap:wrap;
+  }
+  button.trigger{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12.5px;
+    background:transparent;
+    border:1px solid var(--control-dim);
+    color:var(--control);
+    padding:9px 16px;
+    border-radius:4px;
+    cursor:pointer;
+    letter-spacing:0.02em;
+    transition:background 0.15s, border-color 0.15s;
+  }
+  button.trigger:hover{background:rgba(232,163,61,0.08); border-color:var(--control);}
+  button.trigger:focus-visible{outline:2px solid var(--signal); outline-offset:2px;}
+  .diagram-note{font-size:13px; color:var(--text-faint);}
+  #status-line{font-family:'IBM Plex Mono', monospace; font-size:12.5px; color:var(--signal); min-height:18px;}
+
+  /* ---------- TWO PATHS COMPARISON ---------- */
+  .paths{display:grid; grid-template-columns:1fr 1fr; gap:18px;}
+  @media (max-width:680px){.paths{grid-template-columns:1fr;}}
+  .path-card{
+    background:var(--bg-panel);
+    border:1px solid var(--line-strong);
+    border-radius:6px;
+    padding:22px;
+  }
+  .path-card.recommended{border-color:var(--signal-dim);}
+  .path-tag{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.1em;
+    color:var(--text-faint);
+    text-transform:uppercase;
+    margin-bottom:8px;
+  }
+  .path-card.recommended .path-tag{color:var(--signal);}
+  .path-endpoint{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:16px;
+    color:var(--text);
+    margin-bottom:12px;
+    display:block;
+  }
+  .path-card p{color:var(--text-muted); font-size:14.5px; margin:0 0 10px;}
+  .path-card ul{margin:0; padding-left:18px; color:var(--text-muted); font-size:14px;}
+  .path-card li{margin-bottom:4px;}
+
+  /* ---------- ENDPOINT TABLE ---------- */
+  .endpoint-group{margin-bottom:28px;}
+  .endpoint-group h3{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:13px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color:var(--text-faint);
+    margin:0 0 12px;
+    padding-bottom:8px;
+    border-bottom:1px dashed var(--line-strong);
+  }
+  table.endpoints{width:100%; border-collapse:collapse;}
+  table.endpoints tr{border-bottom:1px solid var(--line);}
+  table.endpoints tr:last-child{border-bottom:none;}
+  table.endpoints td{padding:10px 8px; vertical-align:top; font-size:14px;}
+  table.endpoints td.ep-name{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:13px;
+    color:var(--signal);
+    white-space:nowrap;
+    width:1%;
+  }
+  table.endpoints td.ep-method{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    color:var(--text-faint);
+    white-space:nowrap;
+    width:1%;
+    padding-right:14px;
+  }
+  table.endpoints td.ep-desc{color:var(--text-muted);}
+
+  /* ---------- CALLOUT (seguridad) ---------- */
+  .callout{
+    background:linear-gradient(180deg, rgba(217,105,79,0.08), rgba(217,105,79,0.02));
+    border:1px solid rgba(217,105,79,0.35);
+    border-left:3px solid var(--danger);
+    border-radius:4px;
+    padding:22px 24px;
+  }
+  .callout .callout-tag{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color:var(--danger);
+    margin-bottom:10px;
+  }
+  .callout p{margin:0 0 10px; color:var(--text);}
+  .callout p:last-child{margin-bottom:0;}
+  .pending{
+    display:inline-block;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    color:var(--text-faint);
+    border:1px dashed var(--line-strong);
+    padding:2px 8px;
+    border-radius:3px;
+    margin-top:10px;
+  }
+
+  /* ---------- READING ORDER ---------- */
+  .steps{list-style:none; margin:0; padding:0; counter-reset:step;}
+  .step{
+    display:grid;
+    grid-template-columns:44px 1fr;
+    gap:18px;
+    padding:20px 0;
+    border-bottom:1px solid var(--line);
+  }
+  .step:last-child{border-bottom:none;}
+  .step-num{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:20px;
+    color:var(--text-faint);
+    font-weight:600;
+  }
+  .step h4{
+    margin:0 0 6px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:15px;
+    color:var(--text);
+  }
+  .step p{margin:0; color:var(--text-muted); font-size:14.5px;}
+
+  /* ---------- FOOTER ---------- */
+  footer{padding:40px 0 60px;}
+  footer p{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    color:var(--text-faint);
+    display:flex;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap:8px;
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">
+      <span class="dot"></span>
+      SISTEMA ROVER <span class="sep">/</span> CAPA 1 DE 4
+    </div>
+    <h1>El SDK es<br>el <span class="accent">cuerpo</span>.</h1>
+    <p class="lede">
+      Antes de tocar percepción o planificación de rutas: esto es lo único que
+      <strong>GeNIE</strong> —o cualquier otro cerebro— puede ver del rover desde afuera.
+      Un servidor FastAPI en <code>main.py</code>, un Chrome headless mirando video,
+      y un canal de control. Nada de IA todavía.
+    </p>
+  </div>
+</header>
+
+<section id="arquitectura">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="section-num">01 — ARQUITECTURA MÍNIMA</span>
+      <h2>Un servidor entre vos y el robot</h2>
+      <p class="section-sub">
+        <code>main.py</code> no mueve nada directamente. Delega en dos servicios:
+        uno para ver (Chrome + Agora RTC), otro para mandar comandos (Agora RTM).
+        Probá el botón — simula lo que pasa al llamar <code>/control</code>.
+      </p>
+    </div>
+
+    <div class="diagram-panel">
+      <svg viewBox="0 0 860 260" xmlns="http://www.w3.org/2000/svg">
+        <!-- connecting lines -->
+        <path id="path-a" d="M 150 60 L 430 60 L 430 100" fill="none" stroke="#2E3A46" stroke-width="1.5"/>
+        <path id="path-b" d="M 430 150 L 430 190 L 190 190" fill="none" stroke="#2E3A46" stroke-width="1.5"/>
+        <path id="path-c" d="M 430 150 L 430 190 L 670 190" fill="none" stroke="#2E3A46" stroke-width="1.5"/>
+        <path id="path-d" d="M 190 230 L 430 230" fill="none" stroke="#2E3A46" stroke-width="1.5" stroke-dasharray="3 4"/>
+        <path id="path-e" d="M 670 230 L 430 230" fill="none" stroke="#2E3A46" stroke-width="1.5" stroke-dasharray="3 4"/>
+
+        <!-- Client / GeNIE node -->
+        <rect x="60" y="30" width="180" height="60" rx="4" fill="#161E27" stroke="#2E3A46"/>
+        <text x="150" y="55" text-anchor="middle" class="node-label">Cliente / GeNIE</text>
+        <text x="150" y="72" text-anchor="middle" class="node-sub">POST /control</text>
+
+        <!-- main.py node -->
+        <rect x="340" y="100" width="180" height="60" rx="4" fill="#161E27" stroke="#4CC9C0"/>
+        <text x="430" y="125" text-anchor="middle" class="node-label">main.py :8000</text>
+        <text x="430" y="142" text-anchor="middle" class="node-sub">FastAPI</text>
+
+        <!-- browser_service -->
+        <rect x="100" y="190" width="180" height="60" rx="4" fill="#161E27" stroke="#2E3A46"/>
+        <text x="190" y="215" text-anchor="middle" class="node-label">browser_service.py</text>
+        <text x="190" y="232" text-anchor="middle" class="node-sub">Chrome headless · Agora RTC</text>
+
+        <!-- rtm_client -->
+        <rect x="580" y="190" width="180" height="60" rx="4" fill="#161E27" stroke="#2E3A46"/>
+        <text x="670" y="215" text-anchor="middle" class="node-label">rtm_client.py</text>
+        <text x="670" y="232" text-anchor="middle" class="node-sub">Agora RTM</text>
+
+        <!-- rover -->
+        <rect x="340" y="290" width="180" height="1" fill="none"/>
+
+        <!-- animated pulse, follows path-a then path-b -->
+        <circle class="pulse" id="pulse1" style="offset-path:path('M 150 60 L 430 60 L 430 100 L 430 150 L 430 190 L 190 190')"/>
+      </svg>
+
+      <div class="diagram-actions">
+        <button class="trigger" id="btn-control">▶ simular POST /control</button>
+        <span class="diagram-note" id="status-line">esperando…</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="caminos">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="section-num">02 — DOS CAMINOS PARA LO MISMO</span>
+      <h2>/control vs /control-legacy</h2>
+      <p class="section-sub">
+        <code>main.py</code> expone dos endpoints que mandan comandos de movimiento.
+        No son redundantes por accidente: usan rutas de código distintas.
+      </p>
+    </div>
+
+    <div class="paths">
+      <div class="path-card recommended">
+        <div class="path-tag">Ruta activa</div>
+        <span class="path-endpoint">POST /control</span>
+        <p>Pasa el comando por <code>browser_service.send_message()</code> — el mismo
+        servicio que sostiene el Chrome headless conectado al video.</p>
+        <ul>
+          <li>Usado por los ejemplos de <code>examples/basics/</code></li>
+          <li>Devuelve error 500 controlado si falla el envío</li>
+        </ul>
+      </div>
+      <div class="path-card">
+        <div class="path-tag">Ruta legacy</div>
+        <span class="path-endpoint">POST /control-legacy</span>
+        <p>Instancia un <code>RtmClient</code> nuevo y llama <code>send_message()</code>
+        directo, sin pasar por <code>browser_service</code>.</p>
+        <ul>
+          <li>No tiene manejo de excepción propio</li>
+          <li>Queda del período previo a unificar todo en el navegador headless</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="endpoints">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="section-num">03 — MAPA DE ENDPOINTS</span>
+      <h2>Todo lo que main.py expone</h2>
+      <p class="section-sub">
+        Agrupados por función, no por orden de aparición en el archivo.
+      </p>
+    </div>
+
+    <div class="endpoint-group">
+      <h3>Auth &amp; misión</h3>
+      <table class="endpoints">
+        <tr><td class="ep-method">POST</td><td class="ep-name">/start-mission</td><td class="ep-desc">Valida variables de entorno, autentica y devuelve la lista de checkpoints.</td></tr>
+        <tr><td class="ep-method">POST</td><td class="ep-name">/end-mission</td><td class="ep-desc">Cierra la misión en la API de Frodobots y limpia el estado en memoria.</td></tr>
+        <tr><td class="ep-method">GET/POST</td><td class="ep-name">/checkpoints-list</td><td class="ep-desc">Lista de checkpoints de la misión activa.</td></tr>
+        <tr><td class="ep-method">POST</td><td class="ep-name">/checkpoint-reached</td><td class="ep-desc">Reporta posición GPS actual como checkpoint alcanzado.</td></tr>
+        <tr><td class="ep-method">GET</td><td class="ep-name">/missions</td><td class="ep-desc">Misiones disponibles para el bot configurado.</td></tr>
+        <tr><td class="ep-method">GET</td><td class="ep-name">/missions-history</td><td class="ep-desc">Historial de misiones ya corridas.</td></tr>
+      </table>
+    </div>
+
+    <div class="endpoint-group">
+      <h3>Video</h3>
+      <table class="endpoints">
+        <tr><td class="ep-method">GET</td><td class="ep-name">/v2/screenshot</td><td class="ep-desc">Frame(s) actuales vía Chrome headless. Frontal siempre; trasero si el bot es tipo "zero". 15x más rápido que la v1.</td></tr>
+        <tr><td class="ep-method">GET</td><td class="ep-name">/v2/front</td><td class="ep-desc">Solo cámara frontal, v2.</td></tr>
+        <tr><td class="ep-method">GET</td><td class="ep-name">/v2/rear</td><td class="ep-desc">Solo cámara trasera, v2.</td></tr>
+        <tr><td class="ep-method">GET</td><td class="ep-name">/screenshot</td><td class="ep-desc">Versión legacy: guarda archivos PNG en disco (rear/map/front) y los devuelve en base64.</td></tr>
+      </table>
+    </div>
+
+    <div class="endpoint-group">
+      <h3>Movimiento &amp; voz</h3>
+      <table class="endpoints">
+        <tr><td class="ep-method">POST</td><td class="ep-name">/control</td><td class="ep-desc">Comando <code>{linear, angular, lamp}</code> vía browser_service.</td></tr>
+        <tr><td class="ep-method">POST</td><td class="ep-name">/control-legacy</td><td class="ep-desc">Mismo comando, vía RtmClient directo.</td></tr>
+        <tr><td class="ep-method">POST</td><td class="ep-name">/speak</td><td class="ep-desc">Genera audio TTS y lo reproduce en el rover.</td></tr>
+      </table>
+    </div>
+
+    <div class="endpoint-group">
+      <h3>Telemetría &amp; intervenciones</h3>
+      <table class="endpoints">
+        <tr><td class="ep-method">GET</td><td class="ep-name">/data</td><td class="ep-desc">Batería, GPS, IMU, motores — todo el estado del rover.</td></tr>
+        <tr><td class="ep-method">POST</td><td class="ep-name">/interventions/start</td><td class="ep-desc">Marca inicio de intervención humana, con posición GPS.</td></tr>
+        <tr><td class="ep-method">POST</td><td class="ep-name">/interventions/end</td><td class="ep-desc">Marca fin de intervención humana.</td></tr>
+        <tr><td class="ep-method">GET</td><td class="ep-name">/interventions/history</td><td class="ep-desc">Historial de intervenciones del bot.</td></tr>
+      </table>
+    </div>
+
+    <div class="endpoint-group">
+      <h3>Interfaz</h3>
+      <table class="endpoints">
+        <tr><td class="ep-method">GET</td><td class="ep-name">/</td><td class="ep-desc">Dashboard en modo espectador.</td></tr>
+        <tr><td class="ep-method">GET</td><td class="ep-name">/sdk</td><td class="ep-desc">Dashboard en modo operador (con token RTM).</td></tr>
+        <tr><td class="ep-method">GET</td><td class="ep-name">/teleop</td><td class="ep-desc">Página liviana de control por teclado/joystick.</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="seguridad">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="section-num">04 — LA PIEZA QUE IMPORTA</span>
+      <h2>El freno persistente</h2>
+      <p class="section-sub">
+        Según <code>README_BRIDGE.md</code>, el SDK mantiene el último comando de
+        movimiento indefinidamente hasta que llega uno nuevo.
+      </p>
+    </div>
+
+    <div class="callout">
+      <div class="callout-tag">⚠ implica un riesgo físico real</div>
+      <p>
+        Si el proceso que controla al rover muere sin enviar antes un comando de
+        parada, <strong>el robot sigue moviéndose solo</strong>. Por eso
+        <code>bridge.run()</code> (del lado de GeNIE) frena dentro de un bloque
+        <code>finally</code>, dos veces, y hay un watchdog que frena si el video
+        se congela más de 2 segundos.
+      </p>
+      <p>
+        Del lado del SDK, esto debería vivir en <code>browser_service.py</code> —
+        es el servicio que sostiene la conexión persistente con el rover.
+      </p>
+      <span class="pending">pendiente confirmar en browser_service.py — todavía no leído</span>
+    </div>
+  </div>
+</section>
+
+<section id="orden">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="section-num">05 — ORDEN DE LECTURA</span>
+      <h2>Cómo entrar al código sin ahogarte</h2>
+    </div>
+
+    <ol class="steps">
+      <li class="step">
+        <span class="step-num">1</span>
+        <div>
+          <h4>sdk/README.md (el de examples)</h4>
+          <p>Define el vocabulario antes que nada: <code>linear</code>, <code>angular</code>, <code>lamp</code>, y los endpoints básicos. Todo lo demás asume que ya lo leíste.</p>
+        </div>
+      </li>
+      <li class="step">
+        <span class="step-num">2</span>
+        <div>
+          <h4>examples/basics/01 → 05</h4>
+          <p>Cinco scripts cortos que usan la SDK "desde afuera" — exactamente como la usaría GeNIE. Se leen en diez minutos y ya sabés qué esperar de la API.</p>
+        </div>
+      </li>
+      <li class="step">
+        <span class="step-num">3</span>
+        <div>
+          <h4>main.py</h4>
+          <p>Ahora los endpoints se leen solos. Prestá atención a <code>auth_common()</code> y a la diferencia entre <code>/control</code> y <code>/control-legacy</code>.</p>
+        </div>
+      </li>
+      <li class="step">
+        <span class="step-num">4</span>
+        <div>
+          <h4>browser_service.py + rtm_client.py</h4>
+          <p>Recién acá vas al fondo: cómo se sostiene el Chrome headless, y dónde vive (si vive) el freno de seguridad de la sección anterior.</p>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>
+      <span>capa 1 de 4 — el sdk</span>
+      <span>próxima: genie (percepción)</span>
+    </p>
+  </div>
+</footer>
+
+<script>
+  const btn = document.getElementById('btn-control');
+  const pulse = document.getElementById('pulse1');
+  const status = document.getElementById('status-line');
+
+  btn.addEventListener('click', () => {
+    pulse.classList.remove('run');
+    void pulse.offsetWidth; // reset animation
+    pulse.classList.add('run');
+    status.textContent = '→ cliente envía {linear: 0.5, angular: 0, lamp: 0}';
+
+    setTimeout(() => {
+      status.textContent = '→ main.py recibe en /control, delega a browser_service.send_message()';
+    }, 700);
+    setTimeout(() => {
+      status.textContent = '✓ comando enviado — 200 OK';
+    }, 1800);
+  });
+</script>
+
+</body>
+</html>

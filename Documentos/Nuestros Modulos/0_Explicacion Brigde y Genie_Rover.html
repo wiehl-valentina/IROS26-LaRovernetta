@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GeNIE × Earth Rover — Arquitectura del Stack de Navegación</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root{
+  --bg-void:#0A0E14;
+  --bg-panel:#10151F;
+  --bg-panel-2:#161C29;
+  --bg-panel-3:#1B2333;
+  --border:#232B3A;
+  --border-soft:#1B222E;
+  --text-hi:#E7ECF3;
+  --text-lo:#8A97AC;
+  --text-dim:#5C6B82;
+  --green:#43D17A;
+  --green-dim:#1E3B2C;
+  --red:#F1595A;
+  --red-dim:#3B1F22;
+  --amber:#E8A63B;
+  --amber-dim:#3A2E17;
+  --cyan:#4FC1E9;
+  --cyan-dim:#173139;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Consolas,monospace;
+  --sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --radius:10px;
+}
+
+*{box-sizing:border-box;margin:0;padding:0;}
+html{scroll-behavior:smooth;}
+body{
+  background:var(--bg-void);
+  color:var(--text-hi);
+  font-family:var(--sans);
+  line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+  background-image:
+    radial-gradient(circle at 15% 0%, rgba(79,193,233,0.06), transparent 40%),
+    radial-gradient(circle at 85% 10%, rgba(67,209,122,0.05), transparent 35%);
+  background-attachment:fixed;
+}
+
+::selection{background:var(--cyan-dim);color:var(--text-hi);}
+a{color:var(--cyan);}
+
+/* ---------- scaffolding ---------- */
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px;}
+
+/* ---------- header / hero ---------- */
+header.hero{
+  border-bottom:1px solid var(--border);
+  padding:38px 0 0 0;
+  position:relative;
+  overflow:hidden;
+}
+.hero-grid{
+  display:grid;
+  grid-template-columns:1.15fr 0.85fr;
+  gap:40px;
+  align-items:center;
+  padding-bottom:30px;
+}
+.eyebrow{
+  font-family:var(--mono);
+  font-size:11.5px;
+  letter-spacing:0.14em;
+  text-transform:uppercase;
+  color:var(--cyan);
+  display:flex;
+  align-items:center;
+  gap:9px;
+  margin-bottom:16px;
+}
+.eyebrow::before{
+  content:"";
+  width:7px;height:7px;border-radius:50%;
+  background:var(--green);
+  box-shadow:0 0 0 3px var(--green-dim);
+}
+h1.title{
+  font-size:clamp(28px,4vw,42px);
+  font-weight:800;
+  letter-spacing:-0.02em;
+  line-height:1.08;
+  margin-bottom:14px;
+}
+h1.title .accent{color:var(--green);}
+p.lede{
+  color:var(--text-lo);
+  font-size:15.5px;
+  max-width:56ch;
+  margin-bottom:22px;
+}
+.hero-meta{
+  display:flex;
+  gap:22px;
+  flex-wrap:wrap;
+  font-family:var(--mono);
+  font-size:11.5px;
+  color:var(--text-dim);
+}
+.hero-meta b{color:var(--text-lo);font-weight:600;}
+
+/* signature BEV widget */
+.bev-card{
+  background:var(--bg-panel);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:16px;
+  position:relative;
+}
+.bev-card .bev-label{
+  font-family:var(--mono);
+  font-size:10.5px;
+  color:var(--text-dim);
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+  display:flex;
+  justify-content:space-between;
+  margin-bottom:10px;
+}
+.bev-grid{
+  display:grid;
+  grid-template-columns:repeat(18,1fr);
+  grid-template-rows:repeat(14,1fr);
+  gap:1.5px;
+  aspect-ratio:18/14;
+  border-radius:6px;
+  overflow:hidden;
+  background:#080B10;
+}
+.bev-cell{background:#1a2130;}
+.bev-cell.free{background:#173a26;animation:pulseGreen 3.4s ease-in-out infinite;}
+.bev-cell.blocked{background:#3d1b1c;}
+.bev-cell.robot{background:var(--cyan);box-shadow:0 0 8px var(--cyan);}
+@keyframes pulseGreen{0%,100%{opacity:0.75;}50%{opacity:1;}}
+.bev-legend{
+  display:flex;
+  gap:14px;
+  margin-top:12px;
+  flex-wrap:wrap;
+  font-family:var(--mono);
+  font-size:10.5px;
+  color:var(--text-lo);
+}
+.bev-legend span{display:flex;align-items:center;gap:6px;}
+.dot{width:8px;height:8px;border-radius:2px;display:inline-block;}
+.dot.free{background:var(--green);}
+.dot.blocked{background:var(--red);}
+.dot.unknown{background:#2A3345;}
+.dot.robot{background:var(--cyan);}
+
+/* ---------- tab nav ---------- */
+nav.tabbar{
+  display:flex;
+  gap:4px;
+  margin-top:8px;
+  overflow-x:auto;
+  border-bottom:1px solid var(--border);
+}
+nav.tabbar::-webkit-scrollbar{height:0;}
+.tab-btn{
+  font-family:var(--mono);
+  font-size:12.5px;
+  letter-spacing:0.02em;
+  color:var(--text-dim);
+  background:transparent;
+  border:none;
+  padding:14px 18px;
+  cursor:pointer;
+  white-space:nowrap;
+  position:relative;
+  transition:color .15s ease;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.tab-btn .num{
+  font-size:10.5px;
+  color:var(--text-dim);
+  background:var(--bg-panel-2);
+  border:1px solid var(--border);
+  border-radius:4px;
+  padding:1px 5px;
+}
+.tab-btn:hover{color:var(--text-lo);}
+.tab-btn.active{color:var(--text-hi);}
+.tab-btn.active .num{color:var(--bg-void);background:var(--cyan);border-color:var(--cyan);}
+.tab-btn.active::after{
+  content:"";
+  position:absolute;left:14px;right:14px;bottom:-1px;height:2px;
+  background:var(--cyan);
+  border-radius:2px 2px 0 0;
+}
+
+/* ---------- main content ---------- */
+main{padding:34px 0 80px 0;}
+.tab-panel{display:none;animation:fadeIn .25s ease;}
+.tab-panel.active{display:block;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
+
+.model-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-end;
+  gap:20px;
+  flex-wrap:wrap;
+  margin-bottom:22px;
+  padding-bottom:18px;
+  border-bottom:1px solid var(--border-soft);
+}
+.model-head h2{
+  font-size:23px;
+  font-weight:700;
+  letter-spacing:-0.01em;
+}
+.model-head p{color:var(--text-lo);font-size:14px;max-width:62ch;margin-top:6px;}
+.model-tags{display:flex;gap:6px;flex-wrap:wrap;}
+.tag{
+  font-family:var(--mono);
+  font-size:10.5px;
+  padding:4px 8px;
+  border-radius:5px;
+  border:1px solid var(--border);
+  color:var(--text-lo);
+  background:var(--bg-panel);
+  white-space:nowrap;
+}
+
+/* quick reference table */
+.quickref{
+  width:100%;
+  border-collapse:collapse;
+  margin-bottom:28px;
+  font-size:13px;
+  background:var(--bg-panel);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  overflow:hidden;
+}
+.quickref th{
+  text-align:left;
+  font-family:var(--mono);
+  font-size:10.5px;
+  text-transform:uppercase;
+  letter-spacing:0.06em;
+  color:var(--text-dim);
+  background:var(--bg-panel-2);
+  padding:10px 14px;
+  border-bottom:1px solid var(--border);
+}
+.quickref td{
+  padding:10px 14px;
+  border-bottom:1px solid var(--border-soft);
+  color:var(--text-lo);
+  vertical-align:top;
+}
+.quickref tr:last-child td{border-bottom:none;}
+.quickref td.k{color:var(--text-hi);font-weight:600;white-space:nowrap;}
+.quickref code{font-family:var(--mono);font-size:12px;color:var(--cyan);}
+
+/* accordion */
+.accordion{display:flex;flex-direction:column;gap:10px;}
+.acc-item{
+  background:var(--bg-panel);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  overflow:hidden;
+}
+.acc-item[open]{border-color:#2A3448;}
+.acc-item summary{
+  list-style:none;
+  cursor:pointer;
+  padding:16px 18px;
+  display:flex;
+  align-items:center;
+  gap:14px;
+  user-select:none;
+}
+.acc-item summary::-webkit-details-marker{display:none;}
+.acc-num{
+  font-family:var(--mono);
+  font-size:11px;
+  color:var(--bg-void);
+  background:var(--text-dim);
+  width:22px;height:22px;
+  border-radius:6px;
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;
+  font-weight:700;
+}
+.acc-item[open] .acc-num{background:var(--cyan);}
+.acc-title{font-weight:600;font-size:14.5px;flex:1;}
+.acc-chevron{
+  color:var(--text-dim);
+  font-size:12px;
+  transition:transform .2s ease;
+  flex-shrink:0;
+}
+.acc-item[open] .acc-chevron{transform:rotate(90deg);color:var(--cyan);}
+.acc-body{
+  padding:0 18px 20px 54px;
+  color:var(--text-lo);
+  font-size:14px;
+}
+.acc-body p{margin-bottom:12px;}
+.acc-body ul{margin:0 0 12px 0;padding-left:18px;}
+.acc-body li{margin-bottom:7px;}
+.acc-body li::marker{color:var(--cyan);}
+.acc-body strong{color:var(--text-hi);font-weight:600;}
+.acc-body code{
+  font-family:var(--mono);
+  background:var(--bg-panel-3);
+  border:1px solid var(--border);
+  padding:1px 6px;
+  border-radius:4px;
+  font-size:12.5px;
+  color:var(--cyan);
+}
+
+/* colored callouts inside bodies */
+.callout{
+  border-left:3px solid var(--amber);
+  background:var(--amber-dim);
+  padding:10px 14px;
+  border-radius:0 6px 6px 0;
+  font-size:13px;
+  color:#E9CE97;
+  margin:10px 0 14px 0;
+}
+.callout.danger{border-left-color:var(--red);background:var(--red-dim);color:#f0a9a9;}
+.callout.good{border-left-color:var(--green);background:var(--green-dim);color:#9fe0b8;}
+
+/* mini data tables inside accordion bodies */
+.mini-table{width:100%;border-collapse:collapse;margin:10px 0 16px 0;font-size:12.5px;}
+.mini-table th{
+  text-align:left;font-family:var(--mono);font-size:10px;text-transform:uppercase;
+  letter-spacing:.05em;color:var(--text-dim);padding:7px 10px;border-bottom:1px solid var(--border);
+}
+.mini-table td{padding:7px 10px;border-bottom:1px solid var(--border-soft);color:var(--text-lo);}
+.mini-table td:first-child{color:var(--text-hi);font-family:var(--mono);font-size:12px;white-space:nowrap;}
+
+/* flow diagram */
+.flow{
+  display:flex;
+  flex-wrap:wrap;
+  gap:0;
+  align-items:stretch;
+  margin:14px 0 16px 0;
+  font-family:var(--mono);
+  font-size:12px;
+}
+.flow-step{
+  background:var(--bg-panel-3);
+  border:1px solid var(--border);
+  padding:10px 13px;
+  border-radius:7px;
+  color:var(--text-hi);
+  display:flex;
+  align-items:center;
+  min-height:40px;
+}
+.flow-step.hi{border-color:var(--cyan);color:var(--cyan);}
+.flow-step.warn{border-color:var(--red);color:var(--red);}
+.flow-arrow{
+  display:flex;align-items:center;justify-content:center;
+  color:var(--text-dim);padding:0 8px;font-size:14px;
+}
+
+/* two-column grid for ecosystem cross-links */
+.ecolinks{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:6px;}
+.ecolink{
+  border:1px solid var(--border);
+  background:var(--bg-panel-3);
+  border-radius:8px;
+  padding:10px 12px;
+}
+.ecolink b{display:block;color:var(--text-hi);font-size:12.5px;margin-bottom:3px;}
+.ecolink span{font-size:12px;color:var(--text-dim);}
+
+/* footer */
+footer{
+  border-top:1px solid var(--border);
+  padding:26px 0 40px 0;
+  color:var(--text-dim);
+  font-size:12px;
+  font-family:var(--mono);
+  display:flex;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  gap:10px;
+}
+
+/* responsive */
+@media (max-width:860px){
+  .hero-grid{grid-template-columns:1fr;}
+  .bev-card{max-width:420px;}
+}
+@media (max-width:600px){
+  .wrap{padding:0 16px;}
+  .acc-body{padding-left:18px;}
+  .model-head{flex-direction:column;align-items:flex-start;}
+  .tab-btn{padding:12px 13px;font-size:11.5px;}
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-grid">
+      <div>
+        <div class="eyebrow">Documentación técnica · Equipo1 · IROS26 Earth Rover Challenge</div>
+        <h1 class="title">El bucle que convierte <span class="accent">píxeles</span> en <span class="accent">comandos de motor</span></h1>
+        <p class="lede">Cuatro piezas, dos entornos, un límite HTTP entre ellas: el puente de control, la percepción SAM-TP/GeNIE, el SDK del rover y la capa de transitabilidad con memoria espacial. Esta guía documenta cómo está armado cada componente y cómo se relacionan entre sí.</p>
+        <div class="hero-meta">
+          <span><b>Repos:</b> GENIE-SAMTP + earth-rovers-sdk</span>
+          <span><b>Frontera:</b> HTTP :8000</span>
+          <span><b>Métrica ERC:</b> metros entre intervenciones</span>
+        </div>
+      </div>
+      <div class="bev-card">
+        <div class="bev-label"><span>persistent_map · to_image()</span><span id="bevTick">t=0.0s</span></div>
+        <div class="bev-grid" id="bevGrid"></div>
+        <div class="bev-legend">
+          <span><i class="dot free"></i>transitable</span>
+          <span><i class="dot blocked"></i>intransitable</span>
+          <span><i class="dot unknown"></i>nunca observado</span>
+          <span><i class="dot robot"></i>rover</span>
+        </div>
+      </div>
+    </div>
+    <nav class="tabbar" id="tabbar">
+      <button class="tab-btn active" data-tab="bridge"><span class="num">01</span>Bridge</button>
+      <button class="tab-btn" data-tab="samtp"><span class="num">02</span>SAM-TP &amp; GeNIE</button>
+      <button class="tab-btn" data-tab="sdk"><span class="num">03</span>SDK del Rover</button>
+      <button class="tab-btn" data-tab="trav"><span class="num">04</span>Transitabilidad &amp; Memoria</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+<!-- ======================= TAB 1: BRIDGE ======================= -->
+<section class="tab-panel active" id="panel-bridge">
+  <div class="model-head">
+    <div>
+      <h2>Bridge — bucle de control genie_rover.bridge</h2>
+      <p>Orquesta cada iteración: lee cámara y telemetría, arma un objetivo GPS, corre percepción, planifica sobre la memoria espacial y traduce el camino resultante en <code>linear</code>/<code>angular</code> para el SDK. Arranca siempre en <strong>DRY-RUN</strong>.</p>
+    </div>
+    <div class="model-tags">
+      <span class="tag">bridge.py</span>
+      <span class="tag">clase Bridge</span>
+      <span class="tag">~10 Hz objetivo</span>
+    </div>
+  </div>
+
+  <table class="quickref">
+    <tr><th>Elemento</th><th>Detalle</th></tr>
+    <tr><td class="k">Punto de entrada</td><td><code>python -m genie_rover.bridge --config ... [--go] [--start-mission] [--max-seconds N] [--debug-dir D]</code></td></tr>
+    <tr><td class="k">Modo por defecto</td><td>Simulacro (<code>dry_run=True</code>): calcula e imprime comandos, nunca los envía al SDK</td></tr>
+    <tr><td class="k">Guardia de arranque</td><td><code>_check_placeholders()</code> aborta si <code>camera.calibrated</code> no es <code>true</code> en el config</td></tr>
+    <tr><td class="k">Freno de emergencia</td><td>Bloque <code>finally</code> en <code>run()</code>: envía <code>stop()</code> dos veces si <code>--go</code> estuvo activo, por si se pierde un mensaje RTM</td></tr>
+  </table>
+
+  <div class="accordion" data-group="bridge">
+
+    <details class="acc-item" open>
+      <summary><span class="acc-num">1</span><span class="acc-title">Estructura Interna</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <p>La clase <code>Bridge</code> se construye una sola vez a partir del YAML de config y ensambla en <code>__init__</code> todos los subsistemas que va a orquestar:</p>
+        <ul>
+          <li><strong>Conexión y percepción:</strong> <code>RoverClient</code> (HTTP hacia el SDK) y <code>PerceptionPipeline</code> (SAM-TP + proyección a BEV).</li>
+          <li><strong>Navegación:</strong> <code>HeadingEstimator</code>, <code>PathFollower</code> y los umbrales <code>goal_range_m</code> / <code>claim_radius_m</code> para reclamar checkpoints.</li>
+          <li><strong>Memoria espacial (opcional, <code>memory.enabled</code>):</strong> <code>Odometry</code> + <code>PersistentMap</code>, con ventanas de planificación ampliadas (<code>plan_forward_m</code>, <code>plan_side_m</code>) respecto del BEV crudo.</li>
+          <li><strong>Seguridad:</strong> <code>stale_frame_s</code> (video congelado), <code>max_consecutive_errors</code>, <code>recovery_after_empty_plans</code>, <code>max_consecutive_turns</code>, <code>unstick_forward_s</code>.</li>
+          <li><strong>Histéresis de esquive:</strong> <code>_commit_side</code>, <code>_commit_until</code>, <code>commit_hold_s</code>, <code>commit_min_deg</code>, <code>commit_override_deg</code> — memoria de corto plazo del lado por el que se está rodeando un obstáculo.</li>
+          <li><strong>Contabilidad:</strong> dataclass <code>LoopStats</code> (iteraciones, planes ok/vacíos, bloqueos, errores, desatascos) y <code>DriveCommand</code> (linear, angular, motivo textual).</li>
+        </ul>
+        <table class="mini-table">
+          <tr><th>Parámetro de seguridad</th><th>Rol</th></tr>
+          <tr><td>stale_frame_s</td><td>corta la iteración si el frame no cambia (video congelado)</td></tr>
+          <tr><td>max_consecutive_errors</td><td>abandona la corrida tras N errores seguidos</td></tr>
+          <tr><td>max_consecutive_turns</td><td>dispara <code>_unstick()</code> si el rover solo gira sin avanzar</td></tr>
+          <tr><td>commit_hold_s / commit_override_deg</td><td>evita titubear entre esquivar por izquierda o derecha</td></tr>
+        </table>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">2</span><span class="acc-title">Arquitectura</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <p>Cada iteración corre <code>_step()</code> dentro de un bucle <code>while</code> protegido por try/except y por <code>SIGINT</code>/<code>SIGTERM</code>. El flujo de un paso:</p>
+        <div class="flow">
+          <div class="flow-step">GET /v2/front + /data</div><div class="flow-arrow">→</div>
+          <div class="flow-step">HeadingEstimator</div><div class="flow-arrow">→</div>
+          <div class="flow-step">goal_from_gps</div><div class="flow-arrow">→</div>
+          <div class="flow-step">PerceptionPipeline</div><div class="flow-arrow">→</div>
+          <div class="flow-step">Odometry + PersistentMap</div><div class="flow-arrow">→</div>
+          <div class="flow-step warn">front_is_blocked?</div>
+        </div>
+        <div class="flow">
+          <div class="flow-step hi">plan_on_bev (GeNIE)</div><div class="flow-arrow">→</div>
+          <div class="flow-step">PathFollower.command</div><div class="flow-arrow">→</div>
+          <div class="flow-step">_apply_commit</div><div class="flow-arrow">→</div>
+          <div class="flow-step warn">¿girando sin avanzar?</div><div class="flow-arrow">→</div>
+          <div class="flow-step">send() → SDK /control</div>
+        </div>
+        <p>Dos decisiones de diseño importantes en <code>_step()</code>:</p>
+        <ul>
+          <li>El chequeo <code>front_is_blocked</code> usa <strong>siempre la observación fresca</strong> de <code>PerceptionPipeline</code>, nunca el mapa acumulado — si algo se cruzó recién, el promedio de la memoria no debe diluirlo.</li>
+          <li>El objetivo GPS se recorta a <code>goal_range_m</code> con <code>goal_from_gps</code>; si no hay checkpoint pendiente o no hay rumbo estimado, la meta cae por defecto a "derecho adelante".</li>
+        </ul>
+        <p>Dos rutinas de recuperación, disparadas por umbrales distintos:</p>
+        <ul>
+          <li><strong><code>_recover()</code></strong>: se activa tras <code>recovery_after_empty_plans</code> planes vacíos seguidos. Gira en el lugar a ciegas un tiempo fijo (<code>recovery_turn_s</code>) y resetea el track de rumbo.</li>
+          <li><strong><code>_unstick()</code></strong>: se activa tras <code>max_consecutive_turns</code> comandos de "girar sin avanzar". Como <code>front_is_blocked</code> ya dio libre en esa misma iteración, fuerza un avance recto de <code>unstick_forward_s</code>, re-chequeando obstáculos cada 150 ms.</li>
+        </ul>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">3</span><span class="acc-title">Propósito y Funcionalidad</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <p>Es la única pieza que efectivamente <strong>mueve el rover</strong>: todos los demás módulos producen datos, el bridge los convierte en decisión y comando. Resuelve tres problemas concretos de operación:</p>
+        <ul>
+          <li><strong>Navegación por checkpoints:</strong> lee <code>/checkpoints-list</code>, arma la meta local con <code>goal_from_gps</code> y reclama el checkpoint con <code>/checkpoint-reached</code> cuando la distancia cae bajo <code>claim_radius_m</code>.</li>
+          <li><strong>Anti-oscilación:</strong> <code>_apply_commit</code> evita que el rover cambie de lado de esquive a mitad de maniobra — un desvío solo "cuenta" si supera <code>commit_min_deg</code>, y cambiar de lado ya comprometido exige superar <code>commit_override_deg</code>.</li>
+          <li><strong>Anti-bucle:</strong> detecta secuencias de giros sin avance (síntoma de quedar atrapado en un mínimo local) y las rompe con un avance forzado verificado paso a paso.</li>
+        </ul>
+        <div class="callout good">El modo <code>--go</code> exige 3 segundos de cuenta regresiva en consola antes de empezar a mover el robot de verdad — una fricción deliberada contra arranques accidentales.</div>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">4</span><span class="acc-title">Ecosistema y Relaciones</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <p>El bridge es el <strong>integrador central</strong>: no implementa percepción, planificación ni control de bajo nivel, solo los conecta.</p>
+        <div class="ecolinks">
+          <div class="ecolink"><b>→ SDK del rover</b><span>vía <code>RoverClient</code>: telemetría, frame de cámara y envío de <code>linear</code>/<code>angular</code></span></div>
+          <div class="ecolink"><b>→ SAM-TP / percepción</b><span><code>PerceptionPipeline.process()</code> produce el BEV crudo cada iteración</span></div>
+          <div class="ecolink"><b>→ Transitabilidad / memoria</b><span><code>Odometry</code> ubica al rover; <code>PersistentMap</code> integra y recorta el BEV usado para planificar</span></div>
+          <div class="ecolink"><b>→ genie_path_planner</b><span>import externo del repo GENIE: <code>plan_on_bev</code> hace el sampling de trayectorias sobre el BEV</span></div>
+        </div>
+        <p style="margin-top:10px">Corre en el entorno <code>sam_tp</code> (torch, hydra, SAM2); el SDK corre en un venv separado con <code>numpy==1.26.4</code> pinneado y Chrome headless. La única frontera entre ambos procesos es HTTP en <code>localhost:8000</code>.</p>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">5</span><span class="acc-title">Limitaciones</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <ul>
+          <li><strong>Recuperación ciega:</strong> tanto <code>_recover()</code> como el barrido de reintento giran sin evaluar semánticamente la escena; el paper de GeNIE usa un VLM en dos etapas (clasificar on/off-road, barrer 4 rumbos) que este puente no implementa.</li>
+          <li><strong>Manejo de errores genérico:</strong> el <code>except Exception</code> en el bucle principal frena y reintenta sin distinguir causas (video caído vs. error del planner vs. timeout HTTP), lo que dificulta el diagnóstico post-mortem.</li>
+          <li><strong>Sin control de cadencia adaptativo:</strong> <code>loop_period_s</code> es un sleep fijo; no ajusta la velocidad máxima en función de la latencia real de inferencia, algo que sí se advierte como relevante en <code>perception.py</code>.</li>
+          <li><strong>Recuperación y desatasco comparten señales parciales:</strong> ambos dependen de contadores de iteraciones consecutivas, no de una métrica de progreso real (p. ej. distancia neta avanzada).</li>
+        </ul>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">6</span><span class="acc-title">Líneas de Mejora</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <ul>
+          <li>Incorporar el módulo de recuperación con VLM del paper (la infraestructura de Gemini ya existe en <code>programs/genai_program.py</code> según la documentación del propio repo).</li>
+          <li>Activar <code>observation_fusion</code> nativo del planner en vez de (o junto con) el mapa persistente propio, para comparar ambos enfoques de memoria temporal.</li>
+          <li>Reemplazar el sleep fijo por control de cadencia basado en la latencia medida de percepción + planificación.</li>
+          <li>Tipar los errores de <code>_step()</code> (video, red, planner) para poder aplicar políticas de recuperación distintas por categoría.</li>
+          <li>Exportar <code>LoopStats</code> y el estado de <code>_commit_side</code>/<code>_consecutive_turns</code> como telemetría estructurada (JSON/CSV) para analizar corridas después, no solo en consola.</li>
+          <li>Cobertura de tests para <code>_apply_commit</code> en los bordes: cambio justo en el umbral, expiración de <code>commit_until</code> a mitad de giro.</li>
+        </ul>
+      </div>
+    </details>
+
+  </div>
+</section>
+
+<!-- ======================= TAB 2: SAM-TP & GeNIE ======================= -->
+<section class="tab-panel" id="panel-samtp">
+  <div class="model-head">
+    <div>
+      <h2>SAM-TP &amp; GeNIE — percepción y proyección a BEV</h2>
+      <p>Convierte una imagen RGB del rover en un mapa de transitabilidad en vista aérea (BEV), combinando una variante de SAM2 especializada en transitabilidad (SAM-TP) con la proyección geométrica cámara→suelo del planner GeNIE.</p>
+    </div>
+    <div class="model-tags">
+      <span class="tag">perception.py</span>
+      <span class="tag">SAM2 (Hiera-tiny)</span>
+      <span class="tag">arXiv:2506.17960</span>
+    </div>
+  </div>
+
+  <table class="quickref">
+    <tr><th>Elemento</th><th>Detalle</th></tr>
+    <tr><td class="k">Modelo</td><td>SAM-TP = SAM2 (config <code>sam2.1_inference_tiny</code>) con <code>CustomPromptEncoderLarger</code>, checkpoint descargado aparte (no incluido en el repo)</td></tr>
+    <tr><td class="k">Salida cruda</td><td>logits HxW → <code>logits_to_traversability(transform="sigmoid")</code> → mapa [0,1], 1 = transitable</td></tr>
+    <tr><td class="k">Proyección</td><td><code>project_score_to_bev</code> (externo, <code>genie_path_planner.projection</code>): asume modelo pinhole puro y plano de suelo fijo <code>ground_z</code></td></tr>
+    <tr><td class="k">Prueba aislada</td><td><code>python -m genie_rover.perception --config ... --image ... --out debug/</code></td></tr>
+  </table>
+
+  <div class="accordion" data-group="samtp">
+
+    <details class="acc-item" open>
+      <summary><span class="acc-num">1</span><span class="acc-title">Estructura Interna</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <ul>
+          <li><strong><code>camera_pose_from_height_pitch</code>:</strong> construye <code>T_world_camera</code> a partir de dos mediciones manuales (altura, inclinación) para una cámara fija.</li>
+          <li><strong><code>Undistorter</code>:</strong> rectifica distorsión de lente con OpenCV (<code>getOptimalNewCameraMatrix</code> + <code>initUndistortRectifyMap</code>, <code>alpha=0</code> para recortar bordes inválidos en vez de proyectar basura).</li>
+          <li><strong><code>SamTpRunner</code>:</strong> envoltorio de <code>SAM2ImagePredictor</code> construido una sola vez (no por frame), con detección automática de device y precisión.</li>
+          <li><strong><code>PerceptionPipeline</code>:</strong> orquesta rectificación → inferencia → downscale → proyección a BEV, con caché de rectificadores por resolución de frame.</li>
+        </ul>
+        <table class="mini-table">
+          <tr><th>Precisión (auto)</th><th>Condición</th><th>Motivo</th></tr>
+          <tr><td>bfloat16</td><td>GPU Ampere+ (SM ≥ 8.0)</td><td>soporte nativo de tensor cores</td></tr>
+          <tr><td>float16</td><td>GPU Turing (SM 7.5, ej. RTX 2080)</td><td>bf16 se emula y es más lento que fp32 en esta arquitectura</td></tr>
+          <tr><td>float32</td><td>forzado explícitamente o CPU</td><td>sin autocast</td></tr>
+        </table>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">2</span><span class="acc-title">Arquitectura</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <div class="flow">
+          <div class="flow-step">RGB crudo</div><div class="flow-arrow">→</div>
+          <div class="flow-step">Undistorter (rectifica)</div><div class="flow-arrow">→</div>
+          <div class="flow-step hi">SAM2ImagePredictor</div><div class="flow-arrow">→</div>
+          <div class="flow-step">sigmoid(logits)</div><div class="flow-arrow">→</div>
+          <div class="flow-step">downscale (proj. 2×)</div><div class="flow-arrow">→</div>
+          <div class="flow-step">project_score_to_bev</div>
+        </div>
+        <p>La inferencia usa 3 puntos-prompt fijos en el borde inferior de la imagen, pero son <strong>vestigiales</strong>: el <code>CustomPromptEncoderLarger</code> de SAM-TP ignora esos prompts y usa un token aprendido; se mantienen solo porque la API del predictor los exige.</p>
+        <p>El downscale antes de proyectar existe porque <code>project_score_to_bev</code> recorre cada píxel del mapa de scores (costo cuadrático en resolución). Medido: reducir a la mitad baja la proyección de 263 ms a 68 ms perdiendo ~9% de celdas observadas — una decisión de compromiso documentada explícitamente en el código.</p>
+        <p>El stream de video del Earth Rover Mini es H.264 adaptativo y puede cambiar de resolución en medio de un recorrido (1280×720 / 1024×576 / 480×270). <code>_rectifier_for()</code> cachea un rectificador por tamaño y reescala K proporcionalmente, con una advertencia explícita si el aspect ratio cambia (indicio de recorte, no solo reescalado).</p>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">3</span><span class="acc-title">Propósito y Funcionalidad</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <p>Resuelve el problema central de navegación off-road: <strong>decidir, píxel a píxel, qué parte del suelo delante del robot es segura para pisar</strong>, y expresarlo en coordenadas métricas centradas en el robot (no en coordenadas de imagen).</p>
+        <ul>
+          <li>SAM-TP aporta la semántica visual (transitable / no transitable) entrenada específicamente para terreno, a diferencia de SAM2 genérico.</li>
+          <li>La proyección a BEV aporta la geometría: convierte "esta región de la imagen es transitable" en "esta celda a X metros adelante y Y metros a la derecha es transitable", que es lo que necesita el planner.</li>
+          <li>El benchmark de throughput integrado en el self-test (<code>_self_test</code>) mide ms/frame reales, dato que condiciona directamente <code>max_linear</code> en la config de navegación: a 200 ms/frame el rover avanza 6 cm entre decisiones a 0.3 m/s; a 3 s, casi 1 m.</li>
+        </ul>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">4</span><span class="acc-title">Ecosistema y Relaciones</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <div class="ecolinks">
+          <div class="ecolink"><b>← Bridge</b><span>llama a <code>PerceptionPipeline.process()</code> una vez por iteración</span></div>
+          <div class="ecolink"><b>→ Transitabilidad / memoria</b><span>su salida (<code>BevResult.traversability</code>, <code>observed</code>) es lo que <code>PersistentMap.integrate()</code> vuelca al mapa del mundo</span></div>
+          <div class="ecolink"><b>→ navigation.py</b><span><code>front_is_blocked()</code> consume el BEV crudo (no el del mapa) para frenos de seguridad</span></div>
+          <div class="ecolink"><b>↔ genie_path_planner</b><span>reutiliza <code>logits_to_traversability</code> y <code>project_score_to_bev</code> del repo GENIE original, no reimplementa la proyección</span></div>
+        </div>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">5</span><span class="acc-title">Limitaciones</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <ul>
+          <li><strong>Modelo pinhole puro:</strong> <code>project_score_to_bev</code> no corrige distorsión — por eso la rectificación previa es obligatoria y no opcional; sin calibración de cámara, el BEV "da basura" (advertencia explícita del propio README del puente).</li>
+          <li><strong>Plano de suelo único y fijo (<code>ground_z</code>):</strong> la proyección asume terreno plano; pendientes o escalones rompen la correspondencia píxel→metro.</li>
+          <li><strong>Hardware Turing (RTX 2080, 8 GB) obliga a fp16</strong> en vez de bf16, con throughput menor al reportado en el paper sobre GPUs Ampere+.</li>
+          <li><strong>CPU sin GPU:</strong> 1–4 s por frame — usable pero exige bajar <code>max_linear</code> a ~0.15 y aceptar avance a los tramos, según documenta <code>README_BRIDGE.md</code>.</li>
+          <li><strong>Reescalado de K asume escala uniforme:</strong> si el stream recorta en vez de reescalar (cambia el aspect ratio), la corrección de intrínsecos deja de ser válida — el propio código lo detecta pero no lo corrige, solo advierte.</li>
+        </ul>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">6</span><span class="acc-title">Líneas de Mejora</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <ul>
+          <li>Exportar SAM-TP a TensorRT/ONNX para reducir latencia en la GPU Turing disponible y acercarse al régimen de 10 Hz del paper.</li>
+          <li>Proyección multi-plano o consciente de pendiente, en vez de un único <code>ground_z</code> constante.</li>
+          <li>Ajustar dinámicamente <code>projection_downscale</code> según la latencia medida en vivo, en lugar de un factor fijo en config.</li>
+          <li>Detectar automáticamente cambios de aspect ratio del stream y disparar una recalibración o al menos bloquear el avance, en vez de solo loguear la advertencia.</li>
+          <li>Sumar profundidad (RGB-D) cuando esté disponible, aprovechando el modo <code>rgbd</code> ya soportado por el planner GeNIE original.</li>
+        </ul>
+      </div>
+    </details>
+
+  </div>
+</section>
+
+<!-- ======================= TAB 3: SDK ======================= -->
+<section class="tab-panel" id="panel-sdk">
+  <div class="model-head">
+    <div>
+      <h2>SDK del Rover — genie_rover.sdk_client</h2>
+      <p>Cliente HTTP delgado hacia el proceso del Earth Rovers SDK (<code>hypercorn main:app</code>, Chrome headless + Agora RTC/RTM), expuesto en <code>http://localhost:8000</code>. Es la única puerta de entrada/salida entre el stack de GeNIE y el hardware real.</p>
+    </div>
+    <div class="model-tags">
+      <span class="tag">sdk_client.py</span>
+      <span class="tag">clase RoverClient</span>
+      <span class="tag">Earth Rovers SDK v5.2</span>
+    </div>
+  </div>
+
+  <table class="quickref">
+    <tr><th>Endpoint</th><th>Método en RoverClient</th><th>Uso</th></tr>
+    <tr><td class="k"><code>/v2/front</code></td><td>front_frame()</td><td>frame RGB (decodifica base64) + timestamp</td></tr>
+    <tr><td class="k"><code>/data</code></td><td>telemetry()</td><td>lat/lon, orientación, velocidad, batería, señal GPS</td></tr>
+    <tr><td class="k"><code>/control</code></td><td>control() / stop()</td><td>envía linear/angular clippeados a [-1,1]</td></tr>
+    <tr><td class="k"><code>/start-mission</code></td><td>start_mission()</td><td>inicia la misión de checkpoints</td></tr>
+    <tr><td class="k"><code>/checkpoints-list</code></td><td>checkpoints()</td><td>lista ordenada por secuencia + último escaneado</td></tr>
+    <tr><td class="k"><code>/checkpoint-reached</code></td><td>claim_checkpoint()</td><td>200 = éxito; 400 = todavía lejos (no excepcional)</td></tr>
+    <tr><td class="k"><code>/interventions/*</code></td><td>start_intervention() / end_intervention()</td><td>marca intervención manual (métrica MPI del ERC)</td></tr>
+  </table>
+
+  <div class="accordion" data-group="sdk">
+
+    <details class="acc-item" open>
+      <summary><span class="acc-num">1</span><span class="acc-title">Estructura Interna</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <ul>
+          <li><strong><code>RoverClient</code>:</strong> mantiene una <code>requests.Session</code>, un <code>timeout</code> configurable y una bandera <code>_sent_motion</code> para saber si alguna vez se envió movimiento real.</li>
+          <li><strong>Dataclasses tipadas:</strong> <code>Telemetry</code> (lat, lon, orientación, velocidad, batería, señal GPS, timestamp, payload crudo) y <code>Checkpoint</code> (id, secuencia, lat, lon).</li>
+          <li><strong><code>RoverError</code>:</strong> excepción propia para fallos de dominio (frame ausente, video congelado detectado río arriba en el bridge).</li>
+          <li><strong>Decodificación de imagen:</strong> <code>_decode_b64_image</code> tolera tanto base64 puro como data-URI (<code>data:...,</code>).</li>
+        </ul>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">2</span><span class="acc-title">Arquitectura</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <p>El SDK corre como un proceso HTTP independiente, en su propio entorno virtual, con <code>numpy==1.26.4</code> pinneado y dependiendo de Chrome headless para renderizar el video vía Agora RTC/RTM. <code>RoverClient</code> es deliberadamente un wrapper síncrono y sin estado adicional: cada llamada es un request/response HTTP simple.</p>
+        <div class="flow">
+          <div class="flow-step">Bridge (entorno sam_tp)</div><div class="flow-arrow">⇄ HTTP :8000 ⇄</div>
+          <div class="flow-step hi">SDK (venv propio, Chrome + Agora)</div>
+        </div>
+        <p>La separación en dos entornos virtuales es intencional: el SDK necesita una versión fija de numpy y Chrome; SAM2 necesita torch y hydra. Mantenerlos separados y unidos solo por HTTP evita conflictos de dependencias.</p>
+        <p><strong>Mecanismo de frenado seguro:</strong> <code>atexit.register(self._stop_quietly)</code> se registra al construir el cliente (si <code>stop_on_exit=True</code>) y envía dos POST de frenado silenciosos si el proceso muere habiendo enviado movimiento — cubre scripts sueltos sin su propio <code>try/finally</code>.</p>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">3</span><span class="acc-title">Propósito y Funcionalidad</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <p>Aísla al resto del stack de GeNIE de los detalles de bajo nivel del robot: nadie fuera de este módulo necesita saber que el video llega por Agora o que el control se hace por POST. Su self-test (<code>python -m genie_rover.sdk_client</code>) es deliberadamente <strong>de solo lectura</strong>: valida telemetría, GPS, frame de cámara y checkpoints sin enviar jamás un comando de movimiento, para poder correrlo con el robot encendido sin riesgo.</p>
+        <div class="callout">El self-test advierte explícitamente si <code>gps_signal &lt;= 0</code>, porque sin GPS no hay navegación a checkpoints posible aunque todo lo demás funcione.</div>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">4</span><span class="acc-title">Ecosistema y Relaciones</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <div class="ecolinks">
+          <div class="ecolink"><b>← Bridge</b><span>único consumidor de <code>RoverClient</code>: pide frame + telemetría, envía <code>DriveCommand</code></span></div>
+          <div class="ecolink"><b>→ Odometry</b><span>el payload crudo de <code>/data</code> (<code>rpms</code>, <code>gyros</code>) alimenta la fusión de sensores de odometría</span></div>
+          <div class="ecolink"><b>→ navigation.py</b><span>lat/lon/orientación de <code>Telemetry</code> alimentan <code>HeadingEstimator</code> y <code>goal_from_gps</code></span></div>
+          <div class="ecolink"><b>↔ earth-rovers-sdk</b><span>submódulo git real del repo de equipo; el resto del stack GeNIE no lo es</span></div>
+        </div>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">5</span><span class="acc-title">Limitaciones</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <ul>
+          <li><strong>Polling síncrono, no streaming:</strong> telemetría y frame se piden por request explícito en cada iteración; no hay push ni websockets salvo el video vía Agora.</li>
+          <li><strong>Red de seguridad con límites reales:</strong> el freno por <code>atexit</code> + doble POST no cubre un <code>SIGKILL</code> o una caída de red — si el proceso muere de forma abrupta, el SDK sigue repitiendo el último comando indefinidamente.</li>
+          <li><strong>Sin reintentos ni backoff:</strong> cualquier fallo HTTP transitorio se propaga tal cual (<code>raise_for_status()</code>), delegando toda la resiliencia al llamador (el bridge).</li>
+          <li><strong><code>claim_checkpoint</code> conflates casos:</strong> un 400 se interpreta siempre como "todavía lejos", sin distinguirlo de otros errores 400 posibles del servidor.</li>
+          <li><strong>Timeout por defecto modesto (5 s):</strong> puede ser insuficiente si el proceso del bridge está momentáneamente bloqueado por inferencia en CPU.</li>
+        </ul>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">6</span><span class="acc-title">Líneas de Mejora</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <ul>
+          <li>Watchdog del lado del servidor (SDK) que frene automáticamente si no recibe un nuevo comando dentro de una ventana corta, en vez de depender solo del cliente.</li>
+          <li>Reintentos con backoff exponencial para errores transitorios de red, distinguiéndolos de errores de dominio (400 esperado en <code>claim_checkpoint</code>).</li>
+          <li>Tipar los códigos de error del servidor en vez de devolver <code>r.text</code> crudo, para poder loguear y clasificar fallas.</li>
+          <li>Explorar telemetría por streaming (websocket/SSE) para reducir la latencia de sensado frente al polling actual.</li>
+          <li>Connection pooling / keep-alive explícito ya que <code>requests.Session</code> lo soporta pero no se configura ningún <code>HTTPAdapter</code> a medida.</li>
+        </ul>
+      </div>
+    </details>
+
+  </div>
+</section>
+
+<!-- ======================= TAB 4: TRAVERSABILITY / MEMORY ======================= -->
+<section class="tab-panel" id="panel-trav">
+  <div class="model-head">
+    <div>
+      <h2>Transitabilidad &amp; Memoria Espacial — odometry.py + persistent_map.py</h2>
+      <p>El BEV de percepción está pegado al robot y se descarta cada frame. Esta capa fusiona sensores en una pose y ancla las observaciones de transitabilidad a una grilla del mundo, para que el robot deje de "olvidar" lo que ya no está mirando.</p>
+    </div>
+    <div class="model-tags">
+      <span class="tag">odometry.py</span>
+      <span class="tag">persistent_map.py</span>
+      <span class="tag">grilla 8×8 m @ 3 cm/px</span>
+    </div>
+  </div>
+
+  <table class="quickref">
+    <tr><th>Elemento</th><th>Detalle</th></tr>
+    <tr><td class="k">Fuentes de odometría</td><td>giroscopio (~50 Hz, rotación), ruedas (~50 Hz, avance), GPS RTK (~1 Hz, corrección de escala)</td></tr>
+    <tr><td class="k">Marco del mundo</td><td>x adelante, y izquierda, θ antihorario; origen = donde arrancó el robot</td></tr>
+    <tr><td class="k">Celdas del mapa</td><td>-1 nunca observada · 0 intransitable · 1 transitable, con capa <code>conf</code> aparte de confianza</td></tr>
+    <tr><td class="k">Prueba aislada</td><td><code>python -m genie_rover.odometry</code> · <code>python -m genie_rover.persistent_map</code> (ninguna necesita robot ni GPU)</td></tr>
+  </table>
+
+  <div class="accordion" data-group="trav">
+
+    <details class="acc-item" open>
+      <summary><span class="acc-num">1</span><span class="acc-title">Estructura Interna</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <p><strong>Odometry</strong> integra series temporales de RPM y giroscopio en una <code>Pose</code> (x, y, θ):</p>
+        <ul>
+          <li><code>_wheel_series</code> / <code>_wheel_omega_series</code>: promedian ruedas izquierda/derecha (<code>left_rpm_indices</code>, <code>right_rpm_indices</code>) y convierten RPM a m/s y rad/s.</li>
+          <li><code>_gyro_series</code>: aplica <code>gyro_deadband_dps</code> para descartar ruido cuando el robot está quieto.</li>
+          <li><code>_interpolar</code>: interpolación lineal para alinear relojes de series con timestamps distintos.</li>
+          <li><code>calibrate_gyro_axis</code>: función utilitaria para determinar empíricamente qué eje del giróscopo mide guiñada y con qué signo.</li>
+        </ul>
+        <p><strong>PersistentMap</strong> mantiene dos capas paralelas sobre una grilla cuadrada de <code>size_m</code> metros de lado:</p>
+        <ul>
+          <li><code>value</code> (float32, 0=intransitable · 0.5=desconocido · 1=transitable) y <code>conf</code> (evidencia acumulada, 0 a 1).</li>
+          <li><code>world_to_cell</code> / <code>cell_to_world</code>: conversión entre coordenadas métricas y celdas de grilla.</li>
+          <li><code>origin_x</code>, <code>origin_y</code>: coordenadas del mundo en el centro del mapa, se desplazan al recentrar.</li>
+        </ul>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">2</span><span class="acc-title">Arquitectura</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <p><strong>Fusión de odometría</strong> — la rotación sale del giróscopo (sin ambigüedad de signo, a diferencia de las ruedas en este robot); el avance sale de las ruedas; el GPS corrige solo la <strong>escala</strong> del tramo recorrido cuando el desplazamiento supera <code>min_gps_displacement_m</code>:</p>
+        <table class="mini-table">
+          <tr><th>Paso</th><th>Cálculo</th></tr>
+          <tr><td>d_gps vs d_odo</td><td>distancia GPS vs. distancia integrada desde la última corrección</td></tr>
+          <tr><td>escala</td><td><code>clip(d_gps / d_odo, 0.5, 2.0)</code> — factor de corrección acotado</td></tr>
+          <tr><td>mezcla</td><td><code>1 + gps_blend · (escala - 1)</code> — corrige el segmento, no salta a la posición GPS</td></tr>
+        </table>
+        <p>Corregir la <em>escala</em> en vez de saltar a la posición GPS preserva la continuidad del mapa: un salto rompería la alineación entre lo que ya está pintado en la grilla y la nueva pose.</p>
+        <p><strong>Integración al mapa</strong> (<code>PersistentMap.integrate</code>): cada celda observada del BEV robot-céntrico se transforma a coordenadas del mundo con la pose actual (rotación + traslación), se acumulan varias celdas del BEV que caen en la misma celda de la grilla (promediando, no dejando ganar a la última), y se actualiza con una media exponencial ponderada por <code>update_weight</code>. Un <code>_apply_decay</code> periódico acerca las celdas no revisitadas a 0.5 (desconocido) a razón de <code>decay_per_s</code>.</p>
+        <p><strong>Recentrado:</strong> si el robot se acerca a menos de <code>recenter_margin_m</code> del borde, la grilla se desplaza en celdas enteras (sin interpolar, para no degradarse) y se actualiza el origen.</p>
+        <p><strong>Extracción (<code>extract_bev</code>):</strong> recorta una ventana del mapa del mundo como si fuera un BEV fresco del robot — mismo formato de salida que <code>PerceptionPipeline</code>, así el planner no distingue si el dato viene de percepción directa o de memoria.</p>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">3</span><span class="acc-title">Propósito y Funcionalidad</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <p>El propio código documenta los tres síntomas concretos que resuelve tener memoria espacial en vez de planificar solo sobre el frame actual:</p>
+        <ul>
+          <li>Esquivar un obstáculo y chocar con el de al lado, porque el segundo quedaba fuera de la ventana de ~2 m del BEV crudo.</li>
+          <li>Empezar a rodear por derecha, cambiar a izquierda a mitad de camino, y quedarse sin margen para ninguno de los dos lados.</li>
+          <li>Girar en círculos sin darse cuenta de que ya se pasó por ese lugar.</li>
+        </ul>
+        <p>El resultado es que el planner puede razonar sobre una ventana más amplia (<code>plan_forward_m</code>/<code>plan_side_m</code> en el bridge) que la que la cámara ve en un instante dado, sin necesitar una cámara de mayor alcance.</p>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">4</span><span class="acc-title">Ecosistema y Relaciones</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <div class="ecolinks">
+          <div class="ecolink"><b>← SDK</b><span><code>Odometry.update()</code> consume el payload crudo (<code>rpms</code>, <code>gyros</code>) de <code>Telemetry.raw</code></span></div>
+          <div class="ecolink"><b>← SAM-TP / percepción</b><span><code>PersistentMap.integrate()</code> recibe <code>BevResult.traversability</code> y <code>observed</code></span></div>
+          <div class="ecolink"><b>→ Bridge / planner</b><span><code>extract_bev()</code> reemplaza al BEV crudo como entrada de <code>plan_on_bev</code></span></div>
+          <div class="ecolink"><b>⊥ navigation.py</b><span><code>front_is_blocked</code> deliberadamente <u>no</u> usa esta capa — el frenado de seguridad ignora la memoria a propósito</span></div>
+        </div>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">5</span><span class="acc-title">Limitaciones</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <ul>
+          <li><strong>Deriva de rumbo no corregida:</strong> la rotación confía enteramente en el giróscopo; el GPS solo corrige la escala del avance, nunca el heading acumulado — a diferencia de <code>HeadingEstimator</code> en navigation.py, que sí usa el track GPS como fuente primaria de rumbo.</li>
+          <li><strong>Decaimiento puede borrar obstáculos reales:</strong> <code>decay_per_s</code> asume que lo no revisitado probablemente cambió; un obstáculo estático mientras el robot se demora en otra zona puede "desaparecer" del mapa antes de que el robot vuelva.</li>
+          <li><strong>No es SLAM:</strong> el recentrado descarta el contenido que queda fuera de la ventana desplazada — memoria acotada a <code>size_m</code>×<code>size_m</code> (8×8 m por defecto), no un mapa global con cierre de bucles.</li>
+          <li><strong>Costo de memoria y cómputo:</strong> resolución fija igual a la del BEV (3 cm/px) sobre un área de metros — el tamaño de grilla crece cuadráticamente si se quiere cubrir más terreno.</li>
+          <li><strong>Corrección GPS acotada por diseño (<code>clip(0.5, 2.0)</code>):</strong> protege contra outliers de GPS pero también limita cuánto puede corregir un patinaje de ruedas severo.</li>
+        </ul>
+      </div>
+    </details>
+
+    <details class="acc-item">
+      <summary><span class="acc-num">6</span><span class="acc-title">Líneas de Mejora</span><span class="acc-chevron">▸</span></summary>
+      <div class="acc-body">
+        <ul>
+          <li>Odometría visual o corrección de heading a partir del propio flujo de la cámara, para complementar al giróscopo en tramos largos sin GPS confiable.</li>
+          <li>Decaimiento diferenciado por clase semántica (un obstáculo "duro" decae más lento que una sombra o un reflejo mal clasificado).</li>
+          <li>Representación jerárquica o dispersa (quadtree/hash de celdas) para extender el alcance de memoria más allá de los 8×8 m sin pagar el costo cuadrático completo.</li>
+          <li>Actualización por log-odds (como en mapas de ocupación clásicos) en vez de la media exponencial lineal actual, para un tratamiento más principiado de la incertidumbre.</li>
+          <li>Evaluar comparativamente esta memoria propia contra <code>observation_fusion</code> del planner GeNIE original, que persigue el mismo objetivo con otro diseño.</li>
+        </ul>
+      </div>
+    </details>
+
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap" style="width:100%;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+    <span>genie_rover — puente GeNIE ↔ Earth Rovers SDK</span>
+    <span>Documentación técnica generada a partir del código fuente del repo del equipo</span>
+  </div>
+</footer>
+
+<script>
+// ---------- tabs ----------
+const tabBtns = document.querySelectorAll('.tab-btn');
+const panels = document.querySelectorAll('.tab-panel');
+tabBtns.forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    tabBtns.forEach(b=>b.classList.remove('active'));
+    panels.forEach(p=>p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('panel-'+btn.dataset.tab).classList.add('active');
+  });
+});
+
+// ---------- accordion: only one open per group ----------
+document.querySelectorAll('.accordion').forEach(group=>{
+  const items = group.querySelectorAll('.acc-item');
+  items.forEach(item=>{
+    item.addEventListener('toggle', ()=>{
+      if(item.open){
+        items.forEach(other=>{ if(other!==item) other.open = false; });
+      }
+    });
+  });
+});
+
+// ---------- signature BEV widget ----------
+(function(){
+  const grid = document.getElementById('bevGrid');
+  const cols = 18, rows = 14;
+  const total = cols*rows;
+  const cells = [];
+  // seed a pseudo-random but stable pattern resembling a traversability BEV:
+  // free fan in front, an obstacle blob, unknown edges
+  const robotCol = Math.floor(cols/2);
+  const robotRow = rows-1;
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      const div = document.createElement('div');
+      div.className = 'bev-cell';
+      const distFromCenter = Math.abs(c-robotCol);
+      const distFromBottom = rows-1-r;
+      const inFan = distFromCenter <= (distFromBottom*0.55)+1;
+      const isObstacle = (r>3 && r<7 && c>10 && c<14);
+      if(r===robotRow && c===robotCol){
+        div.classList.add('robot');
+      } else if(isObstacle){
+        div.classList.add('blocked');
+      } else if(inFan && distFromBottom < 11){
+        div.classList.add('free');
+        div.style.animationDelay = ((r*cols+c)%20*0.15)+'s';
+      }
+      grid.appendChild(div);
+      cells.push(div);
+    }
+  }
+  let t = 0;
+  const tick = document.getElementById('bevTick');
+  setInterval(()=>{
+    t += 0.4;
+    tick.textContent = 't='+t.toFixed(1)+'s';
+  }, 400);
+})();
+</script>
+
+</body>
+</html>

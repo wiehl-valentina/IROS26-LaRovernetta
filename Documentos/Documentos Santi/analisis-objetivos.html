@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-width=1.0">
+    <title>Reporte Técnico: IMU y Visión Robótica</title>
+    <!-- Cargamos la librería Three.js para la demostración interactiva 3D -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: #e0e0e0;
+            background-color: #121212;
+            margin: 0;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: #1e1e1e;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        }
+        h1 {
+            color: #ffffff;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+            margin-top: 0;
+        }
+        h2 {
+            color: #64b5f6;
+            margin-top: 40px;
+            border-bottom: 1px solid #333333;
+            padding-bottom: 5px;
+        }
+        p {
+            font-size: 1.05rem;
+            color: #cfcfcf;
+        }
+        li {
+            color: #cfcfcf;
+            font-size: 1.05rem;
+            margin-bottom: 8px;
+        }
+        strong {
+            color: #ffffff;
+        }
+        
+        /* NUEVO: Estilo para los bloques de las problemáticas */
+        .observation-block {
+            background-color: #252525;
+            border: 1px solid #333333;
+            border-radius: 12px;
+            padding: 35px 30px;
+            margin: 50px 0;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+            border-top: 5px solid #3498db;
+        }
+        .observation-block h2 {
+            margin-top: 0; /* Quita el margen superior extra dentro del bloque */
+            border-bottom: none;
+        }
+        
+        .highlight-box {
+            background-color: #1a2c28;
+            border-left: 5px solid #1abc9c;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        .highlight-box p {
+            margin: 0;
+            font-style: italic;
+            color: #e0f2f1;
+        }
+        /* Estilos para el simulador 3D */
+        .simulator {
+            background: #252525;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 30px 0;
+            color: white;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.3) inset, 0 4px 15px rgba(0,0,0,0.2);
+        }
+        #canvas-container {
+            width: 100%;
+            height: 450px;
+            background: #121212;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 2px solid #333333;
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #333333;
+            padding: 15px 25px;
+            border-radius: 8px;
+            min-width: 150px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .control-group label {
+            font-weight: bold;
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+            color: #e0e0e0;
+        }
+        .control-group small {
+            color: #9e9e9e;
+            margin-top: 5px;
+        }
+        input[type="range"] {
+            width: 100%;
+            cursor: pointer;
+            accent-color: #3498db;
+        }
+        .val-display {
+            color: #64b5f6;
+            font-weight: bold;
+        }
+        button {
+            background-color: #e53935;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.3s, transform 0.1s;
+            margin-top: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+        }
+        button:hover {
+            background-color: #c62828;
+        }
+        button:active {
+            transform: translateY(2px);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background-color: #1e1e1e;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        th, td {
+            padding: 15px;
+            border: 1px solid #424242;
+            text-align: left;
+        }
+        th {
+            background-color: #1976d2;
+            color: white;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>📄 Reporte Técnico: El Oído Interno del Robot y la Ilusión Visual</h1>
+    
+    <p>Este documento analiza por qué la física del mundo real a veces engaña a la Inteligencia Artificial de los robots, y cómo un sensor muy pequeño puede resolver un problema gigante de forma mucho más elegante que una red neuronal compleja.</p>
+
+    <h2>1. ¿Qué es una IMU? (El Oído Interno del Robot)</h2>
+    <p><strong>IMU</strong> significa <em>Unidad de Medición Inercial</em> (Inertial Measurement Unit). En términos sencillos, es el "sentido del equilibrio" del robot, cumpliendo la misma función que el sistema vestibular que los humanos tenemos dentro de nuestros oídos.</p>
+    <p>Una IMU estándar es un microchip que contiene dos sensores físicos principales:</p>
+    <ul>
+        <li><strong>El Acelerómetro:</strong> Siente la gravedad y las fuerzas G. Le dice al robot si está acelerando, frenando bruscamente, o si está subiendo una rampa inclinada.</li>
+        <li><strong>El Giroscopio:</strong> Siente las rotaciones. Le dice al robot a qué velocidad está girando sobre sí mismo en un espacio 3D, incluso si la cámara estuviera apagada.</li>
+    </ul>
+
+    <h2>2. Los Tres Ejes del Movimiento: Pitch, Roll y Yaw</h2>
+    <p>Para entender el problema que tiene el planificador de trayectorias, debemos visualizar cómo se mueve el robot. Los ingenieros utilizan tres términos universales para describir la rotación tridimensional. Juega con los controles a continuación para ver cómo afectan al chasis del robot:</p>
+
+    <!-- INICIO SIMULADOR 3D -->
+    <div class="simulator">
+        <div id="canvas-container"></div>
+        <div class="controls">
+            <div class="control-group">
+                <label>Pitch (Cabeceo): <span id="pitch-val" class="val-display">0°</span></label>
+                <input type="range" id="pitch" min="-45" max="45" value="0">
+                <small>Frenar / Acelerar</small>
+            </div>
+            <div class="control-group">
+                <label>Roll (Alabeo): <span id="roll-val" class="val-display">0°</span></label>
+                <input type="range" id="roll" min="-45" max="45" value="0">
+                <small>Terreno irregular lateral</small>
+            </div>
+            <div class="control-group">
+                <label>Yaw (Guiñada): <span id="yaw-val" class="val-display">0°</span></label>
+                <input type="range" id="yaw" min="-180" max="180" value="0">
+                <small>Doblar izquierda/derecha</small>
+            </div>
+        </div>
+        <div style="text-align: center;">
+            <button id="reset-btn">Restablecer Robot</button>
+        </div>
+    </div>
+    <!-- FIN SIMULADOR 3D -->
+
+    <!-- ========================================== -->
+    <!-- BLOQUE 1: PROFUNDIDAD (Suspensión e IMU)   -->
+    <!-- ========================================== -->
+    <div class="observation-block">
+        <h2>El Problema de la Profundidad: La Suspensión y los "Obstáculos Fantasma"</h2>
+        <div class="highlight-box">
+            <p>"Profundidad. No es el cuello de botella. El pitch dinámico sí. A 2 m, un grado de error de pitch son 61 cm. La suspensión se mueve más de un grado al acelerar. Compensar pitch por frame con la IMU son unas 30 líneas y le gana a cualquier red de profundidad monocular."</p>
+        </div>
+        
+        <p>El robot tiene una cámara fija mirando hacia el suelo para detectar por dónde puede caminar (su mapa <em>Bird's Eye View</em>). El software asume ingenuamente que la cámara es perfectamente rígida y siempre mira al piso con el mismo ángulo.</p>
+
+        <p>Pero en el mundo real, los robots tienen <strong>suspensión</strong>. Cuando el robot acelera, el peso se transfiere atrás y la cámara apunta más arriba (Pitch positivo en el simulador). Cuando <strong>frena de golpe</strong>, la nariz se hunde hacia el piso (Pitch negativo).</p>
+
+        <p>Si la cámara está proyectando el suelo a 2 metros de distancia, inclinar la nariz apenas <strong>1 grado</strong> hacia abajo por el freno de la suspensión hace que la proyección visual salte 61 centímetros hacia el robot. Para el "cerebro" del robot, esto es catastrófico: cree ver que la pared de enfrente acaba de saltar medio metro hacia él. Como acto reflejo, el robot vuelve a clavar los frenos asustado por un <strong>obstáculo fantasma</strong>, hundiendo más la suspensión y creando un ciclo de errores.</p>
+
+        <h3>La Solución: Física vs. Inteligencia Artificial</h3>
+        
+        <table>
+            <tr>
+                <th>El Enfoque Incorrecto (IA Pura)</th>
+                <th>El Enfoque Correcto (Geometría + IMU)</th>
+            </tr>
+            <tr>
+                <td>Entrenar una "red neuronal de profundidad monocular" pesadísima que adivine la distancia evaluando luces y sombras en cada foto.</td>
+                <td>Escribir ~30 líneas de código matemático que le pregunten a la IMU cuántos grados se inclinó el chasis y corrija la foto.</td>
+            </tr>
+            <tr>
+                <td>Consume demasiada batería de la computadora, procesa lento y falla en pisos lisos sin textura.</td>
+                <td>Consume 0% de batería, funciona a la velocidad de la luz y nunca se equivoca, porque no "adivina": usa datos físicos reales.</td>
+            </tr>
+        </table>
+
+        <h3>El Concepto Técnico: ¿Qué es una "Matriz"?</h3>
+        <p>Para que la solución correcta funcione, el código debe alterar algo llamado <strong>Matriz de Transformación Extrínseca</strong>.</p>
+        <p>Piensa en la Matriz simplemente como un <strong>Manual de Traducción</strong> entre la foto plana en 2D (píxeles) y el mundo real en 3D (metros). Es un bloque de números que dice: <em>"Todo lo que esté en la fila 100 de píxeles, está exactamente a 2 metros en la vida real"</em>.</p>
+
+        <p><strong>La Compensación Dinámica:</strong><br>
+        En lugar de usar un manual fijo, el código toma la lectura de la IMU en el momento exacto en que se saca la foto. Si la IMU reporta que el robot tiene la nariz hundida 1 grado por estar frenando, la computadora <strong>multiplica la matriz original por ese ángulo</strong> para reescribir el manual en un milisegundo.</p>
+        <p>El nuevo manual dirá: <em>"El robot se inclinó. La fila 100 de píxeles ya no está a 2 metros, ahora está a 1.39 metros"</em>. Al corregir la proyección matemáticamente antes de dársela al planificador de GeNIE, el mapa del suelo queda perfectamente estable y libre de "fantasmas", sin importar cuánto rebote el vehículo.</p>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- BLOQUE 2: VELOCIDAD Y FRECUENCIA           -->
+    <!-- ========================================== -->
+    <div class="observation-block">
+        <h2>El Problema de la Velocidad: Pensar Demasiado, Moverse Poco</h2>
+        <div class="highlight-box">
+            <p>"Velocidad. No van rápido. Deciden rápido. A 0,25 m/s y 5 Hz avanzan 5 cm por frame, con celdas de 3 cm. Cada frame re-decide sobre información casi idéntica. Hay que bajar la frecuencia de decisión, no la velocidad."</p>
+        </div>
+        
+        <p>Esta observación ataca un error de diseño muy común en la robótica: confundir la velocidad física (qué tan rápido giran las ruedas) con la velocidad cognitiva (qué tan rápido "piensa" el cerebro del robot).</p>
+
+        <h3>Desglosando los conceptos técnicos:</h3>
+        <ul>
+            <li><strong>Velocidad Física (0,25 m/s):</strong> Significa que el robot avanza 25 centímetros cada segundo. Es una velocidad de caminata lenta y cautelosa.</li>
+            <li><strong>Frecuencia (5 Hz):</strong> Los "Hertz" miden cuántas veces por segundo ocurre algo. Si el cerebro del robot opera a 5 Hz, significa que abre los ojos, saca una foto, analiza el terreno y recalcula toda su ruta <strong>5 veces por segundo</strong>.</li>
+            <li><strong>Celdas de 3 cm:</strong> El mapa mental que dibuja GeNIE (el BEV) no es liso, es como un tablero de ajedrez o un mundo de Minecraft. Está dividido en cuadritos perfectos, y cada cuadrito mide 3x3 centímetros.</li>
+        </ul>
+
+        <h3>El Problema: La Parálisis por Análisis</h3>
+        <p>Hagamos la matemática simple: Si el robot avanza 25 cm en un segundo, y toma 5 fotos en ese mismo segundo, significa que <strong>apenas avanzó 5 centímetros entre foto y foto</strong>.</p>
+        
+        <p>Si miramos su mapa mental (donde las celdas miden 3 cm), un avance de 5 cm significa que el robot apenas se movió un cuadrito y medio hacia adelante. El paisaje es prácticamente idéntico al que vio una fracción de segundo atrás. Los obstáculos están en el mismo lugar y el camino sigue siendo el mismo.</p>
+        
+        <p>Forzar al robot a re-decidir toda su estrategia 5 veces por segundo sobre una imagen que no ha cambiado trae dos problemas graves:</p>
+        <ol>
+            <li><strong>Desperdicio masivo de energía:</strong> Procesar redes neuronales calienta la computadora y drena la batería sin aportar nueva información útil.</li>
+            <li><strong>El efecto "Titubeo" (Chattering):</strong> Como las cámaras siempre tienen un poco de "ruido" visual, el robot podría recalcular una ruta un milímetro a la izquierda, y a la fracción de segundo siguiente, un milímetro a la derecha. Físicamente, esto hace que el robot tiemble y parezca nervioso o ebrio mientras avanza.</li>
+        </ol>
+
+        <h3>La Solución: Bajar la frecuencia, no la velocidad</h3>
+        <p>Cuando un robot se ve inestable o torpe, el instinto humano es hacer que conduzca más lento. La observación concluye que eso es un error.</p>
+        
+        <table>
+            <tr>
+                <th>Solución Instintiva (Incorrecta)</th>
+                <th>Solución de Ingeniería (Correcta)</th>
+            </tr>
+            <tr>
+                <td>Hacer que el robot ande más despacio para que "tenga tiempo de pensar".</td>
+                <td>Bajar los Hertz (Hz) a 1 o 2 fotos por segundo, manteniendo la velocidad de las ruedas intacta.</td>
+            </tr>
+            <tr>
+                <td>El robot se vuelve inútilmente lento, tardando una eternidad en llegar a su destino, y sigue gastando demasiada batería recalculando.</td>
+                <td>El robot es ágil. Traza un plan, confía en él, avanza un tramo largo con el volante firme, y recién cuando el paisaje cambió lo suficiente, vuelve a abrir los ojos para evaluar.</td>
+            </tr>
+        </table>
+
+        <p>Bajar la frecuencia de decisión relaja la computadora, suaviza los movimientos del volante y permite que el robot se desplace con mucha más confianza por el entorno.</p>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- BLOQUE 3: ATASCO Y GEOMETRÍA               -->
+    <!-- ========================================== -->
+    <div class="observation-block">
+        <h2>El Problema del Atasco: Perspectiva y Geometría</h2>
+        <div class="highlight-box">
+            <p>"Se queda ahí. Geometría, no percepción. Un obstáculo más alto que 15 cm pinta una cuña roja de profundidad completa. A 1,5 m ocupa 14 % del campo visual; a 0,3 m ocupa 66 %. Girar en el lugar no lo resuelve nunca. Solo retroceder."</p>
+        </div>
+        
+        <p>Esta observación describe una situación muy frustrante: el robot se acerca a un obstáculo, se detiene, y de repente "se queda ahí" congelado o girando sobre sí mismo como si estuviera confundido. El instinto natural de un programador es pensar que la Inteligencia Artificial falló (percepción), pero en realidad, es un problema de simple geometría y óptica.</p>
+
+        <h3>Desglosando los conceptos técnicos:</h3>
+        
+        <p><strong>1. La "Cuña Roja" (Puntos Ciegos y Sombras de Seguridad):</strong></p>
+        <p>El cerebro del robot (GeNIE) dibuja un mapa plano visto desde arriba, pintando de verde por donde puede pasar y de rojo (peligro) donde hay cosas. Pero la cámara del robot no está en el techo mirándolo desde arriba; está en su "cabeza", mirando hacia adelante. </p>
+        <p>Si hay una simple caja de zapatos (15 cm de alto) en el suelo, la cámara <strong>no puede ver qué hay detrás de la caja</strong>. Como regla de seguridad, el sistema pinta la caja de rojo, pero también pinta de rojo <em>toda la línea de visión que queda bloqueada detrás de ella</em> hasta el infinito. Visto desde arriba, esto no forma un cuadradito rojo, sino un triángulo gigante o <strong>"cuña roja"</strong>, como si el obstáculo proyectara una sombra inmensa de peligro.</p>
+
+        <p><strong>2. La Trampa de la Proximidad (El 14% vs El 66%):</strong></p>
+        <p>Esto es pura perspectiva humana. Hagamos un experimento: pon tu mano a la altura de tu cara pero con el brazo completamente estirado (a 1,5 metros). Tu mano tapa una pequeña parte de la habitación (el 14%). Ahora, trae tu mano y ponla a un palmo de tu nariz (0,3 metros). Tu mano acaba de tapar casi toda tu visión (el 66%).</p>
+        <p>Le pasa exactamente lo mismo al robot. Si se acerca demasiado al obstáculo, este "bloquea" casi toda la imagen de su cámara. En el mapa mental del robot, esa cuña roja acaba de expandirse masivamente, devorando todo el mapa verde y dejándolo atrapado en un rinconcito minúsculo de "espacio seguro".</p>
+
+        <h3>¿Por qué el robot no puede escapar?</h3>
+        <p>Cuando el robot se ve atrapado, su programa de emergencia (como vimos en la función <code>_recover()</code> del código anterior) es "girar en el lugar" para buscar una salida. Aquí es donde la geometría lo traiciona:</p>
+        
+        <table>
+            <tr>
+                <th>Girar en el lugar (No funciona)</th>
+                <th>Retroceder (La solución correcta)</th>
+            </tr>
+            <tr>
+                <td>Si tienes una pared a 30 cm de la nariz que tapa tu visión, girar la cabeza de izquierda a derecha no cambia nada: sigues viendo una pared gigante y no ves qué hay más allá. En el mapa del robot, la inmensa cuña roja simplemente barre de un lado a otro como un radar, pero sigue bloqueando la salida.</td>
+                <td>Dar marcha atrás cambia la geometría. Al retroceder a 1,5 metros, el obstáculo vuelve a hacerse "pequeño" visualmente (14%). La cuña roja se encoge enormemente, revelando todo el suelo verde y seguro a los costados que antes estaba oculto por la perspectiva.</td>
+            </tr>
+        </table>
+
+        <p><strong>La lección de ingeniería:</strong> Para solucionar este atasco, no hay que darle un mejor modelo de inteligencia artificial o una cámara de mejor calidad al robot. Simplemente hay que enseñarle a <strong>dar un paso atrás</strong> cuando el semáforo rojo ocupe más de la mitad de su visión, devolviéndole así la perspectiva necesaria para planificar una ruta de escape por los costados.</p>
+    </div>
+
+</div>
+
+<script>
+    // Lógica para inicializar el simulador interactivo 3D usando Three.js
+    const initSimulator = () => {
+        const container = document.getElementById('canvas-container');
+        
+        // Configuración básica de la escena
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x121212); // Fondo oscuro a juego
+        
+        // Cámara
+        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+        camera.position.set(4, 3, 5);
+        camera.lookAt(0, 0, 0);
+
+        // Renderizador
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        // Soporte para sombras suaves
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        // Iluminación
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(5, 10, 5);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // ------------------ CONSTRUCCIÓN DEL ROBOT ------------------
+        const robotGroup = new THREE.Group();
+
+        // Chasis principal (Azul)
+        const bodyGeo = new THREE.BoxGeometry(1.6, 0.5, 2.5);
+        const bodyMat = new THREE.MeshPhongMaterial({ color: 0x3498db });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.castShadow = true;
+        robotGroup.add(body);
+
+        // Lente de la cámara (Gris muy oscuro) - Indicando el "frente"
+        const lensGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.3, 32);
+        const lensMat = new THREE.MeshPhongMaterial({ color: 0x212121 });
+        const lens = new THREE.Mesh(lensGeo, lensMat);
+        lens.rotation.x = Math.PI / 2; // Apuntar hacia adelante
+        lens.position.set(0, 0.2, 1.25);
+        robotGroup.add(lens);
+
+        // Ruedas (Gris oscuro)
+        const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.2, 32);
+        const wheelMat = new THREE.MeshPhongMaterial({ color: 0x424242 });
+        
+        const wheelPositions = [
+            [0.9, -0.2, 0.9],   // Delantera Derecha
+            [-0.9, -0.2, 0.9],  // Delantera Izquierda
+            [0.9, -0.2, -0.9],  // Trasera Derecha
+            [-0.9, -0.2, -0.9]  // Trasera Izquierda
+        ];
+
+        wheelPositions.forEach(pos => {
+            const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+            wheel.rotation.z = Math.PI / 2;
+            wheel.position.set(...pos);
+            wheel.castShadow = true;
+            robotGroup.add(wheel);
+        });
+
+        // Levantar el grupo para que las ruedas toquen el piso
+        robotGroup.position.y = 0.6;
+        scene.add(robotGroup);
+
+        // ------------------ ENTORNO VISUAL ------------------
+        // Grilla del piso adaptada a dark mode
+        const gridHelper = new THREE.GridHelper(10, 10, 0x555555, 0x333333);
+        scene.add(gridHelper);
+
+        // Ejes de coordenadas (X=Rojo, Y=Verde, Z=Azul)
+        const axesHelper = new THREE.AxesHelper(3);
+        axesHelper.position.y = 0.01; // Ligeramente arriba del piso
+        scene.add(axesHelper);
+
+        // Piso invisible para recibir sombras
+        const planeGeo = new THREE.PlaneGeometry(10, 10);
+        const planeMat = new THREE.ShadowMaterial({ opacity: 0.5 });
+        const plane = new THREE.Mesh(planeGeo, planeMat);
+        plane.rotation.x = -Math.PI / 2;
+        plane.receiveShadow = true;
+        scene.add(plane);
+
+        // ------------------ ANIMACIÓN Y RENDERIZADO ------------------
+        const animate = function () {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        };
+        animate();
+
+        // ------------------ CONTROLES INTERACTIVOS ------------------
+        const pitchSlider = document.getElementById('pitch');
+        const rollSlider = document.getElementById('roll');
+        const yawSlider = document.getElementById('yaw');
+        const resetBtn = document.getElementById('reset-btn');
+
+        const updateRotation = () => {
+            // Convertimos los grados del HTML a Radianes matemáticos
+            // Invertimos el Pitch para que los valores positivos suban la nariz
+            // Invertimos el Yaw para que positivo gire a la derecha
+            const pitch = THREE.MathUtils.degToRad(-pitchSlider.value); 
+            const roll = THREE.MathUtils.degToRad(rollSlider.value);
+            const yaw = THREE.MathUtils.degToRad(-yawSlider.value);
+            
+            // Aplicamos la rotación matemática al objeto 3D
+            // El orden YXZ es estándar para vehículos
+            robotGroup.rotation.set(pitch, yaw, roll, 'YXZ');
+            
+            // Actualizamos el texto en pantalla
+            document.getElementById('pitch-val').innerText = pitchSlider.value + '°';
+            document.getElementById('roll-val').innerText = rollSlider.value + '°';
+            document.getElementById('yaw-val').innerText = yawSlider.value + '°';
+        };
+
+        pitchSlider.addEventListener('input', updateRotation);
+        rollSlider.addEventListener('input', updateRotation);
+        yawSlider.addEventListener('input', updateRotation);
+
+        resetBtn.addEventListener('click', () => {
+            pitchSlider.value = 0;
+            rollSlider.value = 0;
+            yawSlider.value = 0;
+            updateRotation();
+        });
+
+        // Auto-ajustar el tamaño si el usuario cambia el tamaño de la ventana
+        window.addEventListener('resize', () => {
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        });
+    };
+
+    // Ejecutar cuando el documento cargue
+    window.addEventListener('load', initSimulator);
+</script>
+
+</body>
+</html>

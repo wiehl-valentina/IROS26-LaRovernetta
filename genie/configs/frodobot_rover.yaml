@@ -14,11 +14,11 @@ rover:
 
 samtp:
   config_path: "sam2/configs/sam2.1_inference_tiny/sam2.1_custom2.yaml"
-  checkpoint_path: "sam2_logs/configs/sam2.1_training_tiny/sam2_training_custom2_freezeNoneNone_f57.yaml/checkpoints/checkpoint_2.pt"
-  device: null            # null = autodetectar cuda
-  precision: "auto"       # auto -> fp16 en Turing (RTX 2080)
+  checkpoint_path: "sam2_logs/configs/sam2.1_training_tiny/sam2_training_custom2_freezeNoneNone_f57.yaml/checkpoints/checkpoint_2.pt"  # viejo, checkpoint generico del paper
+  #checkpoint_path: "checkpoints/checkpoint_finetuned_v2.pt"   # nuevo, fine-tuneado en 50k frames del Mini+
+  device: null
+  precision: "auto"
   score_thresh: 0.0
-
 camera:
   calibrated: true
 
