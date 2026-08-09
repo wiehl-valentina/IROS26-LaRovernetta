@@ -37,7 +37,7 @@ from .odometry import Odometry, OdometryConfig, Pose
 from .perception import PerceptionPipeline
 from .persistent_map import MapConfig, PersistentMap
 from .sdk_client import Checkpoint, RoverClient, RoverError
-from .vlm_recovery import ask_recovery_heading
+
 
 @dataclass
 class LoopStats:
@@ -133,10 +133,6 @@ class Bridge:
         self._last_frame_change = time.time()
         self._consecutive_errors = 0
         self._consecutive_empty = 0
-
-
-
-        
         # Deteccion de giro sin avance: el planner puede quedar en un ciclo
         # donde cada giro revela una escena que vuelve a pedir girar. Sin
         # memoria entre frames, eso no se rompe solo.
@@ -145,13 +141,6 @@ class Bridge:
         self.max_consecutive_turns = int(safety.get("max_consecutive_turns", 6))
         self.unstick_forward_s = float(safety.get("unstick_forward_s", 1.2))
 
-         # ---- recovery con VLM (opt-in) -----------------------------------
-        self.use_vlm_recovery = bool(safety.get("use_vlm_recovery", False))
-        self.vlm_timeout_s = float(safety.get("vlm_recovery_timeout_s", 4.0))
-        self.vlm_min_confidence = float(safety.get("vlm_recovery_min_confidence", 0.35))
-        if self.use_vlm_recovery:
-            from programs.client.genai_client import load_credentials
-            load_credentials()  # falla rapido y ruidoso si falta GEMINI_API_KEY
         # Histeresis de lado de esquive. Cada frame se planifica de cero, asi
         # que nada impide cambiar de "paso por derecha" a "paso por izquierda"
         # a mitad de maniobra. Ese titubeo consume el margen que hacia falta
@@ -421,48 +410,22 @@ class Bridge:
         # considera viable.
         return DriveCommand(cmd.linear, 0.0,
                             f"mantengo el rumbo (evito titubeo, {error_deg:+.0f} grados)")
+
     def _recover(self) -> None:
-        """Recuperacion: le pregunta a un VLM hacia donde girar si esta
-        habilitado y responde con confianza suficiente; si no, gira a ciegas
-        como antes. El barrido ciego nunca se elimina: es el fallback de
-        seguridad cuando no hay red, falta la API key, o Gemini tarda de mas.
+        """Recuperacion minima: girar en el lugar para buscar salida.
+
+        GeNIE usa un VLM para esto (mirar en 4 direcciones y elegir). Esta es la
+        version sin VLM: gira a ciegas. Si te importa el puntaje del ERC, aca es
+        donde conviene meter el modulo del paper.
         """
-        decision = None
-        if self.use_vlm_recovery:
-            try:
-                rgb, _ = self.client.front_frame()
-                decision = ask_recovery_heading(
-                    rgb, min_confidence=self.vlm_min_confidence, timeout_s=self.vlm_timeout_s
-                )
-            except Exception as exc:
-                print(f"[bridge] no pude conseguir un frame para el VLM: {exc}")
-
-        if decision is None:
-            print("[bridge] RECUPERACION: barrido ciego (sin VLM o sin respuesta util)")
-            self.send(DriveCommand(0.0, self.follower.angular_sign * self.follower.turn_speed,
-                                "barrido de recuperacion"))
-            time.sleep(self.recovery_turn_s)
-        else:
-            print(f"[bridge] RECUPERACION VLM: {decision.heading} "
-                f"(on_road={decision.on_road}, confianza={decision.confidence:.2f}) "
-                f"— {decision.reason}")
-            if decision.heading == "adelante":
-                # el VLM dice que el frente esta libre: probable falsa alarma
-                # del planner. Avanzamos un toque en vez de girar.
-                self.send(DriveCommand(self.follower.max_linear * 0.5, 0.0,
-                                    "recuperacion VLM: avanzar"))
-                time.sleep(min(self.recovery_turn_s, 1.0))
-            else:
-                signo = {"izquierda": 1.0, "derecha": -1.0, "atras": -1.0}[decision.heading]
-                self.send(DriveCommand(0.0, self.follower.angular_sign * self.follower.turn_speed * signo,
-                                    f"recuperacion VLM: {decision.heading}"))
-                time.sleep(self.recovery_turn_s * (1.6 if decision.heading == "atras" else 1.0))
-
+        print("[bridge] RECUPERACION: girando para buscar terreno transitable")
+        self.send(DriveCommand(0.0, self.follower.angular_sign * self.follower.turn_speed,
+                               "barrido de recuperacion"))
+        time.sleep(self.recovery_turn_s)
         self.send(DriveCommand(0.0, 0.0, "fin del barrido"))
-        self.heading_est.reset_track()
+        self.heading_est.reset_track()  # el track GPS previo ya no dice el rumbo
         self._consecutive_empty = 0
 
-    
     def _maybe_dump_debug(self, rgb, res, plan) -> None:
         if not self.debug_dir:
             return
