@@ -1,0 +1,9 @@
+numpy>=1.24
+pillow>=9.4
+requests>=2.25
+
+[dev]
+pytest>=7
+
+[hf]
+huggingface_hub>=0.23

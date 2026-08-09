@@ -295,7 +295,7 @@ class Bridge:
         if front_is_blocked(res.traversability, self.resolution):
             self.stats.blocked += 1
             
-            if is_red_wedge(res.traversability, self.resolution) and self._retrocesos_seguidos < 2:
+            if is_red_wedge(res.traversability, self.resolution) : # and self._retrocesos_seguidos < 2
                 self._retrocesos_seguidos += 1
                 print(f"[bridge] CUÑA ROJA: retrocedo para abrir perspectiva ({self._retrocesos_seguidos}/2)")
                 
