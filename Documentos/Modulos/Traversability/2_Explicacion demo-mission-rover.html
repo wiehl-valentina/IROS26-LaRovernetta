@@ -1,0 +1,1150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Demo Mission — Cómo navega el rover</title>
+<style>
+:root{
+  --bg:#0a0e16;
+  --bg-alt:#0d1220;
+  --panel:#121a28;
+  --panel-2:#0f1622;
+  --line:#1f2b3d;
+  --line-soft:#182233;
+  --text:#dfe6f0;
+  --muted:#8391a8;
+  --muted-2:#5c6b83;
+  --drivable:#39d98a;
+  --blocked:#ff5c5c;
+  --goal:#f5a623;
+  --telemetry:#49c8e8;
+  --code-bg:#0a0f19;
+  --radius:10px;
+  --mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+*{box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{
+  margin:0;
+  background:
+    radial-gradient(1200px 500px at 15% -10%, rgba(73,200,232,0.07), transparent 60%),
+    radial-gradient(1000px 600px at 100% 0%, rgba(245,166,35,0.05), transparent 55%),
+    var(--bg);
+  color:var(--text);
+  font-family:var(--sans);
+  line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+::selection{background:rgba(57,217,138,0.25);}
+a{color:var(--telemetry);}
+
+/* ---------- layout helpers ---------- */
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px;}
+section{padding:88px 0;border-bottom:1px solid var(--line-soft);}
+section:last-of-type{border-bottom:none;}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:8px;
+  font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted-2);margin-bottom:14px;
+}
+.eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--drivable);box-shadow:0 0 8px var(--drivable);}
+h1,h2,h3,h4{font-family:var(--sans);font-weight:600;letter-spacing:-0.01em;margin:0 0 .5em;}
+h2{font-size:clamp(26px,3.4vw,38px);}
+h2 span.n{color:var(--muted-2);font-family:var(--mono);font-weight:500;font-size:.55em;margin-right:10px;vertical-align:2px;}
+h3{font-size:19px;color:var(--text);}
+p{color:var(--muted);margin:0 0 1em;max-width:74ch;}
+.lede{font-size:17px;color:var(--muted);max-width:70ch;}
+code, .mono{font-family:var(--mono);}
+strong{color:var(--text);font-weight:600;}
+
+/* ---------- nav ---------- */
+nav{
+  position:sticky;top:0;z-index:50;
+  backdrop-filter:blur(10px);
+  background:rgba(10,14,22,0.82);
+  border-bottom:1px solid var(--line);
+}
+nav .wrap{display:flex;align-items:center;justify-content:space-between;height:58px;gap:18px;}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:13px;color:var(--text);white-space:nowrap;}
+.brand .dot{width:9px;height:9px;border-radius:2px;background:var(--drivable);box-shadow:0 0 10px var(--drivable);transform:rotate(45deg);}
+.navlinks{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;}
+.navlinks::-webkit-scrollbar{display:none;}
+.navlinks a{
+  font-family:var(--mono);font-size:12px;color:var(--muted);text-decoration:none;
+  padding:8px 12px;border-radius:6px;white-space:nowrap;transition:.15s;
+}
+.navlinks a:hover{color:var(--text);background:var(--panel);}
+
+/* ---------- hero ---------- */
+.hero{padding-top:70px;padding-bottom:60px;position:relative;overflow:hidden;}
+.hero-grid{display:grid;grid-template-columns:1.15fr 1fr;gap:56px;align-items:center;}
+@media (max-width:920px){.hero-grid{grid-template-columns:1fr;}}
+.hero h1{font-size:clamp(36px,5.2vw,58px);line-height:1.03;margin-bottom:.35em;}
+.hero h1 em{font-style:normal;color:var(--drivable);}
+.hero-tags{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px;}
+.tag{font-family:var(--mono);font-size:11px;color:var(--muted);border:1px solid var(--line);padding:5px 10px;border-radius:20px;}
+
+/* scanner signature visual */
+.scanner{
+  position:relative;height:320px;border-radius:16px;border:1px solid var(--line);
+  background:linear-gradient(180deg,#0c1220,#080b12);
+  overflow:hidden;
+}
+.scanner .sky{position:absolute;inset:0 0 55% 0;background:linear-gradient(180deg,#0d1626,#0a0f19);}
+.scanner .ground{position:absolute;inset:45% 0 0 0;display:flex;}
+.scanner .corridor{flex:1;position:relative;border-right:1px solid rgba(255,255,255,0.05);}
+.scanner .corridor:last-child{border-right:none;}
+.scanner .corridor .fill{position:absolute;left:0;right:0;bottom:0;transition:height .6s ease, background .6s ease;}
+.scanner .rover{
+  position:absolute;bottom:6px;left:50%;transform:translateX(-50%);
+  width:34px;height:34px;z-index:5;filter:drop-shadow(0 0 8px rgba(57,217,138,.5));
+  transition:transform .6s ease;
+}
+.scanner .sweep{
+  position:absolute;top:0;bottom:0;width:2px;background:linear-gradient(180deg,transparent,var(--telemetry),transparent);
+  opacity:.7;animation:sweep 3.4s linear infinite;
+}
+@keyframes sweep{0%{left:0%;}100%{left:100%;}}
+.scanner .label{position:absolute;top:10px;left:12px;font-family:var(--mono);font-size:10px;color:var(--muted-2);letter-spacing:.08em;text-transform:uppercase;}
+.scanner .cmd{
+  position:absolute;bottom:10px;right:12px;font-family:var(--mono);font-size:11px;color:var(--drivable);
+  background:rgba(0,0,0,0.35);padding:5px 9px;border-radius:6px;border:1px solid var(--line);
+}
+
+/* ---------- panels / cards ---------- */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:22px 24px;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+@media(max-width:860px){.grid2,.grid3{grid-template-columns:1fr;}}
+
+.codeblock{
+  background:var(--code-bg);border:1px solid var(--line);border-radius:var(--radius);
+  padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.65;color:#c7d2e2;
+  margin:14px 0;
+}
+.codeblock .cm{color:#5c6b83;}
+.codeblock .kw{color:#f5a623;}
+.codeblock .fn{color:#49c8e8;}
+.codeblock .str{color:#39d98a;}
+.codeblock .num{color:#e8a7ff;}
+.file-tag{
+  display:inline-block;font-family:var(--mono);font-size:11px;color:var(--muted-2);
+  border:1px solid var(--line);padding:2px 8px;border-radius:5px;margin-bottom:10px;
+}
+
+/* ---------- pipeline diagram ---------- */
+.pipeline{display:flex;gap:0;align-items:stretch;overflow-x:auto;padding-bottom:10px;margin-top:10px;}
+.pipe-node{
+  min-width:168px;flex:1;
+  display:flex;flex-direction:column;
+}
+.pipe-card{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:16px 14px;cursor:pointer;transition:.18s;position:relative;height:100%;
+}
+.pipe-card:hover{border-color:var(--telemetry);transform:translateY(-2px);}
+.pipe-card.active{border-color:var(--drivable);box-shadow:0 0 0 1px var(--drivable) inset;}
+.pipe-idx{font-family:var(--mono);font-size:11px;color:var(--muted-2);}
+.pipe-card h4{font-size:14px;margin:6px 0 4px;}
+.pipe-card p.short{font-size:12px;color:var(--muted);margin:0;}
+.pipe-arrow{
+  display:flex;align-items:center;justify-content:center;min-width:26px;color:var(--muted-2);
+  font-size:16px;
+}
+.pipe-detail{
+  margin-top:16px;border:1px solid var(--line);border-radius:var(--radius);
+  background:var(--panel-2);padding:20px 22px;display:none;
+}
+.pipe-detail.show{display:block;}
+.pipe-detail-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:12px;}
+@media(max-width:860px){.pipe-detail-grid{grid-template-columns:1fr 1fr;}}
+.pd-col h5{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--muted-2);margin:0 0 8px;
+}
+.pd-col p{font-size:13px;color:var(--muted);margin:0;}
+.pd-col.recibe h5{color:var(--telemetry);}
+.pd-col.procesa h5{color:var(--goal);}
+.pd-col.produce h5{color:var(--drivable);}
+.pd-col.afecta h5{color:#c48bff;}
+
+/* ---------- corridor lab ---------- */
+.lab{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:26px;margin-top:22px;}
+.lab-top{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px;margin-bottom:18px;}
+.lab-controls{display:flex;flex-wrap:wrap;gap:8px;}
+.preset-btn{
+  font-family:var(--mono);font-size:11.5px;color:var(--muted);background:var(--panel-2);
+  border:1px solid var(--line);padding:7px 12px;border-radius:7px;cursor:pointer;transition:.15s;
+}
+.preset-btn:hover{color:var(--text);border-color:var(--telemetry);}
+.preset-btn.active{color:#03150c;background:var(--drivable);border-color:var(--drivable);font-weight:600;}
+.lab-body{display:grid;grid-template-columns:1.3fr 1fr;gap:26px;}
+@media(max-width:900px){.lab-body{grid-template-columns:1fr;}}
+.mask-view{
+  position:relative;border-radius:10px;overflow:hidden;border:1px solid var(--line);
+  aspect-ratio:16/9;background:#060a10;display:flex;
+}
+.mask-col{flex:1;position:relative;border-right:1px solid rgba(0,0,0,.4);}
+.mask-col:last-child{border-right:none;}
+.mask-col .cell{position:absolute;left:0;right:0;transition:background .3s;}
+.roi-line{position:absolute;left:0;right:0;top:45%;border-top:1px dashed rgba(245,166,35,.55);z-index:3;}
+.roi-line span{position:absolute;right:6px;top:-16px;font-family:var(--mono);font-size:9.5px;color:var(--goal);}
+.corridor-overlay{position:absolute;inset:0;display:flex;z-index:4;pointer-events:none;}
+.corridor-band{flex:1;border-right:1px solid rgba(255,255,255,.08);display:flex;align-items:flex-end;justify-content:center;}
+.corridor-band:last-child{border-right:none;}
+.corridor-score{
+  font-family:var(--mono);font-size:10px;padding:2px 5px;margin-bottom:4px;border-radius:4px;
+  background:rgba(0,0,0,.55);color:#fff;
+}
+.corridor-band.best{background:rgba(57,217,138,.10);}
+.corridor-band.center{outline:1px dashed rgba(255,255,255,0.25);outline-offset:-2px;}
+.rover-marker{
+  position:absolute;bottom:4px;left:50%;width:26px;height:26px;z-index:5;
+  transform-origin:50% 70%;transition:transform .35s ease;
+}
+.lab-readout{display:flex;flex-direction:column;gap:14px;}
+.readout-row{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line-soft);padding-bottom:10px;}
+.readout-row .k{font-family:var(--mono);font-size:11.5px;color:var(--muted-2);}
+.readout-row .v{font-family:var(--mono);font-size:14px;font-weight:600;}
+.v.ok{color:var(--drivable);}
+.v.warn{color:var(--goal);}
+.v.stop{color:var(--blocked);}
+.slider-row{display:flex;flex-direction:column;gap:6px;}
+.slider-row label{font-family:var(--mono);font-size:11.5px;color:var(--muted);display:flex;justify-content:space-between;}
+input[type=range]{-webkit-appearance:none;width:100%;height:4px;border-radius:2px;background:var(--line);outline:none;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:var(--telemetry);cursor:pointer;box-shadow:0 0 8px rgba(73,200,232,.6);}
+.reason-pill{
+  align-self:flex-start;font-family:var(--mono);font-size:11.5px;padding:6px 12px;border-radius:20px;
+  border:1px solid var(--line);
+}
+.note{font-size:11.5px;color:var(--muted-2);margin-top:6px;}
+
+/* ---------- obstacle flow visual ---------- */
+.obs-flow{display:flex;align-items:center;gap:10px;overflow-x:auto;padding:22px 4px;}
+.obs-step{
+  flex:0 0 auto;min-width:140px;text-align:center;border:1px solid var(--line);border-radius:10px;
+  padding:16px 12px;background:var(--panel);
+}
+.obs-step .icon{font-size:26px;margin-bottom:8px;}
+.obs-step h5{font-family:var(--mono);font-size:12px;margin:0 0 4px;color:var(--text);}
+.obs-step p{font-size:11.5px;color:var(--muted-2);margin:0;}
+.obs-arrow{color:var(--muted-2);font-size:18px;flex:0 0 auto;}
+.obs-step.danger{border-color:rgba(255,92,92,.4);}
+.obs-step.safe{border-color:rgba(57,217,138,.4);}
+
+/* ---------- steps list ---------- */
+.steplist{counter-reset:step;list-style:none;padding:0;margin:18px 0;}
+.steplist li{
+  counter-increment:step;position:relative;padding-left:46px;margin-bottom:20px;
+}
+.steplist li::before{
+  content:counter(step);position:absolute;left:0;top:0;width:32px;height:32px;border-radius:8px;
+  background:var(--panel-2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:13px;color:var(--telemetry);
+}
+.steplist h5{margin:0 0 4px;font-size:15px;color:var(--text);}
+.steplist p{margin:0;font-size:13.5px;}
+
+/* ---------- FAQ ---------- */
+.faq-item{border:1px solid var(--line);border-radius:10px;margin-bottom:10px;background:var(--panel);overflow:hidden;}
+.faq-q{
+  width:100%;text-align:left;background:none;border:none;color:var(--text);font-family:var(--sans);
+  font-size:15px;font-weight:600;padding:16px 20px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;
+}
+.faq-q .plus{font-family:var(--mono);color:var(--drivable);font-size:18px;transition:transform .2s;}
+.faq-item.open .plus{transform:rotate(45deg);}
+.faq-a{max-height:0;overflow:hidden;transition:max-height .25s ease;}
+.faq-a-inner{padding:0 20px 18px;color:var(--muted);font-size:14px;}
+.faq-item.open .faq-a{max-height:400px;}
+
+/* ---------- misc ---------- */
+.pill-row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 18px;}
+.pill{font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--line);color:var(--muted);}
+.pill.drivable{border-color:rgba(57,217,138,.4);color:var(--drivable);}
+.pill.blocked{border-color:rgba(255,92,92,.4);color:var(--blocked);}
+.pill.goal{border-color:rgba(245,166,35,.4);color:var(--goal);}
+.pill.tele{border-color:rgba(73,200,232,.4);color:var(--telemetry);}
+.legend{display:flex;gap:18px;flex-wrap:wrap;margin:14px 0 6px;font-family:var(--mono);font-size:11.5px;color:var(--muted);}
+.legend span{display:inline-flex;align-items:center;gap:6px;}
+.legend i{width:10px;height:10px;border-radius:2px;display:inline-block;}
+table.spec{width:100%;border-collapse:collapse;font-size:13px;margin:14px 0;}
+table.spec th, table.spec td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line-soft);}
+table.spec th{font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-2);}
+table.spec td.mono{color:var(--text);}
+
+footer{padding:50px 0;text-align:center;}
+footer p{margin:0 auto;font-size:12.5px;color:var(--muted-2);}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="brand"><span class="dot"></span> rover_traversability / demo mission</div>
+    <div class="navlinks">
+      <a href="#flujo">Flujo general</a>
+      <a href="#percepcion">Percepción</a>
+      <a href="#obstaculos">Obstáculos</a>
+      <a href="#corredores">Corredores</a>
+      <a href="#lab">Laboratorio</a>
+      <a href="#logica">Lógica</a>
+      <a href="#faq">Preguntas</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ============ HERO ============ -->
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow">Documentación técnica · Demo Mission</div>
+      <h1>Cómo el rover decide<br><em>por dónde manejar</em></h1>
+      <p class="lede">
+        Cada 0.5&nbsp;segundos el rover mira un frame de cámara, lo convierte en un mapa de
+        "dónde se puede pisar", lo divide en corredores verticales y elige el más seguro y
+        más cercano al rumbo del próximo checkpoint. Sin mapas previos, sin memoria de largo
+        plazo: percibe, decide y manda un comando — una y otra vez.
+      </p>
+      <div class="hero-tags">
+        <span class="tag">SAM-TP · máscara de transitabilidad</span>
+        <span class="tag">Política de corredores · policy.py</span>
+        <span class="tag">GPS course-over-ground · geo.py</span>
+        <span class="tag">MissionRunner · mission.py</span>
+      </div>
+    </div>
+    <div class="scanner" id="heroScanner">
+      <div class="label">front camera → mask → command</div>
+      <div class="sky"></div>
+      <div class="ground" id="heroGround"></div>
+      <div class="sweep"></div>
+      <svg class="rover" id="heroRover" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2 L20 20 L12 16 L4 20 Z" fill="#39d98a"/>
+      </svg>
+      <div class="cmd" id="heroCmd">linear +0.32 · angular +0.08</div>
+    </div>
+  </div>
+</header>
+
+<!-- ============ 1. FLUJO GENERAL ============ -->
+<section id="flujo">
+  <div class="wrap">
+    <div class="eyebrow">01 · Estructura general</div>
+    <h2>El ciclo de la Demo Mission</h2>
+    <p class="lede">
+      La misión completa (<code>MissionRunner.run()</code> en <code>mission.py</code>) es un
+      loop que se repite hasta llegar al último checkpoint. Cada iteración pasa por siete
+      etapas. Tocá cada tarjeta para ver qué recibe, qué procesa, qué produce y cómo afecta
+      a la siguiente etapa.
+    </p>
+
+    <div class="pipeline" id="pipeline"></div>
+    <div class="pipe-detail" id="pipeDetail"></div>
+  </div>
+</section>
+
+<!-- ============ 2. PERCEPCIÓN ============ -->
+<section id="percepcion">
+  <div class="wrap">
+    <div class="eyebrow">02 · Percepción del terreno</div>
+    <h2><span class="n">02</span>De un frame a una máscara de transitabilidad</h2>
+    <p class="lede">
+      El modelo (SAM-TP, SAM 2.1 con un prompt de transitabilidad aprendido, afinado con
+      ~50.000 frames del Mini+) convierte el frame en una máscara <strong>HxW</strong> con
+      valores entre 0 y 1: <span class="pill drivable">1 = transitable</span>
+      <span class="pill blocked">0 = bloqueado</span>. No hay puntos de prompt reales —
+      la API de SAM2 exige alguno, pero el encoder de SAM-TP los ignora por completo.
+    </p>
+
+    <div class="grid2">
+      <div class="panel">
+        <h3>1. Decodificar cualquier payload — <code>images.py</code></h3>
+        <p>
+          El SDK entrega el frame como base64 sin prefijo, y el formato real (PNG o JPEG)
+          depende de una variable de entorno del servidor, no de lo que el cliente espera.
+          Por eso <code>to_rgb()</code> nunca confía en la extensión declarada: <strong>lee
+          los magic bytes</strong> del archivo para reconocer PNG/JPEG/WEBP/GIF/BMP antes de
+          decodificar. Acepta además arrays numpy, imágenes PIL, rutas de archivo y
+          <code>data:</code> URIs, todo por el mismo punto de entrada.
+        </p>
+        <div class="codeblock"><span class="cm"># images.py — sniff_format()</span>
+<span class="kw">def</span> <span class="fn">sniff_format</span>(data: bytes) -> str | None:
+    <span class="kw">for</span> magic, name <span class="kw">in</span> _MAGIC_SIGNATURES:
+        <span class="kw">if</span> data[:len(magic)] == magic:
+            <span class="kw">return</span> name  <span class="cm"># "png", "jpeg", ...</span></div>
+      </div>
+
+      <div class="panel">
+        <h3>2. Inferencia — <code>predictor.py</code></h3>
+        <p>
+          <code>TraversabilityPredictor.predict()</code> corre SAM-TP una vez sobre el frame
+          y aplica <strong>sigmoid</strong> a los logits crudos para obtener la máscara en
+          [0,1]. El modelo se construye <strong>una sola vez</strong> por proceso (una
+          construcción por llamada agrega latencia real) y se reutiliza en cada frame.
+        </p>
+        <div class="codeblock"><span class="cm"># predictor.py</span>
+logits = masks[<span class="num">0</span>]                 <span class="cm"># salida cruda del modelo</span>
+mask   = _sigmoid(logits)         <span class="cm"># -> HxW float32 en [0,1]</span>
+mask   = refine_traversability_by_contrast(mask, rgb)</div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:18px;">
+      <h3>3. Refinamiento por contraste — el punto ciego del modelo</h3>
+      <p>
+        SAM-TP fue entrenado como <em>"piso vs. no-piso"</em>, así que puede etiquetar como
+        transitable un objeto oscuro parado sobre piso claro (otro rover, una silla, un
+        obstáculo bajo). <code>refine_traversability_by_contrast()</code> corrige esto sin
+        reentrenar nada: toma los píxeles que el modelo ya marcó como transitables, calcula
+        su <strong>luminancia mediana</strong> (referencia de "cómo se ve el piso" en <em>ese</em>
+        frame) y degrada a bloqueado cualquier píxel "transitable" que sea mucho más oscuro
+        que esa referencia (<code>lum &lt; mediana × darkness_ratio</code>, default 0.65).
+        La referencia se recalcula cada frame, así que se adapta a la luz del momento.
+      </p>
+      <div class="legend">
+        <span><i style="background:var(--drivable)"></i> píxel de referencia (piso, transitable)</span>
+        <span><i style="background:var(--blocked)"></i> degradado a bloqueado por ser mucho más oscuro que el piso</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 3. OBSTÁCULOS ============ -->
+<section id="obstaculos">
+  <div class="wrap">
+    <div class="eyebrow">03 · Manejo de obstáculos</div>
+    <h2><span class="n">03</span>Detección y evasión de obstáculos</h2>
+    <p class="lede">
+      No hay un "detector de obstáculos" separado: un obstáculo <strong>es</strong>, para el
+      sistema, cualquier región de la máscara con valor por debajo de
+      <code>drivable_thresh</code> (0.5). Todo lo demás — parar, girar, elegir otro
+      corredor — es una consecuencia de cómo se agregan esos valores en <code>policy.py</code>.
+    </p>
+
+    <h3>Estructura del código que interviene</h3>
+    <table class="spec">
+      <thead><tr><th>Archivo</th><th>Responsabilidad frente a obstáculos</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">predictor.py</td><td>Genera el valor por píxel (0–1) y corrige obstáculos oscuros mal etiquetados (contraste).</td></tr>
+        <tr><td class="mono">policy.py</td><td>Decide si un obstáculo bloquea el avance: recorta la región de interés (ROI), calcula el <em>test de parada</em> por fracción y descarta corredores pobres.</td></tr>
+        <tr><td class="mono">mission.py</td><td>Si ni girando hay salida visible, dispara un giro de arco hacia el objetivo en vez de quedarse esperando.</td></tr>
+        <tr><td class="mono">client.py</td><td>Convierte la decisión de "parar" en un comando activo <code>{0,0}</code> — nunca en silencio.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Cómo se detecta un obstáculo a nivel código</h3>
+    <div class="codeblock"><span class="cm"># policy.py — suggest_command()</span>
+roi <span class="cm"># recorte inferior de la máscara: solo el piso cercano al rover</span>
+roi = m[<span class="kw">int</span>(cfg.roi_top * h):, :]        <span class="cm"># roi_top=0.55 -> ignora el 55% superior (cielo/horizonte)</span>
+
+<span class="cm"># cada columna recibe un peso mayor si está más cerca del rover (fila inferior)</span>
+row_w = np.linspace(<span class="num">1.0</span>, cfg.bottom_weight, roi.shape[<span class="num">0</span>])[:, <span class="kw">None</span>]
+col_score = (roi * row_w).sum(axis=<span class="num">0</span>) / row_w.sum()
+
+<span class="cm"># test de parada: NO es "¿hay algún píxel bloqueado?" — eso pararía siempre</span>
+center_band = roi[:, bounds[center_idx]:bounds[center_idx+<span class="num">1</span>]]
+center_blocked_frac = (center_band &lt; cfg.drivable_thresh).mean()
+center_open = center_blocked_frac &lt; cfg.stop_center_fraction   <span class="cm"># default: 40%</span></div>
+
+    <p>
+      Este diseño es deliberado: la salida real del modelo siempre tiene algo de ruido
+      (algunos píxeles bloqueados sueltos), así que un test <em>"cualquier píxel
+      bloqueado = parar"</em> frenaría al rover en cada frame. El test es
+      <strong>por fracción</strong> del corredor central: recién se considera bloqueado si
+      el 40% o más de esa banda está por debajo del umbral.
+    </p>
+
+    <h3>Qué ocurre cuando un obstáculo bloquea completamente el corredor</h3>
+    <div class="obs-flow">
+      <div class="obs-step safe"><div class="icon">📷</div><h5>Frame</h5><p>Cámara ve un objeto adelante</p></div>
+      <div class="obs-arrow">→</div>
+      <div class="obs-step"><div class="icon">🟥</div><h5>Máscara</h5><p>Zona baja en el valor de transitabilidad</p></div>
+      <div class="obs-arrow">→</div>
+      <div class="obs-step danger"><div class="icon">⛔</div><h5>center_open = false</h5><p>Corredor central ≥40% bloqueado</p></div>
+      <div class="obs-arrow">→</div>
+      <div class="obs-step"><div class="icon">🔎</div><h5>Buscar alternativa</h5><p>¿Algún corredor lateral supera min_corridor_score (0.35)?</p></div>
+      <div class="obs-arrow">→</div>
+      <div class="obs-step safe"><div class="icon">↩️</div><h5>turning_to_corridor</h5><p>Gira en el lugar hacia ese corredor (linear=0)</p></div>
+    </div>
+    <p>
+      Si <strong>ningún</strong> corredor lateral supera <code>min_corridor_score</code>,
+      la decisión es <code>reason="blocked"</code>: <code>linear=0, angular=0</code>. El
+      rover no "adivina" ni promedia hacia el obstáculo — se detiene activamente.
+    </p>
+
+    <h3>Cómo el rover evita elegir caminos peligrosos</h3>
+    <ul class="steplist">
+      <li>
+        <h5>El objetivo (steering target) nunca es el centro de toda la imagen</h5>
+        <p>Es el <strong>centroide ponderado dentro del corredor elegido</strong>. Esto importa
+        especialmente en una máscara <em>bimodal</em> (dos aberturas, pared en el medio): si el
+        objetivo fuera el centro de la vista completa, el rover apuntaría exactamente a la
+        pared entre las dos aberturas. Apuntando al centroide del corredor ganador, apunta
+        <em>dentro</em> de la abertura real.</p>
+      </li>
+      <li>
+        <h5>Un corredor "algo" transitable no alcanza</h5>
+        <p><code>min_corridor_score</code> (0.35) es un piso de calidad: un corredor con score
+        apenas positivo no se considera "viable" solo porque técnicamente no es cero.</p>
+      </li>
+      <li>
+        <h5>El sesgo hacia el objetivo nunca vence a la seguridad</h5>
+        <p>El bias GPS multiplica los scores de transitabilidad, no los reemplaza. Si el
+        objetivo está a la derecha pero solo el corredor izquierdo es transitable, el rover
+        sigue yendo a la izquierda — el bias apenas desempata entre corredores igualmente
+        seguros.</p>
+      </li>
+      <li>
+        <h5>El rover nunca "confía" en el último comando</h5>
+        <p>El SDK <strong>repite el último comando para siempre</strong> hasta recibir uno
+        nuevo. Por eso "no enviar nada" nunca es una forma válida de parar: cada decisión de
+        parada manda activamente <code>{linear:0, angular:0}</code>, con reintentos en
+        <code>client.stop()</code>.</p>
+      </li>
+    </ul>
+
+    <h3>Cómo se actualiza la información cuando el rover avanza</h3>
+    <p>
+      No hay memoria de obstáculos entre frames: <strong>cada iteración recalcula todo desde
+      cero</strong> a partir del frame nuevo. Es una política reactiva y sin estado (salvo dos
+      excepciones con estado propio: el <code>HeadingEstimator</code>, que recuerda el último
+      rumbo GPS válido, y la posición/checkpoint actual de la misión). Esto es intencional:
+      un obstáculo que ya no está en cámara deja de influir en la decisión inmediatamente,
+      sin necesidad de "olvidarlo" explícitamente.
+    </p>
+  </div>
+</section>
+
+<!-- ============ 4. CORREDORES ============ -->
+<section id="corredores">
+  <div class="wrap">
+    <div class="eyebrow">04 · Manejo de corredores</div>
+    <h2><span class="n">04</span>Qué es un corredor y cómo se elige</h2>
+    <p class="lede">
+      Un <strong>corredor</strong> es una banda vertical de la imagen (por defecto la máscara
+      se divide en <code>num_corridors = 9</code> bandas iguales, siempre un número impar
+      para que exista un corredor central exacto). Cada corredor tiene un <em>score</em>
+      entre 0 y 1: el promedio ponderado de la máscara en esa banda, dando más peso a las
+      filas cercanas al rover (<code>bottom_weight</code>).
+    </p>
+
+    <div class="grid2">
+      <div class="panel">
+        <h3>Cómo se detecta un corredor</h3>
+        <p>No hay una detección explícita de "esto es un corredor": <strong>los 9 corredores
+        siempre existen</strong>, en posiciones fijas. Lo que varía frame a frame es su score.
+        Un corredor "aparece" simplemente cuando su score supera <code>min_corridor_score</code>
+        (0.35) — no es un objeto detectado, es un umbral cruzado.</p>
+      </div>
+      <div class="panel">
+        <h3>Cómo se determina su dirección</h3>
+        <p>Cada corredor tiene una posición fija en x. La dirección de giro sale de comparar
+        la posición del corredor elegido contra el centro de la imagen: si el centroide cae
+        a la derecha del centro, el ángulo resultante es negativo (giro a la derecha); si cae
+        a la izquierda, positivo (convención del SDK: <strong>angular positivo = izquierda</strong>).</p>
+      </div>
+    </div>
+
+    <div class="codeblock"><span class="cm"># policy.py — selección del mejor corredor</span>
+order = np.argsort(-biased)                       <span class="cm"># ordena corredores por score (con sesgo de objetivo)</span>
+best  = min(empatados_en_el_maximo,
+            key=<span class="kw">lambda</span> i: abs(i - center_idx))  <span class="cm"># empate -> el más cercano al centro</span>
+
+<span class="cm"># el objetivo de giro es el centroide DENTRO del corredor, no del frame</span>
+band_cols = col_score[bounds[best]:bounds[best+<span class="num">1</span>]]
+target_x  = (xs * band_cols).sum() / band_cols.sum()</div>
+
+    <div class="grid3" style="margin-top:8px;">
+      <div class="panel">
+        <h4>Obstáculo dentro del corredor elegido</h4>
+        <p style="font-size:13px;">El score de esa banda baja proporcionalmente a cuánta
+        superficie bloqueada contiene. Si cae por debajo de <code>min_corridor_score</code>,
+        ese corredor deja de ser candidato en el siguiente frame — no hay "expulsión"
+        explícita, simplemente pierde el umbral.</p>
+      </div>
+      <div class="panel">
+        <h4>Selección de corredor alternativo</h4>
+        <p style="font-size:13px;">Se recalculan los 9 scores y se vuelve a tomar el máximo
+        (con sesgo de objetivo si hay checkpoint activo). No hay "segundo mejor guardado" de
+        frames anteriores: la alternativa sale de la misma pasada de este frame.</p>
+      </div>
+      <div class="panel">
+        <h4>Cuándo se abandona un corredor</h4>
+        <p style="font-size:13px;">Se "abandona" en el instante en que, en un nuevo frame, ya
+        no es el de mayor score sesgado, o su score cae debajo de 0.35. No hay histéresis:
+        el sistema es puramente reactivo a lo que ve <em>ahora</em>.</p>
+      </div>
+    </div>
+
+    <h3>Sesgo hacia el objetivo GPS (goal bias)</h3>
+    <p>
+      Cuando hay un checkpoint activo, <code>mission.py</code> calcula el rumbo hacia él con
+      <code>gps_bearing_and_distance()</code> y lo compara contra el heading actual del rover
+      (estimado por GPS course-over-ground, ver más abajo) para obtener
+      <code>goal_offset_deg</code>. La política proyecta ese ángulo a una posición x de imagen
+      con un modelo pinhole simple y multiplica los scores de cada corredor por una
+      <strong>campana gaussiana</strong> centrada en esa posición:
+    </p>
+    <div class="codeblock"><span class="cm"># policy.py — _goal_offset_to_image_x + bias gaussiano</span>
+gx = tan(rad(goal_offset_deg)) / tan(rad(hfov_deg/<span class="num">2</span>))   <span class="cm"># bearing -> x normalizado [-1,1]</span>
+gauss  = exp(-<span class="num">0.5</span> * ((centros_x - gx) / goal_sigma)**<span class="num">2</span>)
+biased = corridor_scores * (goal_bias_floor + (<span class="num">1</span>-goal_bias_floor) * gauss)</div>
+    <p>
+      <code>goal_bias_floor</code> (0.2) asegura que ningún corredor quede en cero solo por
+      estar lejos del objetivo — la transitabilidad sigue dominando, el objetivo solo
+      desempata entre corredores igualmente seguros.
+    </p>
+
+    <h3>Cuando el objetivo está fuera de cámara: el giro de arco</h3>
+    <p>
+      Si <code>|goal_offset_deg| &gt; turn_in_place_deg</code> (70°), el objetivo está
+      demasiado a un costado o directamente detrás — la cámara no puede verlo, así que no
+      tiene sentido buscar corredores. <code>MissionRunner._decide()</code> evita ese caso
+      con un <strong>giro de arco</strong> en vez de una rotación en el lugar:
+    </p>
+    <div class="codeblock"><span class="cm"># mission.py — arc_turn_to_goal</span>
+<span class="kw">if</span> abs(goal_offset_deg) &gt; self.turn_in_place_deg:
+    turn = -max_angular <span class="kw">if</span> goal_offset_deg &gt; <span class="num">0</span> <span class="kw">else</span> max_angular
+    <span class="kw">return</span> CommandDecision(linear=self.arc_turn_linear, angular=turn,
+                            stop=<span class="kw">False</span>, reason=<span class="str">"arc_turn_to_goal"</span>)</div>
+    <p>
+      La razón de usar un <strong>arco</strong> (linear&gt;0) y no un giro puro es que el
+      heading del rover se estima por GPS course-over-ground: un rover que gira en el lugar
+      no se desplaza, y sin desplazamiento el estimador de rumbo no tiene señal nueva
+      (ver sección de percepción de rumbo abajo). Un arco mantiene el heading actualizándose
+      mientras gira.
+    </p>
+
+    <h3>Cómo se "vuelve a encontrar" un corredor después de perderlo</h3>
+    <p>
+      No hay una rutina de "recuperación de corredor" separada: al no tener memoria de
+      corredores entre frames, simplemente <strong>el siguiente frame vuelve a intentar</strong>
+      encontrar el mejor de los 9. Si en ese frame ninguno alcanza el umbral, la decisión es
+      <code>blocked</code> (parar) y se reintenta en el frame siguiente — el rover se
+      queda detenido hasta que algún corredor vuelva a ser viable (por ejemplo, porque el
+      obstáculo salió de cuadro o el propio giro cambió la vista).
+    </p>
+  </div>
+</section>
+
+<!-- ============ 5. LAB INTERACTIVO ============ -->
+<section id="lab">
+  <div class="wrap">
+    <div class="eyebrow">05 · Demostración interactiva</div>
+    <h2><span class="n">05</span>Laboratorio de corredores</h2>
+    <p class="lede">
+      Reimplementación simplificada en JavaScript de <code>suggest_command()</code> para
+      ilustrar el razonamiento en vivo. Elegí un patrón de máscara y movés el objetivo GPS —
+      mirá cómo cambian los scores, el corredor elegido y el comando resultante.
+      <em>(Es una versión didáctica, no el código de producción.)</em>
+    </p>
+
+    <div class="lab">
+      <div class="lab-top">
+        <div class="lab-controls" id="presetButtons"></div>
+      </div>
+      <div class="lab-body">
+        <div>
+          <div class="mask-view" id="maskView">
+            <div class="roi-line"><span>roi_top</span></div>
+            <div class="corridor-overlay" id="corridorOverlay"></div>
+            <svg class="rover-marker" id="labRover" viewBox="0 0 24 24" fill="none">
+              <path d="M12 2 L20 20 L12 16 L4 20 Z" fill="#39d98a"/>
+            </svg>
+          </div>
+          <div class="legend">
+            <span><i style="background:var(--drivable)"></i> transitable</span>
+            <span><i style="background:var(--blocked)"></i> bloqueado</span>
+            <span><i style="background:var(--goal)"></i> corredor elegido</span>
+          </div>
+          <div class="slider-row" style="margin-top:14px;">
+            <label>goal_offset_deg (rumbo al checkpoint relativo al heading) <span id="goalVal">0°</span></label>
+            <input type="range" id="goalSlider" min="-179" max="179" value="0">
+          </div>
+        </div>
+        <div class="lab-readout">
+          <div id="reasonPill" class="reason-pill">reason: forward</div>
+          <div class="readout-row"><span class="k">center_open</span><span class="v" id="roCenterOpen">true</span></div>
+          <div class="readout-row"><span class="k">best_corridor score</span><span class="v" id="roBestScore">1.00</span></div>
+          <div class="readout-row"><span class="k">linear</span><span class="v" id="roLinear">0.50</span></div>
+          <div class="readout-row"><span class="k">angular</span><span class="v" id="roAngular">0.00</span></div>
+          <div class="readout-row"><span class="k">turn_in_place_deg check</span><span class="v" id="roArc">no</span></div>
+          <p class="note">
+            center_open: fracción bloqueada del corredor central &lt; stop_center_fraction (0.40).
+            best_corridor score por debajo de min_corridor_score (0.35) ⇒ blocked.
+            |goal_offset_deg| &gt; 70° ⇒ arc_turn_to_goal (ignora corredores).
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 6. LÓGICA SIMPLE ============ -->
+<section id="logica">
+  <div class="wrap">
+    <div class="eyebrow">06 · Lógica principal, explicada simple</div>
+    <h2><span class="n">06</span>El razonamiento completo, en lenguaje natural</h2>
+    <div class="grid2">
+      <div class="panel">
+        <h3>Pseudocódigo — un paso de misión</h3>
+        <div class="codeblock"><span class="cm">cada 0.5s, para el checkpoint activo:</span>
+
+leer telemetría (lat, lon, velocidad, brújula)
+heading = estimar_rumbo_por_gps(telemetría)   <span class="cm"># o brújula si aún no hubo movimiento</span>
+
+si hay posición GPS:
+    bearing_al_checkpoint = calcular_rumbo(pos_actual, checkpoint)
+    goal_offset = bearing_al_checkpoint - heading
+
+si distancia_al_checkpoint &lt;= 8m:
+    intentar POST /checkpoint-reached
+    <span class="cm"># el backend valida el radio real; si rechaza, seguir manejando</span>
+
+si |goal_offset| &gt; 70°:
+    comando = arco_hacia_el_objetivo()          <span class="cm"># objetivo fuera de cámara</span>
+si no:
+    máscara = SAM_TP(frame_cámara)
+    comando = elegir_corredor(máscara, goal_offset)
+
+enviar comando (o parar activamente si stop=true)</div>
+      </div>
+      <div class="panel">
+        <h3>Pseudocódigo — elegir_corredor()</h3>
+        <div class="codeblock"><span class="cm">recortar la parte inferior de la máscara (roi_top)</span>
+dividir en 9 bandas verticales
+score[i] = promedio ponderado (más peso a filas cercanas)
+
+si corredor_central mayormente bloqueado (≥40%):
+    si ningún corredor supera 0.35 de score:
+        devolver STOP
+    si no:
+        girar en el lugar hacia el mejor lateral
+
+si no (el centro está abierto):
+    aplicar sesgo gaussiano hacia goal_offset a cada score
+    elegir el corredor con mayor score sesgado
+    apuntar al centroide DENTRO de ese corredor (no al centro del frame)
+    linear = velocidad_min + (velocidad_max - velocidad_min) * score_del_centro
+    devolver {linear, angular}</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 7. FAQ ============ -->
+<section id="faq">
+  <div class="wrap">
+    <div class="eyebrow">07 · Preguntas frecuentes</div>
+    <h2><span class="n">07</span>Todo lo que el equipo suele preguntar</h2>
+    <div id="faqList"></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>rover_traversability — documentación generada a partir de client.py, images.py, geo.py, predictor.py, policy.py, mission.py y strategy.py.</p>
+  </div>
+</footer>
+
+<script>
+/* ============================================================
+   HERO — animación decorativa de corredores en scanner
+   ============================================================ */
+(function(){
+  const ground = document.getElementById('heroGround');
+  const rover = document.getElementById('heroRover');
+  const cmd = document.getElementById('heroCmd');
+  const N = 9;
+  const cells = [];
+  for(let i=0;i<N;i++){
+    const c = document.createElement('div');
+    c.className='corridor';
+    const fill = document.createElement('div');
+    fill.className='fill';
+    c.appendChild(fill);
+    ground.appendChild(c);
+    cells.push(fill);
+  }
+  function frame(){
+    let vals = [];
+    for(let i=0;i<N;i++){
+      const base = 0.35 + 0.65*Math.abs(Math.sin(i*0.7 + Date.now()/1400));
+      const blocked = (i===4 && Math.sin(Date.now()/2600) > 0.3);
+      vals.push(blocked ? 0.15+Math.random()*0.1 : base);
+    }
+    let best=0;
+    for(let i=1;i<N;i++) if(vals[i]>vals[best]) best=i;
+    vals.forEach((v,i)=>{
+      const el = cells[i];
+      el.style.height=(v*100)+'%';
+      el.style.background = i===best ? '#39d98a' : (v<0.35 ? 'rgba(255,92,92,.55)' : 'rgba(73,200,232,.35)');
+    });
+    const angle = (best-4)*-6;
+    rover.style.transform = `translateX(-50%) rotate(${angle}deg)`;
+    cmd.textContent = `linear +${(0.2+0.3*vals[best]).toFixed(2)} · angular ${(angle>0?'+':'')}${(angle/40).toFixed(2)}`;
+    requestAnimationFrame(frame);
+  }
+  frame();
+})();
+
+/* ============================================================
+   PIPELINE (sección 1) — nodos clickeables
+   ============================================================ */
+const pipelineData = [
+  {
+    icon:'📡', title:'Telemetría + frame',
+    short:'GET /data y GET /v2/screenshot',
+    recibe:'Nada del rover en sí — hace polling HTTP a la SDK local (localhost:8000).',
+    procesa:'RoverClient.get_data() trae lat/lon/velocidad/orientación; get_front_frame_b64() trae el frame en base64 (formato real detectado por magic bytes, no por mimetype declarado).',
+    produce:'Un diccionario de telemetría (puede tener campos None) y una cadena base64 del frame (puede ser None si el SDK no respondió).',
+    afecta:'Sin lat/lon no hay estimación de heading por GPS; sin frame no hay máscara — la etapa de percepción se salta y decide "no_frame" (stop).'
+  },
+  {
+    icon:'🧭', title:'Estimación de rumbo',
+    short:'HeadingEstimator (geo.py)',
+    recibe:'lat, lon, velocidad y orientación (brújula) del paso de telemetría.',
+    procesa:'Compara la posición actual contra el último "ancla" GPS. Si se movió ≥0.5m y a ≥0.15 m/s, calcula el bearing entre ambos puntos = course-over-ground (COG). La brújula (magnetómetro) es solo un respaldo de arranque en frío, antes de la primera detección de movimiento.',
+    produce:'heading_deg (0–360, desde el norte) o None si nunca hubo señal.',
+    afecta:'Es el heading que se resta al rumbo del checkpoint para obtener goal_offset_deg, el ángulo que guía tanto el giro de arco como el sesgo de corredores.'
+  },
+  {
+    icon:'🎯', title:'Rumbo al checkpoint',
+    short:'gps_bearing_and_distance() (geo.py)',
+    recibe:'Posición actual (lat, lon) y coordenadas del checkpoint activo.',
+    procesa:'Aproximación equirectangular (precisa a &lt;0.5% a escala de una misión ERC) para obtener bearing y distancia en metros.',
+    produce:'goal_offset_deg = bearing_al_checkpoint − heading_actual, y distance_m.',
+    afecta:'Si distance_m ≤ arrive_attempt_m (8m por defecto), se intenta POST /checkpoint-reached. Si |goal_offset_deg| &gt; 70°, se salta directo al giro de arco.'
+  },
+  {
+    icon:'🧠', title:'Percepción (SAM-TP)',
+    short:'TraversabilityPredictor.predict()',
+    recibe:'El frame RGB decodificado.',
+    procesa:'Corre el modelo, aplica sigmoid a los logits, y refina el resultado bajando a "bloqueado" los píxeles mucho más oscuros que el piso de referencia del frame.',
+    produce:'Una máscara HxW en [0,1]: 1 = transitable, 0 = bloqueado (más overlay, logits, device, tiempo de inferencia).',
+    afecta:'Es el único insumo de la política de corredores cuando el objetivo está dentro del campo visual (offset ≤70°).'
+  },
+  {
+    icon:'🛣️', title:'Política de corredores',
+    short:'suggest_command() (policy.py)',
+    recibe:'La máscara y, opcionalmente, goal_offset_deg.',
+    procesa:'Recorta el ROI inferior, divide en 9 corredores, calcula scores ponderados, aplica el test de parada por fracción, sesga hacia el objetivo con una gaussiana y elige el mejor corredor (con desempate hacia el centro).',
+    produce:'Un CommandDecision: {linear, angular, stop, reason, corridor_scores, best_corridor}.',
+    afecta:'Este objeto es exactamente lo que se convierte en el POST /control del siguiente paso.'
+  },
+  {
+    icon:'🚗', title:'Envío de comando',
+    short:'RoverClient.send_command() / stop()',
+    recibe:'linear y angular en [-1, 1] (se recortan si vienen fuera de rango).',
+    procesa:'POST /control con el payload {command:{linear, angular, lamp}}. Si decision.stop, en cambio llama a stop(), que reintenta hasta que el comando sea aceptado — porque el rover late su último comando para siempre.',
+    produce:'Un CommandResult {accepted, status, detail} — nunca lanza una excepción, incluso ante errores de red o el watchdog HTTP 500 del SDK v6.1+.',
+    afecta:'El rover físicamente se mueve (o se detiene) antes del siguiente ciclo de telemetría.'
+  },
+  {
+    icon:'🏁', title:'Chequeo de checkpoint',
+    short:'checkpoint_reached() + _next_checkpoint()',
+    recibe:'La distancia al checkpoint activo.',
+    procesa:'Si está dentro del radio de intento, llama POST /checkpoint-reached. El backend valida el radio real y puede rechazar con 400 — eso NO es un error, es la señal de "seguí manejando". Si acepta y hay más checkpoints, pide el próximo con GET /checkpoints-list.',
+    produce:'Un nuevo checkpoint objetivo, o la señal de misión completa.',
+    afecta:'Determina si el loop sigue con el mismo objetivo o recalcula goal_offset_deg contra el siguiente punto en la próxima iteración.'
+  }
+];
+
+const pipelineEl = document.getElementById('pipeline');
+const detailEl = document.getElementById('pipeDetail');
+
+pipelineData.forEach((node,i)=>{
+  const wrap = document.createElement('div');
+  wrap.className='pipe-node';
+  wrap.innerHTML = `
+    <div class="pipe-card" data-i="${i}">
+      <div class="pipe-idx">${String(i+1).padStart(2,'0')}</div>
+      <h4>${node.icon} ${node.title}</h4>
+      <p class="short">${node.short}</p>
+    </div>`;
+  pipelineEl.appendChild(wrap);
+  if(i < pipelineData.length-1){
+    const arrow = document.createElement('div');
+    arrow.className='pipe-arrow';
+    arrow.textContent='→';
+    pipelineEl.appendChild(arrow);
+  }
+});
+
+function showDetail(i){
+  document.querySelectorAll('.pipe-card').forEach(c=>c.classList.remove('active'));
+  document.querySelector(`.pipe-card[data-i="${i}"]`).classList.add('active');
+  const n = pipelineData[i];
+  detailEl.innerHTML = `
+    <h4 style="margin-bottom:2px;">${n.icon} ${n.title}</h4>
+    <p class="short" style="margin-bottom:0;">${n.short}</p>
+    <div class="pipe-detail-grid">
+      <div class="pd-col recibe"><h5>Recibe</h5><p>${n.recibe}</p></div>
+      <div class="pd-col procesa"><h5>Procesa</h5><p>${n.procesa}</p></div>
+      <div class="pd-col produce"><h5>Produce</h5><p>${n.produce}</p></div>
+      <div class="pd-col afecta"><h5>Afecta a lo siguiente</h5><p>${n.afecta}</p></div>
+    </div>`;
+  detailEl.classList.add('show');
+}
+pipelineEl.addEventListener('click', e=>{
+  const card = e.target.closest('.pipe-card');
+  if(card) showDetail(+card.dataset.i);
+});
+showDetail(0);
+
+/* ============================================================
+   LABORATORIO DE CORREDORES (sección 5)
+   Reimplementación simplificada de suggest_command() en JS
+   ============================================================ */
+const CFG = {
+  numCorridors: 9,
+  drivableThresh: 0.5,
+  stopCenterFraction: 0.40,
+  minCorridorScore: 0.35,
+  maxLinear: 0.5, minLinear: 0.15,
+  maxAngular: 0.5, kAngular: 1.2,
+  hfovDeg: 92.7, goalSigma: 0.5, goalBiasFloor: 0.2,
+  turnInPlaceDeg: 70, arcTurnLinear: 0.15
+};
+
+const PRESETS = {
+  clear:   {label:'Todo despejado',            fn: x => 0.95},
+  center:  {label:'Obstáculo al centro',        fn: x => (x>0.38 && x<0.62) ? 0.08 : 0.9},
+  left:    {label:'Mitad izquierda abierta',    fn: x => x<0.5 ? 0.92 : 0.06},
+  right:   {label:'Mitad derecha abierta',      fn: x => x>0.5 ? 0.92 : 0.06},
+  bimodal: {label:'Bimodal (bordes abiertos)',  fn: x => (x<0.20 || x>0.80) ? 0.9 : 0.05},
+  blocked: {label:'Todo bloqueado',             fn: x => 0.05},
+};
+
+let currentPreset = 'clear';
+
+const presetButtonsEl = document.getElementById('presetButtons');
+Object.entries(PRESETS).forEach(([key,p])=>{
+  const b = document.createElement('button');
+  b.className = 'preset-btn' + (key===currentPreset?' active':'');
+  b.textContent = p.label;
+  b.dataset.key = key;
+  b.onclick = ()=>{ currentPreset = key;
+    document.querySelectorAll('.preset-btn').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    render();
+  };
+  presetButtonsEl.appendChild(b);
+});
+
+// build mask view columns (visual only, sampled from preset fn)
+const maskView = document.getElementById('maskView');
+const VISUAL_COLS = 40;
+const columnsEls = [];
+for(let i=0;i<VISUAL_COLS;i++){
+  const col = document.createElement('div');
+  col.className = 'mask-col';
+  maskView.insertBefore(col, maskView.firstChild);
+  columnsEls.push(col);
+}
+// re-append roi line + overlay + rover on top (they were already appended in HTML, keep order)
+maskView.appendChild(document.getElementById('corridorOverlay'));
+maskView.appendChild(document.getElementById('labRover'));
+const roiLine = maskView.querySelector('.roi-line');
+maskView.appendChild(roiLine);
+
+function drawMaskColumns(){
+  const fn = PRESETS[currentPreset].fn;
+  columnsEls.forEach((col,i)=>{
+    const x = (i+0.5)/VISUAL_COLS;
+    const v = fn(x);
+    col.innerHTML='';
+    const cell = document.createElement('div');
+    cell.className='cell';
+    cell.style.top='0'; cell.style.bottom='0';
+    cell.style.background = v > CFG.drivableThresh
+      ? `rgba(57,217,138,${0.25+v*0.5})`
+      : `rgba(255,92,92,${0.25+(1-v)*0.5})`;
+    col.appendChild(cell);
+  });
+}
+
+function goalOffsetToImageX(goalDeg, hfov){
+  const half = hfov/2 * Math.PI/180;
+  const x = Math.tan(goalDeg*Math.PI/180) / Math.tan(half);
+  return Math.max(-1, Math.min(1, x));
+}
+
+function computeDecision(goalDeg){
+  const fn = PRESETS[currentPreset].fn;
+  const n = CFG.numCorridors;
+  const centerIdx = Math.floor(n/2);
+  const scores = [];
+  const centersNorm = [];
+  const SAMPLES = 30;
+  for(let i=0;i<n;i++){
+    const x0 = i/n, x1 = (i+1)/n;
+    let sum=0, blockedCount=0;
+    for(let s=0;s<SAMPLES;s++){
+      const x = x0 + (x1-x0)*(s+0.5)/SAMPLES;
+      const v = fn(x);
+      sum += v;
+      if(v < CFG.drivableThresh) blockedCount++;
+    }
+    scores.push(sum/SAMPLES);
+    centersNorm.push(((x0+x1)/2 - 0.5)*2); // -1..1
+  }
+  const centerBlockedFrac = (()=>{
+    const x0=centerIdx/n, x1=(centerIdx+1)/n;
+    let blocked=0;
+    for(let s=0;s<SAMPLES;s++){
+      const x = x0+(x1-x0)*(s+0.5)/SAMPLES;
+      if(fn(x) < CFG.drivableThresh) blocked++;
+    }
+    return blocked/SAMPLES;
+  })();
+  const centerOpen = centerBlockedFrac < CFG.stopCenterFraction;
+
+  // arc turn check (goal far off / behind)
+  const arcTriggered = Math.abs(goalDeg) > CFG.turnInPlaceDeg;
+
+  if(arcTriggered){
+    const turn = goalDeg > 0 ? -CFG.maxAngular : CFG.maxAngular;
+    return {reason:'arc_turn_to_goal', linear:CFG.arcTurnLinear, angular:turn,
+            stop:false, scores, best:-1, centerOpen, centerBlockedFrac, arcTriggered};
+  }
+
+  if(!centerOpen && Math.max(...scores) < CFG.minCorridorScore){
+    return {reason:'blocked', linear:0, angular:0, stop:true, scores, best:-1, centerOpen, centerBlockedFrac, arcTriggered};
+  }
+
+  // goal bias
+  const gx = goalOffsetToImageX(goalDeg, CFG.hfovDeg);
+  const biased = scores.map((s,i)=>{
+    const g = Math.exp(-0.5*Math.pow((centersNorm[i]-gx)/CFG.goalSigma,2));
+    return s*(CFG.goalBiasFloor + (1-CFG.goalBiasFloor)*g);
+  });
+  let best=0;
+  for(let i=1;i<n;i++) if(biased[i]>biased[best]) best=i;
+  // tie-break toward center (approx: among near-max)
+  const maxB = Math.max(...biased);
+  let candidates=[];
+  biased.forEach((b,i)=>{ if(Math.abs(b-maxB)<1e-6) candidates.push(i); });
+  best = candidates.reduce((a,b)=> Math.abs(b-centerIdx)<Math.abs(a-centerIdx)?b:a, candidates[0]);
+
+  if(scores[best] < CFG.minCorridorScore){
+    return {reason:'blocked', linear:0, angular:0, stop:true, scores, best, centerOpen, centerBlockedFrac, arcTriggered};
+  }
+
+  const offsetNorm = centersNorm[best];
+  const angular = Math.max(-CFG.maxAngular, Math.min(CFG.maxAngular, -CFG.kAngular*offsetNorm));
+
+  if(!centerOpen){
+    const turn = best < centerIdx ? CFG.maxAngular : -CFG.maxAngular;
+    return {reason:'turning_to_corridor', linear:0, angular:turn, stop:false, scores, best, centerOpen, centerBlockedFrac, arcTriggered};
+  }
+
+  const centerScore = Math.max(0, Math.min(1, scores[centerIdx]));
+  let linear = CFG.minLinear + (CFG.maxLinear-CFG.minLinear)*centerScore;
+  linear *= 1 - 0.5*Math.abs(angular)/CFG.maxAngular;
+
+  return {reason:'forward', linear, angular, stop:false, scores, best, centerOpen, centerBlockedFrac, arcTriggered};
+}
+
+const corridorOverlay = document.getElementById('corridorOverlay');
+const labRover = document.getElementById('labRover');
+const reasonPill = document.getElementById('reasonPill');
+const roCenterOpen = document.getElementById('roCenterOpen');
+const roBestScore = document.getElementById('roBestScore');
+const roLinear = document.getElementById('roLinear');
+const roAngular = document.getElementById('roAngular');
+const roArc = document.getElementById('roArc');
+const goalSlider = document.getElementById('goalSlider');
+const goalVal = document.getElementById('goalVal');
+
+const reasonColors = {
+  forward: 'var(--drivable)',
+  turning_to_corridor: 'var(--goal)',
+  arc_turn_to_goal: 'var(--telemetry)',
+  blocked: 'var(--blocked)'
+};
+
+function render(){
+  drawMaskColumns();
+  const goalDeg = +goalSlider.value;
+  goalVal.textContent = goalDeg + '°';
+  const d = computeDecision(goalDeg);
+
+  corridorOverlay.innerHTML='';
+  const n = CFG.numCorridors;
+  const centerIdx = Math.floor(n/2);
+  for(let i=0;i<n;i++){
+    const band = document.createElement('div');
+    band.className = 'corridor-band' + (i===d.best?' best':'') + (i===centerIdx?' center':'');
+    const sc = document.createElement('div');
+    sc.className='corridor-score';
+    sc.textContent = d.scores[i].toFixed(2);
+    band.appendChild(sc);
+    corridorOverlay.appendChild(band);
+  }
+
+  reasonPill.textContent = 'reason: ' + d.reason;
+  reasonPill.style.color = reasonColors[d.reason];
+  reasonPill.style.borderColor = reasonColors[d.reason];
+
+  roCenterOpen.textContent = d.centerOpen ? 'true' : 'false';
+  roCenterOpen.className = 'v ' + (d.centerOpen ? 'ok':'stop');
+
+  roBestScore.textContent = d.best>=0 ? d.scores[d.best].toFixed(2) : '—';
+  roBestScore.className = 'v ' + (d.best>=0 && d.scores[d.best] >= CFG.minCorridorScore ? 'ok':'stop');
+
+  roLinear.textContent = d.linear.toFixed(2);
+  roLinear.className = 'v ' + (d.linear>0 ? 'ok' : 'stop');
+
+  roAngular.textContent = (d.angular>=0?'+':'') + d.angular.toFixed(2);
+  roAngular.className = 'v warn';
+
+  roArc.textContent = d.arcTriggered ? 'sí — gira sin mirar corredores' : 'no';
+  roArc.className = 'v ' + (d.arcTriggered ? 'warn':'');
+
+  const roverAngle = -d.angular * 60;
+  labRover.style.transform = `translateX(-50%) rotate(${roverAngle}deg)`;
+}
+goalSlider.addEventListener('input', render);
+render();
+
+/* ============================================================
+   FAQ (sección 7)
+   ============================================================ */
+const FAQ = [
+  ['¿Cómo sabe el rover dónde puede circular?',
+   'No usa un mapa: cada frame de cámara pasa por SAM-TP, que produce una máscara con un valor de 0 a 1 por píxel (1 = transitable). Esa máscara se recorta a la zona cercana al rover (ROI) y se resume en 9 "corredores" verticales con un score cada uno.'],
+  ['¿Cómo detecta obstáculos?',
+   'Un obstáculo es simplemente una región de la máscara con valor bajo (por debajo de drivable_thresh = 0.5). No hay un clasificador de objetos separado. Además, un paso de refinamiento por contraste degrada a "bloqueado" los píxeles marcados como transitables pero mucho más oscuros que el piso de referencia del frame (objetos oscuros sobre piso claro).'],
+  ['¿Qué es un corredor?',
+   'Una banda vertical fija de la imagen (9 por defecto). Cada corredor tiene un score = promedio ponderado de la máscara en esa banda, dando más peso a las filas cercanas al rover. No es un objeto "detectado": son posiciones fijas cuyo score cambia frame a frame.'],
+  ['¿Cómo mantiene el rover dentro de un corredor?',
+   'En rigor no lo "mantiene": recalcula el mejor corredor en cada frame (política sin memoria). Lo que da continuidad es que, con la cámara viendo aproximadamente lo mismo entre frames consecutivos, el mejor corredor tiende a ser el mismo o uno adyacente — la percepción de 2–6 Hz hace el resto.'],
+  ['¿Qué pasa cuando aparece un obstáculo?',
+   'El score del corredor afectado baja. Si es el corredor central y su fracción bloqueada supera el 40%, el rover deja de avanzar en línea recta: gira en el lugar hacia el mejor corredor lateral disponible, o se detiene activamente si ninguno alcanza el score mínimo (0.35).'],
+  ['¿Cómo decide entre varios caminos?',
+   'Compara los scores de los 9 corredores. Si hay un checkpoint GPS activo, cada score se multiplica por una campana gaussiana centrada en la dirección del objetivo — el corredor con mayor score sesgado gana. Un empate se resuelve a favor del corredor más cercano al centro de la imagen.'],
+  ['¿Cómo calcula el costo de una trayectoria?',
+   'No hay un "costo" de trayectoria en el sentido de un planificador con múltiples pasos futuros — es una política reactiva de un solo paso. El "costo" implícito es 1 − score del corredor: transitabilidad más el sesgo gaussiano hacia el objetivo. El roadmap del equipo (Paso 3, docs/ROADMAP.md) reemplaza esto por un planificador BEV con costos reales sobre una grilla.'],
+  ['¿Cuándo vuelve a planificar?',
+   'En cada iteración del loop (por defecto cada 0.5 s, interval_s). No existe un plan de varios pasos que se ejecute y luego se revise: cada ciclo es una decisión nueva, de ahí que el sistema reaccione de inmediato cuando algo cambia en la escena.'],
+  ['¿Qué ocurre si no existe un camino seguro?',
+   'Si el corredor central está bloqueado y ningún corredor lateral supera el score mínimo, la decisión es "blocked": el rover envía activamente {linear:0, angular:0} (con reintentos, porque el SDK repite el último comando indefinidamente) y vuelve a intentarlo en el siguiente frame.'],
+  ['¿Cómo se conecta todo esto durante una Demo Mission?',
+   'MissionRunner orquesta el loop: lee telemetría → estima heading por GPS → calcula el rumbo y distancia al checkpoint → si está muy lejos angularmente (>70°) hace un giro de arco; si no, corre percepción + política de corredores → envía el comando resultante → intenta marcar el checkpoint si está cerca → repite hasta agotar checkpoints o llegar a max_steps.'],
+];
+
+const faqList = document.getElementById('faqList');
+FAQ.forEach(([q,a])=>{
+  const item = document.createElement('div');
+  item.className='faq-item';
+  item.innerHTML = `
+    <button class="faq-q"><span>${q}</span><span class="plus">+</span></button>
+    <div class="faq-a"><div class="faq-a-inner">${a}</div></div>`;
+  item.querySelector('.faq-q').onclick = ()=> item.classList.toggle('open');
+  faqList.appendChild(item);
+});
+</script>
+</body>
+</html>
