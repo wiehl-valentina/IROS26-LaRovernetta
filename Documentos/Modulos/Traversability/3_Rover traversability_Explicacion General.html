@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>rover-traversability — cómo funciona</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0f0d;
+    --bg-alt:#0e1512;
+    --surface:#131c17;
+    --surface-2:#0f1713;
+    --border:#213026;
+    --text:#e7ece8;
+    --text-dim:#8ea297;
+    --text-faint:#5c6d64;
+    --green:#5fd38d;
+    --green-dim:#234131;
+    --red:#e2685c;
+    --red-dim:#3f2320;
+    --amber:#e0a458;
+    --amber-dim:#3a2c17;
+    --blue:#6fb3d9;
+    --mono:'IBM Plex Mono', ui-monospace, monospace;
+    --sans:'IBM Plex Sans', sans-serif;
+    --cond:'IBM Plex Sans Condensed', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:
+      radial-gradient(ellipse 900px 500px at 15% -10%, rgba(95,211,141,0.07), transparent 60%),
+      radial-gradient(ellipse 700px 500px at 90% 10%, rgba(224,164,88,0.05), transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:var(--green-dim); color:var(--green);}
+  a{color:var(--green); text-decoration:none;}
+  a:hover{text-decoration:underline;}
+  .wrap{max-width:920px; margin:0 auto; padding:0 28px;}
+
+  /* ---------- topbar ---------- */
+  .topbar{
+    position:sticky; top:0; z-index:50;
+    background:rgba(10,15,13,0.88);
+    backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--border);
+  }
+  .topbar .wrap{display:flex; align-items:center; justify-content:space-between; padding:14px 28px;}
+  .brand{font-family:var(--mono); font-size:14px; color:var(--text); display:flex; align-items:center; gap:8px;}
+  .brand .dot{width:8px; height:8px; border-radius:50%; background:var(--green); box-shadow:0 0 8px var(--green);}
+  nav.topnav{display:flex; gap:22px; font-family:var(--mono); font-size:12.5px;}
+  nav.topnav a{color:var(--text-dim);}
+  nav.topnav a:hover{color:var(--green); text-decoration:none;}
+
+  /* ---------- hero ---------- */
+  .hero{padding:76px 0 40px;}
+  .eyebrow{
+    font-family:var(--mono); font-size:12px; letter-spacing:0.14em; text-transform:uppercase;
+    color:var(--amber); margin-bottom:18px; display:flex; align-items:center; gap:10px;
+  }
+  .eyebrow::before{content:""; width:22px; height:1px; background:var(--amber);}
+  h1{
+    font-family:var(--cond); font-weight:700; font-size:52px; line-height:1.05;
+    margin:0 0 18px; letter-spacing:-0.01em;
+  }
+  h1 .accent{color:var(--green);}
+  .lede{font-size:18px; color:var(--text-dim); max-width:640px; margin:0 0 34px;}
+
+  /* mask preview — hero signature element */
+  .mask-preview{
+    display:flex; border:1px solid var(--border); border-radius:10px; overflow:hidden;
+    background:var(--surface-2); margin-bottom:10px;
+  }
+  .mask-preview .frame{
+    flex:1; position:relative; aspect-ratio:16/9; overflow:hidden;
+    background:linear-gradient(180deg,#182220 0%, #0e1613 100%);
+  }
+  .mask-preview svg{width:100%; height:100%; display:block;}
+  .mask-caption{
+    display:flex; justify-content:space-between; font-family:var(--mono); font-size:11.5px;
+    color:var(--text-faint); padding:0 2px; margin-bottom:56px;
+  }
+  .mask-caption span.g{color:var(--green);} .mask-caption span.r{color:var(--red);}
+
+  /* ---------- pipeline strip ---------- */
+  .pipeline{
+    display:grid; grid-template-columns:repeat(5,1fr); gap:0; margin:0 0 8px;
+    border:1px solid var(--border); border-radius:10px; overflow:hidden;
+  }
+  .pipeline .step{
+    padding:18px 14px; background:var(--surface); border-right:1px solid var(--border);
+    position:relative; min-height:96px;
+  }
+  .pipeline .step:last-child{border-right:none;}
+  .pipeline .step .n{font-family:var(--mono); font-size:11px; color:var(--text-faint);}
+  .pipeline .step .t{font-family:var(--cond); font-weight:600; font-size:16px; margin-top:6px; color:var(--text);}
+  .pipeline .step .d{font-size:12px; color:var(--text-dim); margin-top:4px;}
+  .pipeline .step::after{
+    content:"→"; position:absolute; right:-11px; top:50%; transform:translateY(-50%);
+    color:var(--text-faint); font-size:14px; z-index:2;
+  }
+  .pipeline .step:last-child::after{content:none;}
+
+  /* ---------- corridor divider (signature motif) ---------- */
+  .corridor-divider{
+    display:flex; align-items:flex-end; gap:3px; height:34px; margin:64px 0 40px;
+    opacity:0.9;
+  }
+  .corridor-divider i{flex:1; border-radius:2px 2px 0 0; display:block;}
+
+  /* ---------- sections ---------- */
+  section{padding:10px 0 8px;}
+  .section-head{margin-bottom:26px;}
+  .kicker{
+    font-family:var(--mono); font-size:11.5px; letter-spacing:0.1em; text-transform:uppercase;
+    color:var(--text-faint); margin-bottom:10px;
+  }
+  h2{font-family:var(--cond); font-weight:700; font-size:30px; margin:0 0 8px; letter-spacing:-0.01em;}
+  h2 .num{color:var(--text-faint); font-weight:600; margin-right:10px;}
+  .section-sub{color:var(--text-dim); max-width:640px; font-size:15.5px;}
+  h3{font-family:var(--sans); font-weight:600; font-size:16.5px; color:var(--text); margin:30px 0 10px;}
+  p{color:var(--text-dim); font-size:15px;}
+  p strong, li strong{color:var(--text); font-weight:600;}
+  ul, ol{color:var(--text-dim); font-size:15px; padding-left:20px;}
+  li{margin-bottom:6px;}
+  li::marker{color:var(--text-faint);}
+
+  /* ---------- module grid ---------- */
+  .module-grid{display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:22px 0 10px;}
+  .module{
+    border:1px solid var(--border); border-radius:9px; padding:16px 18px; background:var(--surface);
+    transition:border-color .15s ease, transform .15s ease;
+  }
+  .module:hover{border-color:#2c4536; transform:translateY(-1px);}
+  .module .file{font-family:var(--mono); font-size:12.5px; color:var(--green); margin-bottom:6px;}
+  .module .desc{font-size:13.5px; color:var(--text-dim);}
+
+  /* ---------- code blocks ---------- */
+  .code-block{
+    border:1px solid var(--border); border-radius:9px; overflow:hidden; margin:18px 0 26px;
+    background:var(--surface-2);
+  }
+  .code-block .cb-head{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:8px 14px; border-bottom:1px solid var(--border);
+    font-family:var(--mono); font-size:11.5px; color:var(--text-faint);
+    background:var(--bg-alt);
+  }
+  .code-block .cb-head .path{color:var(--text-dim);}
+  .code-block pre{
+    margin:0; padding:16px 18px; overflow-x:auto;
+    font-family:var(--mono); font-size:12.6px; line-height:1.65; color:#c9d6ce;
+  }
+  .code-block .c{color:var(--text-faint);}         /* comentario */
+  .code-block .s{color:var(--amber);}               /* string / literal */
+  .code-block .k{color:var(--blue);}                /* keyword-ish / nombre func */
+  .code-block .g{color:var(--green);}
+  .code-block .r{color:var(--red);}
+
+  /* ---------- steps (numbered flow) ---------- */
+  .flow{border-left:2px solid var(--border); margin:24px 0 30px; padding-left:0;}
+  .flow-item{position:relative; padding:0 0 26px 26px; border-left:2px solid var(--border); margin-left:-2px;}
+  .flow-item:last-child{border-left:2px solid transparent; padding-bottom:0;}
+  .flow-item .marker{
+    position:absolute; left:-9px; top:2px; width:16px; height:16px; border-radius:50%;
+    background:var(--bg); border:2px solid var(--green); display:flex; align-items:center; justify-content:center;
+    font-family:var(--mono); font-size:9px; color:var(--green);
+  }
+  .flow-item h4{margin:0 0 6px; font-family:var(--sans); font-weight:600; font-size:15px; color:var(--text);}
+  .flow-item p{margin:0; font-size:14px;}
+
+  /* ---------- callout / warning ---------- */
+  .callout{
+    border:1px solid var(--amber-dim); background:rgba(224,164,88,0.06); border-radius:9px;
+    padding:14px 18px; margin:20px 0; font-size:14px; color:#d9c5a4;
+    display:flex; gap:12px;
+  }
+  .callout.danger{border-color:var(--red-dim); background:rgba(226,104,92,0.07); color:#e6b8b2;}
+  .callout .ic{font-family:var(--mono); font-size:13px; flex-shrink:0; margin-top:1px;}
+  .callout.danger .ic{color:var(--red);}
+  .callout:not(.danger) .ic{color:var(--amber);}
+  .callout p{margin:0; color:inherit; font-size:14px;}
+  .callout code{color:inherit;}
+
+  /* ---------- demo command cards ---------- */
+  .level-grid{display:grid; grid-template-columns:1fr; gap:12px; margin:22px 0 8px;}
+  .level{
+    border:1px solid var(--border); border-radius:9px; overflow:hidden; background:var(--surface);
+  }
+  .level .lv-head{
+    display:flex; align-items:center; gap:12px; padding:14px 18px;
+    border-bottom:1px solid var(--border); background:var(--surface-2);
+  }
+  .level .lv-num{
+    font-family:var(--mono); font-size:12px; width:26px; height:26px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+    background:var(--bg-alt); color:var(--text-dim); border:1px solid var(--border);
+  }
+  .level.risk-0 .lv-num{color:var(--green); border-color:var(--green-dim);}
+  .level.risk-1 .lv-num{color:var(--blue); border-color:#1d3a4a;}
+  .level.risk-2 .lv-num{color:var(--amber); border-color:var(--amber-dim);}
+  .level.risk-3 .lv-num{color:var(--red); border-color:var(--red-dim);}
+  .level .lv-title{font-family:var(--sans); font-weight:600; font-size:15px; color:var(--text);}
+  .level .lv-tag{
+    margin-left:auto; font-family:var(--mono); font-size:10.5px; padding:3px 9px; border-radius:20px;
+    border:1px solid var(--border); color:var(--text-faint); white-space:nowrap;
+  }
+  .level.risk-0 .lv-tag{color:var(--green); border-color:var(--green-dim);}
+  .level.risk-2 .lv-tag{color:var(--amber); border-color:var(--amber-dim);}
+  .level.risk-3 .lv-tag{color:var(--red); border-color:var(--red-dim);}
+  .level .lv-body{padding:14px 18px 18px;}
+  .level .lv-body p{font-size:13.5px; margin:0 0 10px;}
+  .level .lv-cmd{
+    font-family:var(--mono); font-size:12.5px; background:var(--bg-alt); border:1px solid var(--border);
+    border-radius:6px; padding:9px 12px; color:var(--green); overflow-x:auto; white-space:pre;
+  }
+
+  /* ---------- mission diagram ---------- */
+  .mission-diagram{
+    border:1px solid var(--border); border-radius:10px; background:var(--surface); padding:26px;
+    margin:26px 0;
+  }
+  .mission-diagram .row{display:flex; align-items:stretch; gap:0; flex-wrap:wrap;}
+  .md-box{
+    border:1px solid var(--border); border-radius:8px; padding:12px 14px; background:var(--surface-2);
+    font-size:13px; flex:1; min-width:150px; position:relative;
+  }
+  .md-box .lab{font-family:var(--mono); font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px;}
+  .md-box .val{color:var(--text); font-size:13.5px;}
+  .md-arrow{display:flex; align-items:center; justify-content:center; color:var(--text-faint); font-size:16px; padding:0 8px; min-width:24px;}
+  .md-branch{
+    margin-top:14px; padding-top:14px; border-top:1px dashed var(--border);
+    display:grid; grid-template-columns:1fr 1fr; gap:12px;
+  }
+  .md-branch .opt{border-radius:8px; padding:12px 14px; font-size:13px;}
+  .md-branch .opt.a{border:1px solid var(--amber-dim); background:rgba(224,164,88,0.05);}
+  .md-branch .opt.b{border:1px solid var(--green-dim); background:rgba(95,211,141,0.05);}
+  .md-branch .opt .t{font-family:var(--mono); font-size:11px; margin-bottom:4px;}
+  .md-branch .opt.a .t{color:var(--amber);}
+  .md-branch .opt.b .t{color:var(--green);}
+
+  /* ---------- resolution chain (weights) ---------- */
+  .chain{margin:22px 0 10px;}
+  .chain-item{
+    display:grid; grid-template-columns:34px 1fr; gap:14px; padding:14px 0;
+    border-bottom:1px solid var(--border);
+  }
+  .chain-item:last-child{border-bottom:none;}
+  .chain-item .ci-n{
+    font-family:var(--mono); font-size:13px; color:var(--bg); background:var(--text-faint);
+    width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+  }
+  .chain-item.hit .ci-n{background:var(--green); color:#06140c;}
+  .chain-item .ci-title{font-weight:600; color:var(--text); font-size:14.5px; margin-bottom:3px;}
+  .chain-item .ci-desc{font-size:13.5px; color:var(--text-dim); margin:0;}
+  .chain-item code{
+    font-family:var(--mono); font-size:12px; background:var(--bg-alt); padding:1px 6px; border-radius:4px;
+    color:var(--amber); border:1px solid var(--border);
+  }
+
+  /* ---------- table ---------- */
+  table{width:100%; border-collapse:collapse; margin:20px 0; font-size:13.5px;}
+  th, td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--border);}
+  th{font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-faint); font-weight:500;}
+  td{color:var(--text-dim);}
+  td strong{color:var(--text);}
+  td code{font-family:var(--mono); font-size:12px; color:var(--amber);}
+
+  /* ---------- footer ---------- */
+  footer{
+    margin-top:80px; padding:36px 0 60px; border-top:1px solid var(--border);
+    font-family:var(--mono); font-size:12px; color:var(--text-faint);
+  }
+  footer a{color:var(--text-dim);}
+  footer .foot-row{display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;}
+
+  @media (max-width:720px){
+    h1{font-size:38px;}
+    .pipeline{grid-template-columns:1fr 1fr;}
+    .pipeline .step::after{content:none;}
+    .module-grid{grid-template-columns:1fr;}
+    .md-branch{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <div class="brand"><span class="dot"></span> rover_traversability</div>
+    <nav class="topnav">
+      <a href="#pipeline">Pipeline</a>
+      <a href="#modelo">Modelo</a>
+      <a href="#demo-nav">Demo &amp; Navegación</a>
+      <a href="#politica">Política</a>
+      <a href="#seguridad">Seguridad</a>
+    </nav>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- ============ HERO ============ -->
+  <div class="hero">
+    <div class="eyebrow">Guía técnica · módulo de percepción y navegación</div>
+    <h1>Cómo funciona <span class="accent">rover-traversability</span></h1>
+    <p class="lede">
+      Un frame de cámara entra, una máscara de "por dónde se puede manejar" sale, y de ahí un
+      comando de dirección. Este documento explica la arquitectura del paquete, cómo resuelve y
+      carga el modelo SAM-TP, y —en una sección aparte— cómo están armados el <code style="color:var(--blue)">demo.py</code>
+      y la navegación por checkpoints GPS.
+    </p>
+
+    <div class="mask-preview">
+      <div class="frame">
+        <svg viewBox="0 0 640 360" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#1a2420"/>
+              <stop offset="100%" stop-color="#101915"/>
+            </linearGradient>
+          </defs>
+          <rect width="640" height="360" fill="url(#sky)"/>
+          <!-- terreno bloqueado (rojo) a los costados -->
+          <polygon points="0,360 0,180 190,150 220,360" fill="#c9564f" opacity="0.55"/>
+          <polygon points="640,360 640,170 460,145 430,360" fill="#c9564f" opacity="0.55"/>
+          <!-- corredor transitable (verde) al centro -->
+          <polygon points="220,360 190,150 460,145 430,360" fill="#52a37a" opacity="0.6"/>
+          <!-- obstaculo puntual -->
+          <ellipse cx="330" cy="300" rx="26" ry="14" fill="#c9564f" opacity="0.75"/>
+          <!-- lineas de corredores -->
+          <g stroke="#0a0f0d" stroke-width="1.5" opacity="0.5">
+            <line x1="71" y1="360" x2="120" y2="150"/>
+            <line x1="142" y1="360" x2="155" y2="150"/>
+            <line x1="213" y1="360" x2="190" y2="150"/>
+            <line x1="284" y1="360" x2="225" y2="150"/>
+            <line x1="355" y1="360" x2="260" y2="150"/>
+            <line x1="426" y1="360" x2="295" y2="150"/>
+            <line x1="497" y1="360" x2="330" y2="150"/>
+            <line x1="568" y1="360" x2="365" y2="150"/>
+          </g>
+          <line x1="0" y1="150" x2="640" y2="150" stroke="#0a0f0d" stroke-dasharray="4 4" opacity="0.4"/>
+        </svg>
+      </div>
+    </div>
+    <div class="mask-caption">
+      <span><span class="g">verde</span> = transitable&nbsp;&nbsp;·&nbsp;&nbsp;<span class="r">rojo</span> = bloqueado</span>
+      <span>máscara SAM-TP · 9 corredores · roi_top 0.55</span>
+    </div>
+  </div>
+
+  <!-- ============ PIPELINE ============ -->
+  <section id="pipeline">
+    <div class="section-head">
+      <div class="kicker">Vista general</div>
+      <h2><span class="num">00</span>El pipeline completo</h2>
+      <p class="section-sub">Cinco pasos, cada uno en su propio módulo, sin dependencias circulares.</p>
+    </div>
+
+    <div class="pipeline">
+      <div class="step"><div class="n">01</div><div class="t">Frame</div><div class="d"><code style="color:var(--blue)">client.py</code> pide el frame a la SDK vía HTTP</div></div>
+      <div class="step"><div class="n">02</div><div class="t">Decodificar</div><div class="d"><code style="color:var(--blue)">images.py</code> lo convierte a RGB, venga como venga</div></div>
+      <div class="step"><div class="n">03</div><div class="t">SAM-TP</div><div class="d"><code style="color:var(--blue)">predictor.py</code> infiere la máscara HxW</div></div>
+      <div class="step"><div class="n">04</div><div class="t">Política</div><div class="d"><code style="color:var(--blue)">policy.py</code> elige un corredor y arma linear/angular</div></div>
+      <div class="step"><div class="n">05</div><div class="t">Comando</div><div class="d"><code style="color:var(--blue)">client.py</code> hace POST /control</div></div>
+    </div>
+
+    <p style="margin-top:18px;">
+      Todo el paquete habla con el rover <strong>solo por HTTP</strong> contra la SDK en
+      <code style="color:var(--amber); font-family:var(--mono); font-size:13px;">http://localhost:8000</code>
+      (configurable con <code style="color:var(--amber); font-family:var(--mono); font-size:13px;">ROVER_BASE_URL</code>).
+      No importa nada del resto del repo — por eso se puede instalar y probar sin tocar el código del equipo.
+    </p>
+  </section>
+
+  <div class="corridor-divider" aria-hidden="true">
+    <i style="height:40%;background:var(--green-dim)"></i><i style="height:75%;background:var(--green-dim)"></i>
+    <i style="height:30%;background:var(--red-dim)"></i><i style="height:20%;background:var(--red-dim)"></i>
+    <i style="height:90%;background:var(--green)"></i>
+    <i style="height:22%;background:var(--red-dim)"></i><i style="height:35%;background:var(--red-dim)"></i>
+    <i style="height:70%;background:var(--green-dim)"></i><i style="height:45%;background:var(--green-dim)"></i>
+  </div>
+
+  <!-- ============ MÓDULOS ============ -->
+  <section id="modulos">
+    <div class="section-head">
+      <div class="kicker">Estructura del paquete</div>
+      <h2><span class="num">01</span>Qué hace cada archivo</h2>
+      <p class="section-sub">
+        Importar <code style="color:var(--blue)">rover_traversability</code> nunca trae <code style="color:var(--blue)">torch</code> encima —
+        el predictor se carga perezosamente recién cuando alguien lo usa.
+      </p>
+    </div>
+
+    <div class="module-grid">
+      <div class="module"><div class="file">client.py</div><div class="desc">Cliente HTTP mínimo. Nunca lanza excepciones al enviar comandos — un rover con watchdog de seguridad puede rechazar movimiento con 500 y el loop de control tiene que seguir vivo.</div></div>
+      <div class="module"><div class="file">images.py</div><div class="desc">Decodifica cualquier payload (base64 crudo, data URI, path, bytes, ndarray) a RGB, "sniffeando" los magic bytes en vez de confiar en el content-type.</div></div>
+      <div class="module"><div class="file">predictor.py</div><div class="desc">Envuelve SAM-TP. Construye el modelo una sola vez, corre inferencia por frame, aplica el refinamiento por contraste.</div></div>
+      <div class="module"><div class="file">weights.py</div><div class="desc">Cadena de resolución del checkpoint (~130&nbsp;MB) y del config de inferencia. Ver sección "Cómo carga el modelo".</div></div>
+      <div class="module"><div class="file">policy.py</div><div class="desc">Convierte la máscara en un comando <code style="font-family:inherit">{linear, angular}</code>. Puro numpy, determinístico, sin estado.</div></div>
+      <div class="module"><div class="file">geo.py</div><div class="desc">Bearing/distancia GPS y <code style="font-family:inherit">HeadingEstimator</code>: rumbo por course-over-ground, porque el magnetómetro del Mini+ no es confiable en campo.</div></div>
+      <div class="module"><div class="file">mission.py</div><div class="desc"><code style="font-family:inherit">MissionRunner</code>: el loop que recorre checkpoints combinando percepción + rumbo GPS.</div></div>
+      <div class="module"><div class="file">strategy.py</div><div class="desc"><code style="font-family:inherit">TraversabilityStrategy</code>: duck-type de la interfaz <code style="font-family:inherit">RoverStrategy</code> del equipo, sin importarla.</div></div>
+      <div class="module"><div class="file">calibration.py</div><div class="desc">Intrínsecos/extrínsecos reales de la cámara del Mini+, para el próximo paso del roadmap (proyección BEV).</div></div>
+      <div class="module"><div class="file">demo.py</div><div class="desc">CLI ejecutable con 4 subcomandos de riesgo creciente. Ver sección dedicada más abajo.</div></div>
+    </div>
+  </section>
+
+  <div class="corridor-divider" aria-hidden="true">
+    <i style="height:55%;background:var(--amber-dim)"></i><i style="height:80%;background:var(--amber-dim)"></i>
+    <i style="height:30%;background:var(--amber-dim)"></i><i style="height:65%;background:var(--amber)"></i>
+    <i style="height:95%;background:var(--amber)"></i><i style="height:40%;background:var(--amber-dim)"></i>
+    <i style="height:70%;background:var(--amber-dim)"></i><i style="height:25%;background:var(--amber-dim)"></i>
+    <i style="height:50%;background:var(--amber-dim)"></i>
+  </div>
+
+  <!-- ============ CÓMO CARGA EL MODELO ============ -->
+  <section id="modelo">
+    <div class="section-head">
+      <div class="kicker">weights.py + predictor.py</div>
+      <h2><span class="num">02</span>Cómo toma y carga el modelo</h2>
+      <p class="section-sub">
+        El checkpoint fine-tuneado (~130&nbsp;MB) no está en git. <code style="color:var(--blue)">resolve_checkpoint()</code>
+        lo busca en orden y falla explícito si un lugar explícito está mal — nunca "sigue de largo" en silencio.
+      </p>
+    </div>
+
+    <div class="chain">
+      <div class="chain-item hit">
+        <div class="ci-n">1</div>
+        <div>
+          <div class="ci-title">Argumento explícito</div>
+          <p class="ci-desc"><code>TraversabilityPredictor(checkpoint="/ruta/al/archivo.pt")</code>. Si la ruta no existe, error inmediato — nunca cae al siguiente paso.</p>
+        </div>
+      </div>
+      <div class="chain-item">
+        <div class="ci-n">2</div>
+        <div>
+          <div class="ci-title">Variable de entorno</div>
+          <p class="ci-desc"><code>SAMTP_CHECKPOINT=/ruta/al/archivo.pt</code>. Mismo criterio: si está seteada pero el archivo no existe, error — no busca en otro lado por las dudas.</p>
+        </div>
+      </div>
+      <div class="chain-item">
+        <div class="ci-n">3</div>
+        <div>
+          <div class="ci-title">Caché local</div>
+          <p class="ci-desc"><code>~/.cache/rover_traversability/checkpoint_finetuned_v2.pt</code> (o <code>$XDG_CACHE_HOME</code>).</p>
+        </div>
+      </div>
+      <div class="chain-item">
+        <div class="ci-n">4</div>
+        <div>
+          <div class="ci-title">Descarga automática desde Hugging Face</div>
+          <p class="ci-desc">Repo público <code>sanatem/samtp-mini-traversability</code> (override con <code>SAMTP_HF_REPO</code>), vía <code>huggingface_hub</code> — requiere el extra <code>[hf]</code>. Si falla, el mensaje de error incluye <em>por qué</em> falló cada intento previo.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="code-block">
+      <div class="cb-head"><span>resumen — <span class="path">rover_traversability/weights.py</span></span><span>Python</span></div>
+      <pre><span class="c"># explícito -> env var -> caché -> Hugging Face Hub</span>
+<span class="k">def</span> resolve_checkpoint(explicit=None, hf_repo=None, auto_download=True):
+    <span class="k">if</span> explicit <span class="k">is not</span> None:
+        <span class="c"># si no existe: CheckpointNotFoundError, nunca sigue de largo</span>
+        ...
+    env_path = os.environ.get(<span class="s">"SAMTP_CHECKPOINT"</span>)
+    <span class="k">if</span> env_path:
+        ...  <span class="c"># mismo criterio estricto</span>
+    cached = default_cache_dir() / filename
+    <span class="k">if</span> cached.is_file():
+        <span class="k">return</span> cached
+    <span class="k">if</span> auto_download:
+        <span class="k">from</span> huggingface_hub <span class="k">import</span> hf_hub_download
+        <span class="k">return</span> Path(hf_hub_download(repo_id=hf_repo, filename=filename))</pre>
+    </div>
+
+    <h3>El config de inferencia no viaja con el checkpoint</h3>
+    <p>
+      <code style="color:var(--blue)">resolve_config()</code> busca el YAML de inferencia (arquitectura Hiera-tiny,
+      <code style="font-family:var(--mono); font-size:12.5px;">sam2.1_custom2.yaml</code>) <strong>dentro del paquete
+      <code style="font-family:var(--mono); font-size:12.5px;">sam2</code></strong> ya instalado (el vendoreado en
+      <code style="font-family:var(--mono); font-size:12.5px;">./genie</code>). Necesita una ruta real en disco — Hydra
+      no puede leer configs desde un zip — así que resuelve <code style="font-family:var(--mono); font-size:12.5px;">sam2.__path__[0]</code>
+      directamente.
+    </p>
+
+    <h3>Construcción del predictor: una sola vez, con candado</h3>
+    <p>
+      <code style="color:var(--blue)">TraversabilityPredictor.__init__</code> llama a <code style="font-family:var(--mono); font-size:13px;">build_sam2(config, checkpoint, device)</code>
+      dentro de un <code style="font-family:var(--mono); font-size:13px;">threading.Lock</code>: Hydra muta estado global al construir el modelo y no es
+      reentrante, así que solo puede haber una construcción en curso por proceso. Elige dispositivo automáticamente
+      (<code style="font-family:var(--mono); font-size:13px;">cuda → mps → cpu</code>) y, si el checkpoint no calza con la config tiny (por ejemplo, si alguien
+      apunta sin querer al checkpoint público base+ de GeNIE), levanta <code style="font-family:var(--mono); font-size:13px;">CheckpointMismatchError</code>
+      con el motivo exacto en vez de un stacktrace de PyTorch ilegible.
+    </p>
+
+    <div class="callout">
+      <div class="ic">i</div>
+      <p>
+        Todo el paquete puede importarse sin <code>torch</code> instalado. El predictor se importa recién
+        cuando algo lo pide (<code>TraversabilityStrategy</code>, <code>MissionRunner</code> o <code>demo.py</code>),
+        vía import perezoso en <code>__init__.py</code> (<code>__getattr__</code> estilo PEP&nbsp;562). Por eso los
+        67 tests corren sin GPU, sin checkpoint y sin red.
+      </p>
+    </div>
+
+    <h3>Por frame: inferencia + un ajuste que no es del modelo</h3>
+    <p>
+      Cada llamada a <code style="color:var(--blue)">predict()</code> corre SAM-TP con puntos-prompt dummy en el borde
+      inferior de la imagen (el encoder de prompt aprendido los ignora; la API de SAM2 igual exige un prompt) y aplica
+      sigmoid a los logits. Después, si <code style="font-family:var(--mono); font-size:13px;">contrast_refine=True</code>
+      (default), <code style="color:var(--blue)">refine_traversability_by_contrast()</code> recalcula por frame la
+      luminancia mediana de lo que el modelo llamó "piso" y degrada a bloqueado cualquier píxel drivable
+      sensiblemente más oscuro que esa referencia — corrige el caso típico de objetos oscuros sobre piso claro que
+      SAM-TP, entrenado como "piso vs. no-piso", etiqueta como transitable.
+    </p>
+  </section>
+
+  <div class="corridor-divider" aria-hidden="true">
+    <i style="height:60%;background:var(--blue);opacity:.5"></i><i style="height:35%;background:var(--border)"></i>
+    <i style="height:80%;background:var(--blue);opacity:.5"></i><i style="height:22%;background:var(--border)"></i>
+    <i style="height:50%;background:var(--blue);opacity:.5"></i><i style="height:90%;background:var(--blue);opacity:.7"></i>
+    <i style="height:30%;background:var(--border)"></i><i style="height:65%;background:var(--blue);opacity:.5"></i>
+    <i style="height:40%;background:var(--border)"></i>
+  </div>
+
+  <!-- ============ SECCIÓN APARTE: DEMO Y NAVEGACIÓN ============ -->
+  <section id="demo-nav">
+    <div class="section-head">
+      <div class="kicker">Sección dedicada</div>
+      <h2><span class="num">03</span>Demo y navegación</h2>
+      <p class="section-sub">
+        <code style="color:var(--blue)">demo.py</code> es el CLI ejecutable (<code style="font-family:var(--mono); font-size:13px;">python -m rover_traversability.demo &lt;comando&gt;</code>).
+        Los cuatro subcomandos están ordenados de menor a mayor riesgo, y los dos que mueven al rover de verdad
+        se niegan a arrancar sin un flag explícito.
+      </p>
+    </div>
+
+    <div class="level-grid">
+      <div class="level risk-0">
+        <div class="lv-head">
+          <div class="lv-num">0</div>
+          <div class="lv-title">predict</div>
+          <div class="lv-tag">sin rover</div>
+        </div>
+        <div class="lv-body">
+          <p>Inferencia sobre una sola imagen del disco. Carga el predictor, corre <code>predict()</code>,
+          imprime latencia y % de píxeles transitables, calcula el comando sugerido con <code>suggest_command()</code>
+          y guarda el overlay verde/rojo a un PNG. Ideal para validar un checkpoint nuevo sin tocar nada más.</p>
+          <div class="lv-cmd">python -m rover_traversability.demo predict screenshots/imagen.jpg --out overlay.png</div>
+        </div>
+      </div>
+
+      <div class="level risk-1">
+        <div class="lv-head">
+          <div class="lv-num">1</div>
+          <div class="lv-title">live</div>
+          <div class="lv-tag" style="color:var(--blue);border-color:#1d3a4a;">lee, no manda</div>
+        </div>
+        <div class="lv-body">
+          <p>Arma un <code>TraversabilityStrategy(drive=False)</code> y lo llama en loop: pide el frame vía
+          <code>get_image_payload()</code>, lo analiza, guarda el overlay en <code>--save-dir</code>. Con
+          <code>drive=False</code> la estrategia solo <em>imprime</em> qué haría (<code>[dry-run] ...</code>) —
+          no se envía ningún POST /control. Es la forma de ver qué opina el modelo en el entorno real antes de arriesgar nada.</p>
+          <div class="lv-cmd">python -m rover_traversability.demo live --save-dir trav_out</div>
+        </div>
+      </div>
+
+      <div class="level risk-2">
+        <div class="lv-head">
+          <div class="lv-num">2</div>
+          <div class="lv-title">drive</div>
+          <div class="lv-tag">mueve el rover</div>
+        </div>
+        <div class="lv-body">
+          <p>Loop reactivo puro: frame → máscara → <code>suggest_command()</code> → <code>client.send_command()</code>,
+          sin ningún objetivo GPS. Se rehúsa a arrancar si no se pasa <code>--yes-i-want-the-rover-to-move</code>
+          (código de salida 2). Al salir por Ctrl-C o al terminar, siempre llama <code>client.stop()</code> en el
+          <code>finally</code> — el rover repite el último comando para siempre, así que "dejar de mandar" no lo frena.</p>
+          <div class="lv-cmd">python -m rover_traversability.demo drive --yes-i-want-the-rover-to-move</div>
+        </div>
+      </div>
+
+      <div class="level risk-3">
+        <div class="lv-head">
+          <div class="lv-num">3</div>
+          <div class="lv-title">mission</div>
+          <div class="lv-tag">mueve el rover · GPS</div>
+        </div>
+        <div class="lv-body">
+          <p>Corre <code>MissionRunner.run()</code> completo: navega checkpoint por checkpoint combinando percepción
+          y rumbo GPS. También exige el flag de movimiento; opcionalmente hace <code>POST /start-mission</code> primero
+          con <code>--start-mission</code>. Cada paso imprime distancia, offset al objetivo y la decisión tomada.</p>
+          <div class="lv-cmd">python -m rover_traversability.demo mission --start-mission --yes-i-want-the-rover-to-move</div>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="margin-top:44px;">El loop de <code style="color:var(--blue)">MissionRunner</code> paso a paso</h3>
+    <p>Esto es lo que corre adentro de <code style="color:var(--blue)">mission.py</code> en cada iteración del <code style="font-family:var(--mono); font-size:13px;">while True</code>:</p>
+
+    <div class="flow">
+      <div class="flow-item"><div class="marker">1</div><h4>Leer telemetría y frame</h4><p><code style="font-family:inherit; color:var(--amber);">GET /data</code> trae lat/lon/velocidad/orientación; <code style="font-family:inherit; color:var(--amber);">GET /v2/screenshot</code> trae el frame.</p></div>
+      <div class="flow-item"><div class="marker">2</div><h4>Estimar rumbo (heading)</h4><p><code style="font-family:inherit;">HeadingEstimator.update()</code> — ver detalle abajo, por qué no se confía en el magnetómetro.</p></div>
+      <div class="flow-item"><div class="marker">3</div><h4>Calcular offset al checkpoint</h4><p><code style="font-family:inherit;">gps_bearing_and_distance()</code> da el rumbo hacia el objetivo; la diferencia contra el heading actual es el <code style="font-family:inherit;">goal_offset_deg</code>.</p></div>
+      <div class="flow-item"><div class="marker">4</div><h4>¿Cerca del checkpoint?</h4><p>Si la distancia es ≤ <code style="font-family:inherit;">arrive_attempt_m</code> (8&nbsp;m por defecto), intenta <code style="font-family:inherit; color:var(--amber);">POST /checkpoint-reached</code>. El backend valida el radio real — un rechazo 400 no es un error, es "seguí manejando".</p></div>
+      <div class="flow-item"><div class="marker">5</div><h4>Decidir el comando</h4><p>Rama entre <em>giro de arco hacia el objetivo</em> o <em>dirección por corredores</em> — ver el diagrama abajo.</p></div>
+      <div class="flow-item"><div class="marker">6</div><h4>Enviar y esperar</h4><p><code style="font-family:inherit; color:var(--amber);">POST /control</code> (o <code style="font-family:inherit;">stop()</code>), duerme lo que falte para completar <code style="font-family:inherit;">interval_s</code>, repite.</p></div>
+    </div>
+
+    <div class="mission-diagram">
+      <div class="row">
+        <div class="md-box"><div class="lab">Entrada</div><div class="val">goal_offset_deg</div></div>
+        <div class="md-arrow">→</div>
+        <div class="md-box"><div class="lab">¿ &gt; turn_in_place_deg (70°) ?</div><div class="val">objetivo muy al costado o atrás</div></div>
+      </div>
+      <div class="md-branch">
+        <div class="opt a">
+          <div class="t">SÍ → arc_turn_to_goal</div>
+          <p style="margin:0; color:#d9c5a4; font-size:13px;">Gira en arco (<code>linear</code> chico + <code>angular</code> máx.) en vez de girar en el lugar. Un giro puro deja al GPS sin movimiento, y sin movimiento no hay course-over-ground — el rover perdería su única fuente de rumbo confiable.</p>
+        </div>
+        <div class="opt b">
+          <div class="t">NO → percepción + sesgo al objetivo</div>
+          <p style="margin:0; color:#b9d9c8; font-size:13px;">Pide el frame, corre SAM-TP, y llama <code>suggest_command(mask, goal_offset_deg=...)</code> — la máscara manda, el objetivo GPS solo desempata entre corredores igual de transitables.</p>
+        </div>
+      </div>
+    </div>
+
+    <h3>Por qué el rumbo viene del GPS y no de la brújula</h3>
+    <p>
+      El magnetómetro del Mini+ resultó no confiable en campo: interferencia de motor/batería y anomalías
+      magnéticas del lugar hicieron que el valor <code style="font-family:var(--mono); font-size:13px;">orientation</code>
+      de la telemetría fuera falso en varios sitios de prueba — el síntoma es "el rover gira en círculos".
+      <code style="color:var(--blue)">HeadingEstimator</code> resuelve esto con <strong>course-over-ground (COG)</strong>:
+      mientras el rover se mueve, el rumbo es el <em>bearing</em> entre dos fixes GPS sucesivos separados al menos
+      <code style="font-family:var(--mono); font-size:13px;">min_move_m</code>. Si está quieto, mantiene el último COG conocido.
+      Solo antes de la primera medida de movimiento usa <code style="font-family:var(--mono); font-size:13px;">orientation</code>
+      (la brújula) como arranque en frío — un rumbo inicial equivocado cuesta unos metros en la dirección
+      incorrecta, y después el COG toma el control.
+    </p>
+
+    <div class="code-block">
+      <div class="cb-head"><span>lógica central — <span class="path">rover_traversability/geo.py</span></span><span>Python</span></div>
+      <pre><span class="k">def</span> update(self, lat, lon, speed_ms=None, orientation_deg=None):
+    <span class="k">if</span> lat <span class="k">is not</span> None <span class="k">and</span> lon <span class="k">is not</span> None:
+        bearing, dist_m = gps_bearing_and_distance(*self._anchor, lat, lon)
+        <span class="k">if</span> dist_m >= self.min_move_m <span class="k">and</span> speed_ms >= self.min_speed_ms:
+            self._last_cog_deg = degrees(bearing) % 360.0   <span class="c"># COG toma el control</span>
+            self._anchor = (lat, lon)
+    <span class="k">if</span> self._last_cog_deg <span class="k">is not</span> None:
+        <span class="k">return</span> self._last_cog_deg          <span class="c"># sostiene el último COG si está quieto</span>
+    <span class="k">return</span> orientation_deg                 <span class="c"># fallback: brújula, solo en frío</span></pre>
+    </div>
+
+    <h3>La estrategia (<code style="color:var(--blue)">strategy.py</code>) como enchufe de una línea</h3>
+    <p>
+      <code style="color:var(--blue)">TraversabilityStrategy</code> imita, sin importarla, la interfaz
+      <code style="font-family:var(--mono); font-size:13px;">RoverStrategy</code> del equipo (mismos dos métodos:
+      <code style="font-family:var(--mono); font-size:13px;">get_image_payload()</code> y <code style="font-family:var(--mono); font-size:13px;">analyze(payload)</code>),
+      así que se enchufa en el <code style="font-family:var(--mono); font-size:13px;">RoverLoop</code> existente
+      cambiando una sola línea. Por defecto <code style="font-family:var(--mono); font-size:13px;">drive=False</code>:
+      predice e imprime, pero no manda nada — la misma filosofía "dry-run primero" que <code style="color:var(--blue)">demo live</code>.
+    </p>
+
+    <div class="code-block">
+      <div class="cb-head"><span>swap de una línea — <span class="path">programs/genai_rover_api.py</span></span><span>Python</span></div>
+      <pre><span class="k">from</span> rover_traversability <span class="k">import</span> TraversabilityStrategy
+
+strategy = TraversabilityStrategy(drive=<span class="g">True</span>)   <span class="c"># antes: Base64ImageStrategy()</span>
+loop = RoverLoop(strategy=strategy, sleep_seconds=<span class="s">0.5</span>, max_iterations=<span class="g">None</span>)</pre>
+    </div>
+  </section>
+
+  <div class="corridor-divider" aria-hidden="true">
+    <i style="height:70%;background:var(--green-dim)"></i><i style="height:20%;background:var(--red-dim)"></i>
+    <i style="height:85%;background:var(--green)"></i><i style="height:30%;background:var(--red-dim)"></i>
+    <i style="height:15%;background:var(--red-dim)"></i>
+    <i style="height:75%;background:var(--green-dim)"></i><i style="height:25%;background:var(--red-dim)"></i>
+    <i style="height:60%;background:var(--green-dim)"></i><i style="height:45%;background:var(--green-dim)"></i>
+  </div>
+
+  <!-- ============ POLÍTICA ============ -->
+  <section id="politica">
+    <div class="section-head">
+      <div class="kicker">policy.py</div>
+      <h2><span class="num">04</span>De la máscara al comando</h2>
+      <p class="section-sub">Pura numpy, sin estado, determinística — la misma máscara siempre produce el mismo comando.</p>
+    </div>
+
+    <table>
+      <thead><tr><th>Paso</th><th>Qué hace</th></tr></thead>
+      <tbody>
+        <tr><td><strong>ROI</strong></td><td>Recorta la parte baja de la imagen (<code>roi_top</code>, 55% por defecto) — lo que está cerca del piso importa más que el horizonte.</td></tr>
+        <tr><td><strong>Corredores</strong></td><td>Divide el ancho en <code>num_corridors</code> bandas verticales (9 por defecto, impar para tener un centro) y promedia cada una, con las filas más cercanas pesando más (<code>bottom_weight</code>).</td></tr>
+        <tr><td><strong>Test de frenado</strong></td><td>Por <em>fracción</em> de píxeles bloqueados en el corredor central (<code>stop_center_fraction</code>), no por "cualquier píxel bloqueado" — un test de un solo píxel frenaría en cada frame, porque la salida real del modelo siempre tiene algo de ruido.</td></tr>
+        <tr><td><strong>Sesgo al objetivo</strong></td><td>Si hay <code>goal_offset_deg</code>, multiplica los puntajes por una gaussiana centrada en la posición-imagen del objetivo (proyección pinhole con el HFOV real de la cámara). La transitabilidad manda; el GPS solo desempata.</td></tr>
+        <tr><td><strong>Centroide, no centro de imagen</strong></td><td>El punto de dirección es el centroide pesado <em>dentro</em> del corredor elegido — no el centro de toda la vista. Así una máscara bimodal (dos aberturas) no apunta a la pared del medio.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <div class="ic">↺</div>
+      <p>Convención de la SDK: <code>angular</code> positivo = giro a la <strong>izquierda</strong>. Todo el código respeta esto de punta a punta.</p>
+    </div>
+  </section>
+
+  <!-- ============ SEGURIDAD ============ -->
+  <section id="seguridad">
+    <div class="section-head">
+      <div class="kicker">antes de mover el rover</div>
+      <h2><span class="num">05</span>Seguridad</h2>
+    </div>
+
+    <div class="callout danger">
+      <div class="ic">!</div>
+      <p><strong>El rover repite el último comando para siempre.</strong> El silencio no lo frena. Cada lugar del código que decide "parar" manda activamente <code>{linear: 0, angular: 0}</code> (con reintentos vía <code>client.stop()</code>), y los loops del demo siempre paran al salir o con Ctrl-C.</p>
+    </div>
+    <div class="callout danger">
+      <div class="ic">!</div>
+      <p><code>drive</code> y <code>mission</code> se niegan a arrancar sin <code>--yes-i-want-the-rover-to-move</code>. Primera prueba: espacio abierto, dedo en Ctrl-C, y confirmar que gira para el lado correcto.</p>
+    </div>
+    <div class="callout">
+      <div class="ic">i</div>
+      <p>SDK v6.1+: un watchdog de control puede rechazar movimiento con HTTP&nbsp;500 mientras hay un stop de seguridad pendiente. <code>client.py</code> nunca lo trata como excepción — el loop tiene que "surfear" ese rechazo, no romperse.</p>
+    </div>
+    <div class="callout">
+      <div class="ic">i</div>
+      <p>El modelo puede confundir objetos oscuros sobre piso claro con terreno transitable (fue entrenado como "piso vs. no-piso"). El refinamiento por contraste de <code>predictor.py</code> mitiga esto y está activo por defecto — no conviene apagarlo.</p>
+    </div>
+  </section>
+
+  <footer>
+    <div class="foot-row">
+      <span>rover_traversability — SAM-TP + navegación por checkpoints para el Earth Rover Mini+</span>
+      <span>67 tests · sin torch, sin checkpoint, sin red</span>
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>
