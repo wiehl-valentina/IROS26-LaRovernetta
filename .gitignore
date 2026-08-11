@@ -1,2 +1,11 @@
 genie/debug/
+<<<<<<< HEAD
 traversability/testing/dataset
+=======
+.DS_Store
+.env
+.venv
+__pycache__/
+.vscode/
+.openclaw/
+>>>>>>> 87630c7150ef138cfb8f1eabf49096ceceed7c2a
