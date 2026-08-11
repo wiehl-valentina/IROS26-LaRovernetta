@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>rover_traversability — Resumen interactivo</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root{
+  --bg:#0a0e16;
+  --panel:#121a28;
+  --panel-2:#0f1622;
+  --panel-3:#0d1420;
+  --line:#1f2b3d;
+  --line-soft:#182233;
+  --text:#dfe6f0;
+  --muted:#8391a8;
+  --muted-2:#5c6b83;
+  --drivable:#39d98a;
+  --blocked:#ff5c5c;
+  --goal:#f5a623;
+  --telemetry:#49c8e8;
+  --purple:#b98af8;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+  --sans:'Space Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+}
+*{box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{
+  margin:0;
+  background:
+    radial-gradient(1200px 500px at 15% -10%, rgba(73,200,232,0.07), transparent 60%),
+    radial-gradient(1000px 600px at 100% 0%, rgba(245,166,35,0.05), transparent 55%),
+    var(--bg);
+  color:var(--text);
+  font-family:var(--sans);
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  padding-bottom:80px;
+}
+a{color:var(--telemetry);text-decoration:none;transition:color .15s ease;}
+a:hover{color:var(--drivable);}
+.wrap{max-width:1140px;margin:0 auto;padding:0 28px;}
+
+/* ---- NAVIGATION ---- */
+nav{
+  position:sticky;
+  top:0;
+  z-index:100;
+  backdrop-filter:blur(12px);
+  background:rgba(10,14,22,0.9);
+  border-bottom:1px solid var(--line);
+  box-shadow:0 4px 20px rgba(0,0,0,0.3);
+}
+nav .wrap{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  height:64px;
+  gap:20px;
+}
+.brand{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  font-family:var(--mono);
+  font-size:13px;
+  font-weight:600;
+  color:var(--text);
+  white-space:nowrap;
+}
+.brand .dot{
+  width:8px;
+  height:8px;
+  background:var(--drivable);
+  box-shadow:0 0 10px var(--drivable);
+  transform:rotate(45deg);
+}
+.navlinks{
+  display:flex;
+  gap:6px;
+  overflow-x:auto;
+  scrollbar-width:none;
+  padding:4px 0;
+}
+.navlinks::-webkit-scrollbar{display:none;}
+.navlinks a{
+  font-family:var(--mono);
+  font-size:12px;
+  color:var(--muted);
+  text-decoration:none;
+  padding:8px 12px;
+  border-radius:6px;
+  white-space:nowrap;
+  border:1px solid transparent;
+  transition:all .2s ease;
+}
+.navlinks a:hover{
+  color:var(--text);
+  background:var(--panel);
+  border-color:var(--line);
+}
+.navlinks a.active{
+  color:var(--drivable);
+  background:rgba(57,217,138,0.08);
+  border-color:rgba(57,217,138,0.3);
+}
+
+/* ---- HERO SECTION ---- */
+header.hero{padding:60px 0 40px;}
+.eyebrow{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  font-family:var(--mono);
+  font-size:11.5px;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  color:var(--muted-2);
+  margin-bottom:16px;
+}
+.eyebrow::before{
+  content:"";
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:var(--drivable);
+  box-shadow:0 0 8px var(--drivable);
+}
+h1{
+  font-weight:600;
+  font-size:clamp(28px,4.2vw,42px);
+  letter-spacing:-0.01em;
+  margin:0 0 14px;
+  color:#f2f6fb;
+}
+h1 em{font-style:normal;color:var(--drivable);}
+.lede{font-size:16px;color:var(--muted);max-width:720px;margin:0;}
+
+/* ---- SECTIONS ---- */
+section{
+  padding:64px 0;
+  border-bottom:1px solid var(--line-soft);
+  scroll-margin-top:80px;
+}
+section:last-of-type{border-bottom:none;}
+.section-head{
+  display:flex;
+  align-items:baseline;
+  gap:12px;
+  margin-bottom:10px;
+}
+.n{
+  font-family:var(--mono);
+  font-size:13px;
+  color:var(--muted-2);
+  border:1px solid var(--line);
+  border-radius:6px;
+  padding:2px 8px;
+  background:var(--panel-2);
+}
+h2{
+  font-weight:600;
+  font-size:clamp(22px,2.8vw,28px);
+  margin:0;
+  color:#f2f6fb;
+}
+.section-sub{
+  color:var(--muted);
+  font-size:15px;
+  margin:8px 0 24px;
+  max-width:75ch;
+}
+code{
+  font-family:var(--mono);
+  background:#0d1420;
+  border:1px solid var(--line);
+  padding:2px 6px;
+  border-radius:4px;
+  font-size:12.5px;
+  color:var(--telemetry);
+}
+strong{color:var(--text);font-weight:600;}
+
+/* ---- TABS ---- */
+.tabs-wrap{margin-bottom:20px;}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;}
+.tabs button{
+  font-family:var(--mono);
+  font-size:12px;
+  color:var(--muted);
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:20px;
+  padding:8px 18px;
+  cursor:pointer;
+  transition:all .15s ease;
+}
+.tabs button:hover{
+  color:var(--text);
+  border-color:var(--muted-2);
+  background:var(--panel-2);
+}
+.tabs button.active{
+  color:var(--bg);
+  background:var(--drivable);
+  border-color:var(--drivable);
+  font-weight:600;
+  box-shadow:0 0 12px rgba(57,217,138,0.3);
+}
+.view-panel{display:none;}
+.view-panel.active{display:block;animation:fadein .25s ease;}
+@keyframes fadein{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
+
+/* ================= COMPONENT DIAGRAM ================= */
+.comp-layout{display:grid;grid-template-columns:1fr 320px;gap:24px;}
+.comp-canvas{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:16px;
+  padding:28px;
+  min-height:420px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.2);
+}
+.comp-layer{margin-bottom:24px;}
+.comp-layer:last-child{margin-bottom:0;}
+.comp-layer-label{
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:var(--muted-2);
+  margin-bottom:10px;
+  border-bottom:1px dashed var(--line);
+  padding-bottom:4px;
+}
+.comp-row{display:flex;gap:10px;flex-wrap:wrap;}
+.comp-node{
+  font-family:var(--mono);
+  font-size:12.5px;
+  color:var(--text);
+  background:var(--panel-3);
+  border:1px solid var(--line);
+  border-radius:8px;
+  padding:10px 14px;
+  cursor:pointer;
+  transition:all .15s ease;
+  min-width:130px;
+  text-align:center;
+}
+.comp-node:hover{
+  border-color:var(--muted-2);
+  transform:translateY(-2px);
+  background:var(--panel-2);
+}
+.comp-node.selected{
+  border-color:var(--drivable);
+  background:rgba(57,217,138,0.12);
+  color:var(--drivable);
+  box-shadow:0 0 0 1px var(--drivable), 0 4px 12px rgba(57,217,138,0.2);
+}
+.comp-node.entry{border-left:3px solid var(--telemetry);}
+.comp-node.orch{border-left:3px solid var(--goal);}
+.comp-node.perceive{border-left:3px solid var(--drivable);}
+.comp-node.decide{border-left:3px solid var(--purple);}
+.comp-node.net{border-left:3px solid var(--blocked);}
+.comp-node.support{border-left:3px solid var(--muted-2);}
+
+.comp-info{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:16px;
+  padding:24px;
+  font-size:13.5px;
+  color:var(--muted);
+  position:sticky;
+  top:88px;
+  align-self:start;
+  box-shadow:0 8px 24px rgba(0,0,0,0.2);
+}
+.comp-info .ci-title{
+  font-family:var(--mono);
+  font-size:15px;
+  color:var(--drivable);
+  font-weight:600;
+  margin-bottom:4px;
+}
+.comp-info .ci-file{
+  font-family:var(--mono);
+  font-size:11.5px;
+  color:var(--muted-2);
+  margin-bottom:16px;
+  padding-bottom:8px;
+  border-bottom:1px solid var(--line-soft);
+}
+.comp-info .ci-block{margin-bottom:16px;}
+.comp-info .ci-block:last-child{margin-bottom:0;}
+.comp-info .ci-block h5{
+  font-family:var(--mono);
+  font-size:11px;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+  color:var(--muted-2);
+  margin:0 0 6px;
+}
+.comp-info .ci-block p{margin:0;color:var(--text);font-size:13px;line-height:1.5;}
+.comp-info .ci-deps{display:flex;flex-wrap:wrap;gap:6px;}
+.comp-info .ci-deps span{
+  font-family:var(--mono);
+  font-size:11px;
+  background:var(--panel-3);
+  border:1px solid var(--line);
+  border-radius:5px;
+  padding:3px 8px;
+  color:var(--muted);
+}
+.comp-empty{color:var(--muted-2);font-size:13px;font-style:italic;}
+
+/* ================= SEQUENCE ================= */
+.seq-list{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:16px;
+  padding:12px 24px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.2);
+}
+.seq-step{
+  display:grid;
+  grid-template-columns:32px 160px 1fr;
+  gap:16px;
+  align-items:center;
+  padding:14px 0;
+  border-bottom:1px solid var(--line-soft);
+}
+.seq-step:last-child{border-bottom:none;}
+.seq-idx{
+  font-family:var(--mono);
+  font-size:12px;
+  color:var(--muted-2);
+  font-weight:600;
+}
+.seq-actors{font-family:var(--mono);font-size:12.5px;white-space:nowrap;}
+.seq-actors .from{color:var(--telemetry);}
+.seq-actors .arrow{color:var(--muted-2);margin:0 6px;}
+.seq-actors .to{color:var(--goal);}
+.seq-msg{font-size:14px;color:var(--muted);}
+.seq-msg strong{color:var(--text);}
+.seq-msg code{font-size:12px;}
+.seq-tag{
+  display:inline-block;
+  font-family:var(--mono);
+  font-size:10px;
+  text-transform:uppercase;
+  letter-spacing:.04em;
+  padding:2px 7px;
+  border-radius:4px;
+  margin-left:8px;
+  vertical-align:1px;
+}
+.seq-tag.loop{background:rgba(245,166,35,0.15);color:var(--goal);border:1px solid rgba(245,166,35,0.4);}
+.seq-tag.net{background:rgba(255,92,92,0.15);color:var(--blocked);border:1px solid rgba(255,92,92,0.4);}
+
+/* ================= FLOW ================= */
+.flow{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:0;
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:16px;
+  padding:36px 24px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.2);
+}
+.flow-node{
+  font-family:var(--mono);
+  font-size:13.5px;
+  text-align:center;
+  padding:13px 22px;
+  border-radius:10px;
+  min-width:300px;
+  box-shadow:0 4px 12px rgba(0,0,0,0.15);
+  transition:transform .15s ease;
+}
+.flow-node:hover{transform:translateY(-2px);}
+.flow-node .sub{display:block;font-family:var(--sans);color:var(--muted);font-size:12px;margin-top:4px;}
+.flow-node.a{background:rgba(73,200,232,0.08);border:1px solid var(--telemetry);color:var(--telemetry);}
+.flow-node.b{background:rgba(57,217,138,0.08);border:1px solid var(--drivable);color:var(--drivable);}
+.flow-node.c{background:rgba(245,166,35,0.08);border:1px solid var(--goal);color:var(--goal);}
+.flow-node.d{background:rgba(255,92,92,0.08);border:1px solid var(--blocked);color:var(--blocked);}
+.flow-node.e{background:rgba(185,138,248,0.08);border:1px solid var(--purple);color:var(--purple);}
+.flow-arrow{width:2px;height:24px;background:var(--line);position:relative;}
+.flow-arrow::after{content:'▾';position:absolute;bottom:-11px;left:50%;transform:translateX(-50%);color:var(--muted-2);font-size:12px;}
+.flow-branch{display:flex;gap:32px;align-items:flex-start;margin:8px 0;}
+.flow-branch .branch-col{display:flex;flex-direction:column;align-items:center;gap:0;}
+.flow-branch .branch-label{
+  font-family:var(--mono);
+  font-size:10.5px;
+  color:var(--muted-2);
+  margin-bottom:8px;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+}
+
+/* ================= STATE MACHINE ================= */
+.sm-layout{display:grid;grid-template-columns:1fr 320px;gap:24px;}
+.sm-canvas{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:16px;
+  padding:32px;
+  min-height:380px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.2);
+}
+.sm-graph{display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:center;}
+.sm-node{
+  font-family:var(--mono);
+  font-size:13px;
+  padding:12px 20px;
+  border-radius:24px;
+  background:var(--panel-3);
+  border:2px solid var(--line);
+  cursor:pointer;
+  transition:all .15s ease;
+  text-align:center;
+}
+.sm-node:hover{
+  border-color:var(--muted-2);
+  transform:translateY(-2px);
+  background:var(--panel-2);
+}
+.sm-node.selected{box-shadow:0 0 0 3px currentColor, 0 6px 16px rgba(0,0,0,0.3);}
+.sm-node.start{border-color:var(--telemetry);color:var(--telemetry);}
+.sm-node.ok{border-color:var(--drivable);color:var(--drivable);}
+.sm-node.warn{border-color:var(--goal);color:var(--goal);}
+.sm-node.stop{border-color:var(--blocked);color:var(--blocked);}
+.sm-node.end{border-color:var(--purple);color:var(--purple);}
+.sm-arrow-sep{color:var(--muted-2);font-family:var(--mono);font-size:16px;}
+.sm-info{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:16px;
+  padding:24px;
+  font-size:13.5px;
+  color:var(--muted);
+  position:sticky;
+  top:88px;
+  align-self:start;
+  box-shadow:0 8px 24px rgba(0,0,0,0.2);
+}
+.sm-info .si-title{
+  font-family:var(--mono);
+  font-size:15px;
+  font-weight:600;
+  margin-bottom:12px;
+  padding-bottom:8px;
+  border-bottom:1px solid var(--line-soft);
+}
+.sm-info .si-block{margin-bottom:16px;}
+.sm-info .si-block:last-child{margin-bottom:0;}
+.sm-info .si-block h5{
+  font-family:var(--mono);
+  font-size:11px;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+  color:var(--muted-2);
+  margin:0 0 6px;
+}
+.sm-info .si-block p{margin:0;color:var(--text);font-size:13px;line-height:1.5;}
+
+.callout{
+  background:rgba(73,200,232,0.06);
+  border:1px solid rgba(73,200,232,0.35);
+  border-left:3px solid var(--telemetry);
+  border-radius:10px;
+  padding:16px 20px;
+  font-size:14px;
+  color:#c7d6e4;
+  margin:20px 0;
+  box-shadow:0 4px 16px rgba(0,0,0,0.1);
+}
+.callout strong{color:var(--telemetry);}
+
+footer{
+  max-width:1140px;
+  margin:80px auto 0;
+  padding:28px;
+  border-top:1px solid var(--line);
+  font-family:var(--mono);
+  font-size:12px;
+  color:var(--muted-2);
+  text-align:center;
+}
+
+@media (max-width:900px){
+  .comp-layout,.sm-layout{grid-template-columns:1fr;}
+  .comp-info,.sm-info{position:static;}
+  .seq-step{grid-template-columns:24px 1fr;}
+  .seq-actors{grid-column:1/-1;}
+  nav .wrap{padding:0 16px;}
+  .wrap{padding:0 20px;}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="brand"><span class="dot"></span>rover_traversability · resumen interactivo</div>
+    <div class="navlinks" id="navLinks">
+      <a href="#componentes">Componentes</a>
+      <a href="#secuencia">Secuencia</a>
+      <a href="#flujo">Flujo</a>
+      <a href="#estados">Estados</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Documento 4 · resumen general, mismo proyecto que los docs 2 y 3[cite: 4]</div>
+    <h1>Los cuatro mapas del <em>rover_traversability</em></h1>
+    <p class="lede">Un mismo sistema, visto de cuatro maneras. Elegí el diagrama en cada sección — módulo, comando o estado — y hacé clic sobre los nodos para ver el detalle.</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+<!-- ============ 1. COMPONENT / ARCHITECTURE ============ -->
+<section id="componentes">
+  <div class="section-head"><span class="n">01</span><h2>Diagrama de arquitectura / componentes</h2></div>
+  <p class="section-sub">Los mismos 11 módulos, agrupados por capa. Hacé clic en cualquier módulo para ver su responsabilidad, sus exports y de qué depende.</p>
+
+  <div class="comp-layout">
+    <div class="comp-canvas">
+      <div class="comp-layer">
+        <div class="comp-layer-label">CLI</div>
+        <div class="comp-row">
+          <div class="comp-node entry" data-id="demo">demo.py</div>
+        </div>
+      </div>
+      <div class="comp-layer">
+        <div class="comp-layer-label">Orquestadores</div>
+        <div class="comp-row">
+          <div class="comp-node orch" data-id="strategy">strategy.py</div>
+          <div class="comp-node orch" data-id="mission">mission.py</div>
+        </div>
+      </div>
+      <div class="comp-layer">
+        <div class="comp-layer-label">Percepción</div>
+        <div class="comp-row">
+          <div class="comp-node perceive" data-id="predictor">predictor.py</div>
+          <div class="comp-node perceive" data-id="images">images.py</div>
+        </div>
+      </div>
+      <div class="comp-layer">
+        <div class="comp-layer-label">Decisión</div>
+        <div class="comp-row">
+          <div class="comp-node decide" data-id="policy">policy.py</div>
+        </div>
+      </div>
+      <div class="comp-layer">
+        <div class="comp-layer-label">Red / geo</div>
+        <div class="comp-row">
+          <div class="comp-node net" data-id="client">client.py</div>
+          <div class="comp-node net" data-id="geo">geo.py</div>
+        </div>
+      </div>
+      <div class="comp-layer">
+        <div class="comp-layer-label">Soporte / config</div>
+        <div class="comp-row">
+          <div class="comp-node support" data-id="calibration">calibration.py</div>
+          <div class="comp-node support" data-id="weights">weights.py</div>
+          <div class="comp-node support" data-id="init">__init__.py</div>
+        </div>
+      </div>
+    </div>
+    <div class="comp-info" id="compInfo">
+      <p class="comp-empty">← Hacé clic en un módulo para ver el detalle acá.</p>
+    </div>
+  </div>
+
+  <div class="callout"><strong>Nota de diseño:</strong> las flechas de dependencia van siempre hacia abajo o hacia el costado dentro de la misma capa — nada en "Decisión" o "Percepción" importa nada de "Orquestadores" ni de <code>demo.py</code>. Por eso <code>policy.py</code> y <code>client.py</code> se pueden probar y reusar totalmente sueltos del resto.</div>
+</section>
+
+<!-- ============ 2. SEQUENCE ============ -->
+<section id="secuencia">
+  <div class="section-head"><span class="n">02</span><h2>Diagrama de secuencia — quién llama a quién</h2></div>
+  <p class="section-sub">Elegí un comando. Cada fila es una llamada, en orden real de ejecución.</p>
+
+  <div class="tabs-wrap">
+    <div class="tabs" data-group="seq">
+      <button data-view="predict" class="active">predict</button>
+      <button data-view="live">live</button>
+      <button data-view="drive">drive</button>
+      <button data-view="mission">mission</button>
+    </div>
+  </div>
+
+  <div class="view-panel active" data-view="predict">
+    <div class="seq-list">
+      <div class="seq-step"><div class="seq-idx">1</div><div class="seq-actors"><span class="from">CLI</span><span class="arrow">→</span><span class="to">main()</span></div><div class="seq-msg">python -m rover_traversability.demo predict imagen.jpg</div></div>
+      <div class="seq-step"><div class="seq-idx">2</div><div class="seq-actors"><span class="from">main()</span><span class="arrow">→</span><span class="to">cmd_predict()</span></div><div class="seq-msg">args.fn(args), args ya parseados</div></div>
+      <div class="seq-step"><div class="seq-idx">3</div><div class="seq-actors"><span class="from">cmd_predict</span><span class="arrow">→</span><span class="to">_build_predictor()</span></div><div class="seq-msg">crea <code>TraversabilityPredictor</code> + <code>.warmup()</code></div></div>
+      <div class="seq-step"><div class="seq-idx">4</div><div class="seq-actors"><span class="from">cmd_predict</span><span class="arrow">→</span><span class="to">predictor.predict()</span></div><div class="seq-msg">imagen del disco → <code>TraversabilityResult</code> (mask, overlay, inference_s)</div></div>
+      <div class="seq-step"><div class="seq-idx">5</div><div class="seq-actors"><span class="from">cmd_predict</span><span class="arrow">→</span><span class="to">policy.suggest_command()</span></div><div class="seq-msg">solo para <strong>mostrar</strong> qué comando sugeriría — nunca se envía</div></div>
+      <div class="seq-step"><div class="seq-idx">6</div><div class="seq-actors"><span class="from">cmd_predict</span><span class="arrow">→</span><span class="to">Image.save()</span></div><div class="seq-msg">overlay escrito en <code>--out</code></div></div>
+    </div>
+  </div>
+
+  <div class="view-panel" data-view="live">
+    <div class="seq-list">
+      <div class="seq-step"><div class="seq-idx">1</div><div class="seq-actors"><span class="from">main()</span><span class="arrow">→</span><span class="to">cmd_live()</span></div><div class="seq-msg">crea <code>RoverClient</code>, predictor, <code>TraversabilityStrategy(drive=False)</code></div></div>
+      <div class="seq-step"><div class="seq-idx">2</div><div class="seq-actors"><span class="from">cmd_live</span><span class="arrow">→</span><span class="to">strategy.get_image_payload()</span> <span class="seq-tag loop">en loop</span></div><div class="seq-msg">→ <code>client.get_front_frame_b64()</code> → <span class="seq-tag net">HTTP</span> GET /v2/screenshot</div></div>
+      <div class="seq-step"><div class="seq-idx">3</div><div class="seq-actors"><span class="from">cmd_live</span><span class="arrow">→</span><span class="to">strategy.analyze()</span> <span class="seq-tag loop">en loop</span></div><div class="seq-msg">decodifica, predice, decide, <strong>imprime</strong> <code>[dry-run] ...</code> — corta ahí</div></div>
+      <div class="seq-step"><div class="seq-idx">4</div><div class="seq-actors"><span class="from">strategy</span><span class="arrow">→</span><span class="to">RoverClient</span></div><div class="seq-msg">nunca se llama a <code>send_command()</code> ni <code>stop()</code> — <code>drive=False</code></div></div>
+      <div class="seq-step"><div class="seq-idx">5</div><div class="seq-actors"><span class="from">cmd_live</span><span class="arrow">→</span><span class="to">time.sleep(interval)</span></div><div class="seq-msg">repite hasta <code>max_frames</code> o Ctrl-C</div></div>
+    </div>
+  </div>
+
+  <div class="view-panel" data-view="drive">
+    <div class="seq-list">
+      <div class="seq-step"><div class="seq-idx">1</div><div class="seq-actors"><span class="from">main()</span><span class="arrow">→</span><span class="to">cmd_drive()</span></div><div class="seq-msg"><code>_require_move_flag()</code> primero — sin flag, corta acá</div></div>
+      <div class="seq-step"><div class="seq-idx">2</div><div class="seq-actors"><span class="from">cmd_drive</span><span class="arrow">→</span><span class="to">RoverClient(), predictor, Strategy(drive=True)</span></div><div class="seq-msg">arma la escena una sola vez</div></div>
+      <div class="seq-step"><div class="seq-idx">3</div><div class="seq-actors"><span class="from">cmd_drive</span><span class="arrow">→</span><span class="to">strategy.get_image_payload()</span> <span class="seq-tag loop">en loop</span></div><div class="seq-msg">→ <code>client.get_front_frame_b64()</code> → <span class="seq-tag net">HTTP</span> GET /v2/screenshot</div></div>
+      <div class="seq-step"><div class="seq-idx">4</div><div class="seq-actors"><span class="from">strategy</span><span class="arrow">→</span><span class="to">images.to_rgb()</span></div><div class="seq-msg">decodifica base64/bytes/path → array HxWx3</div></div>
+      <div class="seq-step"><div class="seq-idx">5</div><div class="seq-actors"><span class="from">strategy</span><span class="arrow">→</span><span class="to">predictor.predict()</span></div><div class="seq-msg">SAM-TP → sigmoid → máscara (+ refinado por contraste)</div></div>
+      <div class="seq-step"><div class="seq-idx">6</div><div class="seq-actors"><span class="from">strategy</span><span class="arrow">→</span><span class="to">policy.suggest_command(mask)</span></div><div class="seq-msg">sin <code>goal_offset_deg</code> — pura evasión reactiva</div></div>
+      <div class="seq-step"><div class="seq-idx">7</div><div class="seq-actors"><span class="from">strategy</span><span class="arrow">→</span><span class="to">client.send_command() / client.stop()</span></div><div class="seq-msg"><span class="seq-tag net">HTTP</span> POST /control — según <code>decision.stop</code></div></div>
+      <div class="seq-step"><div class="seq-idx">8</div><div class="seq-actors"><span class="from">cmd_drive</span><span class="arrow">→</span><span class="to">finally: client.stop()</span></div><div class="seq-msg">Ctrl-C, max_iterations, o excepción — siempre corre</div></div>
+    </div>
+  </div>
+
+  <div class="view-panel" data-view="mission">
+    <div class="seq-list">
+      <div class="seq-step"><div class="seq-idx">1</div><div class="seq-actors"><span class="from">main()</span><span class="arrow">→</span><span class="to">cmd_mission()</span></div><div class="seq-msg"><code>_require_move_flag()</code> primero, luego <code>MissionRunner(...)</code></div></div>
+      <div class="seq-step"><div class="seq-idx">2</div><div class="seq-actors"><span class="from">cmd_mission</span><span class="arrow">→</span><span class="to">runner.run()</span></div><div class="seq-msg">delega TODO el loop — cmd_mission no vuelve a intervenir hasta el resultado</div></div>
+      <div class="seq-step"><div class="seq-idx">3</div><div class="seq-actors"><span class="from">runner</span><span class="arrow">→</span><span class="to">client.get_checkpoints_list()</span></div><div class="seq-msg"><span class="seq-tag net">HTTP</span> GET /checkpoints-list → próximo checkpoint pendiente</div></div>
+      <div class="seq-step"><div class="seq-idx">4</div><div class="seq-actors"><span class="from">runner</span><span class="arrow">→</span><span class="to">client.get_data()</span> <span class="seq-tag loop">en loop</span></div><div class="seq-msg"><span class="seq-tag net">HTTP</span> GET /data → lat/lon/speed/orientation</div></div>
+      <div class="seq-step"><div class="seq-idx">5</div><div class="seq-actors"><span class="from">runner</span><span class="arrow">→</span><span class="to">HeadingEstimator.update()</span></div><div class="seq-msg">heading por GPS course-over-ground, no por magnetómetro</div></div>
+      <div class="seq-step"><div class="seq-idx">6</div><div class="seq-actors"><span class="from">runner</span><span class="arrow">→</span><span class="to">gps_bearing_and_distance()</span></div><div class="seq-msg">rumbo + distancia al checkpoint objetivo</div></div>
+      <div class="seq-step"><div class="seq-idx">7</div><div class="seq-actors"><span class="from">runner</span><span class="arrow">→</span><span class="to">_decide(goal_offset_deg)</span></div><div class="seq-msg">arco ciego si el offset > 70°, si no: <code>predictor.predict()</code> + <code>suggest_command(goal_offset_deg=...)</code></div></div>
+      <div class="seq-step"><div class="seq-idx">8</div><div class="seq-actors"><span class="from">runner</span><span class="arrow">→</span><span class="to">client.send_command() / client.stop()</span></div><div class="seq-msg"><span class="seq-tag net">HTTP</span> POST /control</div></div>
+      <div class="seq-step"><div class="seq-idx">9</div><div class="seq-actors"><span class="from">runner</span><span class="arrow">→</span><span class="to">client.checkpoint_reached()</span></div><div class="seq-msg">solo si distancia ≤ <code>arrive_attempt_m</code> — <span class="seq-tag net">HTTP</span> POST /checkpoint-reached</div></div>
+      <div class="seq-step"><div class="seq-idx">10</div><div class="seq-actors"><span class="from">runner</span><span class="arrow">→</span><span class="to">finally: client.stop()</span></div><div class="seq-msg">al terminar <code>run()</code> por cualquier motivo</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 3. FLOW ============ -->
+<section id="flujo">
+  <div class="section-head"><span class="n">03</span><h2>Diagrama de flujo — de la imagen al comando</h2></div>
+  <p class="section-sub">Los datos siempre cruzan las mismas cinco etapas. Lo que cambia entre modos es si hay un sesgo de meta y si el comando final se envía o solo se imprime.</p>
+
+  <div class="tabs-wrap">
+    <div class="tabs" data-group="flow">
+      <button data-view="reactive" class="active">Reactivo (drive / live)</button>
+      <button data-view="goal">Dirigido a meta (mission)</button>
+    </div>
+  </div>
+
+  <div class="view-panel active" data-view="reactive">
+    <div class="flow">
+      <div class="flow-node a">Frame del SDK<span class="sub">client.get_front_frame_b64() → GET /v2/screenshot</span></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node a">Decodificar<span class="sub">images.to_rgb() → HxWx3 uint8</span></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node b">Inferencia SAM-TP<span class="sub">predictor.predict() → máscara [0,1] + refinado por contraste</span></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node c">Corredores + regla de frenado<span class="sub">policy.suggest_command(mask) — sin goal_offset_deg</span></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node d">¿drive=True?<span class="sub">live: imprime "[dry-run] ..." y corta · drive: sigue</span></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node d">POST /control ó stop()<span class="sub">client.send_command(linear, angular)</span></div>
+    </div>
+  </div>
+
+  <div class="view-panel" data-view="goal">
+    <div class="flow">
+      <div class="flow-node a">Telemetría + frame<span class="sub">client.get_data() (GPS) y client.get_front_frame()</span></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node a">Heading por GPS-COG<span class="sub">HeadingEstimator.update() — magnetómetro solo como respaldo inicial</span></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node e">goal_offset_deg<span class="sub">gps_bearing_and_distance() + wrap_angle_deg()</span></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-branch">
+        <div class="branch-col">
+          <div class="branch-label">offset &gt; 70°</div>
+          <div class="flow-node c" style="min-width:220px;">Arco ciego hacia la meta<span class="sub">sin mirar la cámara</span></div>
+        </div>
+        <div class="branch-col">
+          <div class="branch-label">offset ≤ 70°</div>
+          <div class="flow-node b" style="min-width:220px;">SAM-TP + corredores<span class="sub">suggest_command(mask, goal_offset_deg=...)</span></div>
+        </div>
+      </div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node d">POST /control<span class="sub">client.send_command() o client.stop()</span></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node d">¿distancia ≤ arrive_attempt_m?<span class="sub">POST /checkpoint-reached — 400 del backend = "seguir manejando"</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 4. STATE MACHINE ============ -->
+<section id="estados">
+  <div class="section-head"><span class="n">04</span><h2>Máquina de estados</h2></div>
+  <p class="section-sub">Dos máquinas distintas viven en el proyecto: los <em>motivos de decisión</em> que produce cada frame, y el <em>ciclo de vida</em> completo de una misión. Hacé clic en un estado para ver su detalle.</p>
+
+  <div class="tabs-wrap">
+    <div class="tabs" data-group="sm">
+      <button data-view="reason" class="active">Motivo de decisión (CommandDecision.reason)</button>
+      <button data-view="mission-life">Ciclo de vida de la misión</button>
+    </div>
+  </div>
+
+  <div class="view-panel active" data-view="reason">
+    <div class="sm-layout">
+      <div class="sm-canvas">
+        <div class="sm-graph">
+          <div class="sm-node start" data-sm="reason" data-id="frame">frame nuevo</div>
+          <span class="sm-arrow-sep">→</span>
+          <div class="sm-node stop" data-sm="reason" data-id="no_data">no_data</div>
+          <span class="sm-arrow-sep">/</span>
+          <div class="sm-node stop" data-sm="reason" data-id="predict_error">predict_error</div>
+          <span class="sm-arrow-sep">/</span>
+          <div class="sm-node stop" data-sm="reason" data-id="blocked">blocked</div>
+          <span class="sm-arrow-sep">/</span>
+          <div class="sm-node warn" data-sm="reason" data-id="turning_to_corridor">turning_to_corridor</div>
+          <span class="sm-arrow-sep">/</span>
+          <div class="sm-node ok" data-sm="reason" data-id="forward">forward</div>
+        </div>
+      </div>
+      <div class="sm-info" id="smInfoReason">
+        <p class="comp-empty">← Hacé clic en un estado.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="view-panel" data-view="mission-life">
+    <div class="sm-layout">
+      <div class="sm-canvas">
+        <div class="sm-graph">
+          <div class="sm-node start" data-sm="mission" data-id="searching">buscando checkpoint</div>
+          <span class="sm-arrow-sep">→</span>
+          <div class="sm-node ok" data-sm="mission" data-id="navigating">navegando</div>
+          <span class="sm-arrow-sep">→</span>
+          <div class="sm-node warn" data-sm="mission" data-id="arriving">intentando llegada</div>
+          <span class="sm-arrow-sep">→</span>
+          <div class="sm-node ok" data-sm="mission" data-id="reached">checkpoint alcanzado</div>
+          <span class="sm-arrow-sep">→</span>
+          <div class="sm-node end" data-sm="mission" data-id="completed">misión completa</div>
+        </div>
+        <div class="sm-graph" style="margin-top:20px;">
+          <div class="sm-node stop" data-sm="mission" data-id="maxsteps">max_steps alcanzado</div>
+          <div class="sm-node stop" data-sm="mission" data-id="interrupted">interrumpida (Ctrl-C)</div>
+          <div class="sm-node stop" data-sm="mission" data-id="none-pending">sin checkpoints pendientes</div>
+        </div>
+      </div>
+      <div class="sm-info" id="smInfoMission">
+        <p class="comp-empty">← Hacé clic en un estado.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  Fuentes: demo.py · strategy.py · mission.py · policy.py · predictor.py · client.py · images.py · geo.py · calibration.py · weights.py · __init__.py.<br>
+  Complementa a <code>2_Explicacion_de_Policy_y_manejo_de_obstaculos.html</code> y <code>3_Explicacion_completa_de_demo_py.html</code>.
+</footer>
+
+<script>
+// ---- generic tab switcher ----
+document.querySelectorAll('.tabs').forEach(function(tabGroup){
+  tabGroup.addEventListener('click', function(e){
+    var btn = e.target.closest('button[data-view]');
+    if(!btn) return;
+    var wrap = tabGroup.closest('section');
+    tabGroup.querySelectorAll('button').forEach(function(b){ b.classList.remove('active'); });
+    btn.classList.add('active');
+    var view = btn.dataset.view;
+    wrap.querySelectorAll(':scope > .view-panel').forEach(function(p){
+      p.classList.toggle('active', p.dataset.view === view);
+    });
+  });
+});
+
+// ---- navbar scroll spy (active link highlighting) ----
+const sections = document.querySelectorAll('section[id]');
+const navLinks = document.querySelectorAll('.navlinks a');
+
+window.addEventListener('scroll', () => {
+  let scrollY = window.pageYOffset;
+  sections.forEach(current => {
+    const sectionHeight = current.offsetHeight;
+    const sectionTop = current.offsetTop - 100;
+    const sectionId = current.getAttribute('id');
+    if(scrollY > sectionTop && scrollY <= sectionTop + sectionHeight){
+      navLinks.forEach(link => {
+        link.classList.remove('active');
+        if(link.getAttribute('href') === '#' + sectionId){
+          link.classList.add('active');
+        }
+      });
+    }
+  });
+});
+
+// ---- component diagram info ----
+var componentInfo = {
+  demo: {
+    title: 'demo.py', file: 'CLI · punto de entrada',
+    resp: 'Parsea argparse, mapea cada subcomando (predict/live/drive/mission) a su función, y coordina el guard de seguridad (MOVE_FLAG) antes de crear cualquier objeto.',
+    exports: 'main(), cmd_predict(), cmd_live(), cmd_drive(), cmd_mission()',
+    deps: ['predictor.py (lazy)', 'client.py', 'strategy.py', 'policy.py', 'mission.py']
+  },
+  strategy: {
+    title: 'strategy.py', file: 'Orquestador reactivo',
+    resp: 'TraversabilityStrategy: duck-types la interfaz RoverStrategy del equipo. get_image_payload() + analyze() en dos métodos; drive=False imprime sin enviar, drive=True envía de verdad.',
+    exports: 'TraversabilityStrategy',
+    deps: ['client.py', 'policy.py', 'predictor.py (lazy)']
+  },
+  mission: {
+    title: 'mission.py', file: 'Orquestador con GPS',
+    resp: 'MissionRunner: mismo patrón que Strategy, pero agrega heading GPS, bearing al checkpoint, arco ciego cuando la meta está muy lateral, e intento de llegada.',
+    exports: 'MissionRunner, MissionResult, Checkpoint',
+    deps: ['client.py', 'geo.py', 'policy.py', 'predictor.py (lazy)']
+  },
+  predictor: {
+    title: 'predictor.py', file: 'Modelo',
+    resp: 'TraversabilityPredictor envuelve SAM 2.1 Hiera-tiny con un prompt encoder aprendido. predict() decodifica, corre el modelo, aplica sigmoid y el refinado opcional por contraste.',
+    exports: 'TraversabilityPredictor, TraversabilityResult, pick_device()',
+    deps: ['images.py', 'weights.py', 'torch/sam2 (externo, import perezoso)']
+  },
+  images: {
+    title: 'images.py', file: 'Decodificación',
+    resp: 'to_rgb(): acepta base64 crudo, data: URI, path, bytes o array numpy, y siempre devuelve HxWx3 uint8. Detecta el formato real por magic bytes en vez de confiar en la extensión.',
+    exports: 'to_rgb(), sniff_format(), PayloadError, ImageDecodeError',
+    deps: ['ninguna interna — solo PIL/numpy']
+  },
+  policy: {
+    title: 'policy.py', file: 'Decisión pura',
+    resp: 'suggest_command(): máscara → corredores → CommandDecision. Sin estado, sin red, determinística. Detalle completo en el documento 2.',
+    exports: 'suggest_command(), PolicyConfig, CommandDecision',
+    deps: ['ninguna interna — solo numpy']
+  },
+  client: {
+    title: 'client.py', file: 'Red',
+    resp: 'RoverClient: único punto que habla HTTP con el SDK del rover. Frames, telemetría, control, checkpoints. send_command() nunca lanza excepción (watchdog del SDK).',
+    exports: 'RoverClient, CommandResult',
+    deps: ['images.py', 'requests (externo)']
+  },
+  geo: {
+    title: 'geo.py', file: 'Geometría GPS',
+    resp: 'Bearing/distancia entre coordenadas, y HeadingEstimator: heading confiable por course-over-ground, porque el magnetómetro del Mini+ no lo es en campo.',
+    exports: 'gps_bearing_and_distance(), wrap_angle_deg(), HeadingEstimator',
+    deps: ['ninguna interna — solo math']
+  },
+  calibration: {
+    title: 'calibration.py', file: 'Config de cámara',
+    resp: 'Intrínsecos K, distorsión y pose de la cámara del Mini+ real. NO se usa hoy en la política de imagen — está para el paso 3 del roadmap (proyección BEV).',
+    exports: 'load_camera_K(), load_camera_dist(), load_T_base_camera()',
+    deps: ['datos empaquetados (.npy)']
+  },
+  weights: {
+    title: 'weights.py', file: 'Resolución de checkpoint',
+    resp: 'Encuentra el .pt del modelo: argumento explícito → env var → caché local → descarga desde Hugging Face. Un path explícito inválido siempre es error, nunca fallback silencioso.',
+    exports: 'resolve_checkpoint(), resolve_config()',
+    deps: ['huggingface_hub (opcional, externo)']
+  },
+  init: {
+    title: '__init__.py', file: 'Superficie del paquete',
+    resp: 'Expone todo salvo el predictor de forma perezosa (PEP 562 __getattr__), así "import rover_traversability" nunca arrastra torch en una máquina sin GPU.',
+    exports: 'todo lo público del paquete',
+    deps: ['calibration.py', 'client.py', 'geo.py', 'images.py', 'mission.py', 'policy.py', 'strategy.py', 'weights.py']
+  }
+};
+
+document.querySelectorAll('.comp-node').forEach(function(node){
+  node.addEventListener('click', function(){
+    document.querySelectorAll('.comp-node').forEach(function(n){ n.classList.remove('selected'); });
+    node.classList.add('selected');
+    var d = componentInfo[node.dataset.id];
+    var panel = document.getElementById('compInfo');
+    panel.innerHTML =
+      '<div class="ci-title">' + d.title + '</div>' +
+      '<div class="ci-file">' + d.file + '</div>' +
+      '<div class="ci-block"><h5>Responsabilidad</h5><p>' + d.resp + '</p></div>' +
+      '<div class="ci-block"><h5>Expone</h5><p>' + d.exports + '</p></div>' +
+      '<div class="ci-block"><h5>Depende de</h5><div class="ci-deps">' +
+        d.deps.map(function(x){ return '<span>' + x + '</span>'; }).join('') +
+      '</div></div>';
+  });
+});
+
+// ---- state machine info ----
+var reasonInfo = {
+  no_data: {
+    title: 'no_data', color: 'var(--blocked)',
+    when: 'La máscara no tiene forma 2D, está vacía, o el ROI (por debajo de roi_top) tiene menos de min_valid_pixels finitos.',
+    result: 'stop=True, linear=0, angular=0. El rover se frena — no hay suficiente señal para decidir nada.'
+  },
+  predict_error: {
+    title: 'predict_error', color: 'var(--blocked)',
+    when: 'predictor.predict() lanza una excepción dentro de strategy.analyze() o de MissionRunner._decide().',
+    result: 'stop=True. La falla del modelo nunca se traduce en "seguir con el último comando" — se frena activamente.'
+  },
+  blocked: {
+    title: 'blocked', color: 'var(--blocked)',
+    when: 'El corredor central está mayormente bloqueado Y ningún corredor lateral supera min_corridor_score.',
+    result: 'stop=True. No hay ningún camino razonable — frenar es la única opción segura.'
+  },
+  turning_to_corridor: {
+    title: 'turning_to_corridor', color: 'var(--goal)',
+    when: 'El centro está bloqueado, pero un corredor lateral sí es viable.',
+    result: 'linear=0, angular=±max_angular. Gira en el lugar hacia ese corredor antes de avanzar.'
+  },
+  forward: {
+    title: 'forward', color: 'var(--drivable)',
+    when: 'El centro está abierto (por debajo de stop_center_fraction bloqueado).',
+    result: 'linear y angular calculados según el score del corredor elegido y el offset del centroide — avanza.'
+  },
+  frame: {
+    title: 'frame nuevo', color: 'var(--telemetry)',
+    when: 'Cada vuelta del loop (drive/live) o cada paso de MissionRunner obtiene un frame nuevo.',
+    result: 'Se decodifica y se pasa al predictor — el punto de partida de todos los estados de decisión.'
+  }
+};
+document.querySelectorAll('.sm-node[data-sm="reason"]').forEach(function(node){
+  node.addEventListener('click', function(){
+    document.querySelectorAll('.sm-node[data-sm="reason"]').forEach(function(n){ n.classList.remove('selected'); });
+    node.classList.add('selected');
+    var d = reasonInfo[node.dataset.id];
+    var panel = document.getElementById('smInfoReason');
+    panel.innerHTML =
+      '<div class="si-title" style="color:' + d.color + '">' + d.title + '</div>' +
+      '<div class="si-block"><h5>Cuándo ocurre</h5><p>' + d.when + '</p></div>' +
+      '<div class="si-block"><h5>Resultado</h5><p>' + d.result + '</p></div>';
+  });
+});
+
+var missionInfo = {
+  searching: {
+    title: 'buscando checkpoint', color: 'var(--telemetry)',
+    when: '_next_checkpoint() llama a GET /checkpoints-list y busca el primero con sequence > latest_scanned_checkpoint.',
+    result: 'Si no hay ninguno pendiente, la misión termina de entrada (completed = done_count > 0).'
+  },
+  navigating: {
+    title: 'navegando', color: 'var(--drivable)',
+    when: 'Hay un checkpoint objetivo. Cada paso: telemetría → heading → bearing → _decide() → send_command().',
+    result: 'Se mantiene en este estado hasta estar dentro de arrive_attempt_m del checkpoint, o hasta max_steps.'
+  },
+  arriving: {
+    title: 'intentando llegada', color: 'var(--goal)',
+    when: 'distance_m ≤ arrive_attempt_m. Se llama a POST /checkpoint-reached en cada paso mientras dure esta condición.',
+    result: 'El backend valida el radio real; un 400 (rechazado) simplemente vuelve a "navegando" — no es un error.'
+  },
+  reached: {
+    title: 'checkpoint alcanzado', color: 'var(--drivable)',
+    when: 'POST /checkpoint-reached es aceptado (res.accepted).',
+    result: 'reached += 1. Si el body no marca mission_completed, se busca el siguiente checkpoint y se vuelve a "navegando".'
+  },
+  completed: {
+    title: 'misión completa', color: 'var(--purple)',
+    when: 'El body de /checkpoint-reached trae mission_completed=True, o ya no queda ningún checkpoint pendiente tras alcanzar uno.',
+    result: 'MissionResult(completed=True, ...). El finally de run() igual llama a client.stop().'
+  },
+  maxsteps: {
+    title: 'max_steps alcanzado', color: 'var(--blocked)',
+    when: 'steps >= max_steps, chequeado al inicio de cada vuelta del while interno.',
+    result: 'MissionResult(completed=False, reason="max_steps reached"). Corte determinístico, útil para pruebas acotadas.'
+  },
+  interrupted: {
+    title: 'interrumpida (Ctrl-C)', color: 'var(--blocked)',
+    when: 'KeyboardInterrupt durante runner.run(), capturado en cmd_mission() (no dentro de MissionRunner).',
+    result: 'client.stop() explícito en cmd_mission, más el finally interno de run() — doble garantía de frenado.'
+  },
+  'none-pending': {
+    title: 'sin checkpoints pendientes', color: 'var(--blocked)',
+    when: '_next_checkpoint() no encuentra ningún checkpoint con sequence > done, ya al arrancar la misión.',
+    result: 'MissionResult inmediato, steps=0. completed=True solo si done_count > 0 (ya se habían completado antes).'
+  }
+};
+document.querySelectorAll('.sm-node[data-sm="mission"]').forEach(function(node){
+  node.addEventListener('click', function(){
+    document.querySelectorAll('.sm-node[data-sm="mission"]').forEach(function(n){ n.classList.remove('selected'); });
+    node.classList.add('selected');
+    var d = missionInfo[node.dataset.id];
+    var panel = document.getElementById('smInfoMission');
+    panel.innerHTML =
+      '<div class="si-title" style="color:' + d.color + '">' + d.title + '</div>' +
+      '<div class="si-block"><h5>Cuándo ocurre</h5><p>' + d.when + '</p></div>' +
+      '<div class="si-block"><h5>Qué produce</h5><p>' + d.result + '</p></div>';
+  });
+});
+</script>
+
+</body>
+</html>
