@@ -149,6 +149,107 @@ Abrir **dos terminales separadas**:
 
 ---
 
+
+## 3.B Orquestador Alternativo: `rover_traversability`
+
+Además del puente `genie_rover.bridge`, el repo trae un **segundo
+orquestador** más liviano: el paquete `rover_traversability` (carpeta
+`traversability/`). Reutiliza el mismo `sam2` vendorizado en `genie/`, pero
+en vez de proyectar a BEV y correr el planner completo, decide con una
+política de corredores en espacio-imagen — más simple de instalar y de leer.
+Se instala **dentro del mismo entorno `genie`**, no necesita un tercer venv:
+
+```bash
+# parado en el entorno genie (.venv de genie ya activado)
+pip install torch torchvision
+pip install --no-build-isolation -e ./genie
+pip install -e './traversability[hf]'      # [hf] = descarga automática de pesos desde Hugging Face
+```
+
+Ver la sección **3.D** para cómo correrlo y **[docs de `rover_traversability`](traversability/README.md)**
+para el detalle completo de parámetros.
+## 3.B  Comandos de Ejecución y Flujo de Trabajo `rover_traversability`
+
+`genie_rover.bridge` (sección C) proyecta la máscara a BEV y corre el
+planner completo del paper. `rover_traversability` es la alternativa
+**más simple**: decide directamente sobre la máscara de SAM-TP en espacio de
+imagen, dividiéndola en 9 corredores verticales y manejando hacia el más
+transitable (con sesgo opcional hacia el rumbo GPS del checkpoint). Sin
+calibración de cámara, sin BEV — pensado para levantar algo andando rápido y
+después migrar a `genie_rover.bridge` si hace falta el planner completo.
+
+Se prueba en 4 niveles, de menos a más riesgo:
+
+```bash
+# 1. Una imagen suelta, sin rover — genera overlay.png verde/rojo
+python -m rover_traversability.demo predict screenshots/imagen.jpg --out overlay.png
+
+# 2. Rover prendido pero SIN enviar comandos — solo guarda overlays en trav_out/
+python -m rover_traversability.demo live --save-dir trav_out
+
+# 3. Maneja esquivando obstáculos (sin objetivo GPS) — MUEVE EL ROVER
+python -m rover_traversability.demo drive --yes-i-want-the-rover-to-move
+
+# 4. Misión completa: checkpoint por checkpoint usando GPS + percepción — MUEVE EL ROVER
+python -m rover_traversability.demo mission --start-mission --yes-i-want-the-rover-to-move
+```
+
+`drive` y `mission` se niegan a arrancar sin `--yes-i-want-the-rover-to-move`
+(igual filosofía dry-run-por-defecto que el modo simulacro de `bridge`).
+
+También se puede usar sin la CLI, cambiando **una línea** en tu propio loop
+de control (en vez de tocar `genie_rover.bridge`):
+
+```python
+from rover_traversability import TraversabilityStrategy
+
+strategy = TraversabilityStrategy(drive=True)   # antes: Base64ImageStrategy()
+loop = RoverLoop(strategy=strategy, sleep_seconds=0.5, max_iterations=None)
+```
+
+Todos los umbrales de manejo (velocidad, sensibilidad de giro, cuándo
+frenar) viven en un solo lugar, `PolicyConfig`, y se pueden tunear sin tocar
+el resto del código:
+
+```python
+from rover_traversability import PolicyConfig, TraversabilityStrategy
+
+cfg = PolicyConfig(
+    max_linear=0.35,            # más lento mientras se prueba
+    stop_center_fraction=0.5,   # frena menos seguido (default 0.4)
+    k_angular=0.8,              # dobla más suave (default 1.2)
+)
+strategy = TraversabilityStrategy(policy=cfg, drive=True)
+```
+
+**Resolución de pesos** (`checkpoint_finetuned_v2.pt`, ~130 MB, no está en
+git): argumento explícito → variable de entorno `SAMTP_CHECKPOINT` → caché
+local `~/.cache/rover_traversability/` → descarga automática desde Hugging
+Face (`sanatem/samtp-mini-traversability`, público, sin token — requiere el
+extra `[hf]`).
+
+**Tests** (sin torch, sin checkpoint, sin red):
+
+```bash
+pip install -e './traversability[dev]'
+pytest traversability/tests
+```
+
+#### ¿`genie_rover.bridge` o `rover_traversability`?
+
+| | `genie_rover.bridge` | `rover_traversability` |
+|---|---|---|
+| Decide sobre | BEV (planta, tras proyección de cámara) | máscara en espacio-imagen, sin proyectar |
+| Requiere calibración de cámara | Sí (`tools/calibrate_camera.py`) | No |
+| Planner | `genie_path_planner` completo (bancos de rutas polinomiales) | política de corredores (9 bandas, elección por score) |
+| Instalación | entorno `genie` completo | entorno `genie` + `pip install -e './traversability[hf]'` |
+| Buen punto de partida para | reproducir el sistema del paper tal cual | levantar navegación reactiva rápido, iterar y tunear en el propio field |
+
+Referencia completa de parámetros y comandos:
+**[traversability/README.md]()** ·
+[Guía en español](Documentos\Modulos\Traversability\Traversability_Comandos.md)
+
+---
 ## 4. Documentación Completa de Endpoints de la API
 
 La API permite controlar el robot, recibir telemetría en tiempo real, procesar transmisiones de video, gestionar misiones e intervenciones.
