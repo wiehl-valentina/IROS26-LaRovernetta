@@ -1,1 +1,7 @@
 genie/debug/
+.DS_Store
+.env
+.venv
+__pycache__/
+.vscode/
+.openclaw/
