@@ -1,0 +1,4 @@
+frame,expected_reason,expected_side
+frame_00007_1723399201,forward,straight
+frame_00008_1723399231,blocked,
+frame_00009_1723399261,turning_to_corridor,left

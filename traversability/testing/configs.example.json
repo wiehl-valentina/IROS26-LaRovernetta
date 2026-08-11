@@ -1,0 +1,4 @@
+[
+  {"name": "config_001", "params": {}},
+  {"name": "config_002", "params": {"roi_top": 0.60, "k_angular": 0.9, "max_linear": 0.4}}
+]
