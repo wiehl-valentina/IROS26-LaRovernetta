@@ -13,6 +13,7 @@ import argparse
 import sys
 import time
 
+
 MOVE_FLAG = "--yes-i-want-the-rover-to-move"
 
 
@@ -125,16 +126,29 @@ def cmd_mission(args) -> int:
 
     predictor = _build_predictor(args)
 
+    last_printed_cp_seq = None  # Controla que el checkpoint se imprima solo al cambiar
     def report(info: dict) -> None:
+        nonlocal last_printed_cp_seq
+        target = info.get("target_checkpoint")
+        
+        # Imprime los datos del checkpoint únicamente si es un objetivo nuevo
+        if target and target.sequence != last_printed_cp_seq:
+            last_printed_cp_seq = target.sequence
+            print(f"\n📍 [NUEVO OBJETIVO] Checkpoint #{target.sequence} "
+                  f"| Lat: {target.latitude} | Lon: {target.longitude}")
+
         d = info["decision"]
         dist = info["distance_m"]
         goal = info["goal_offset_deg"]
         dist_s = "?" if dist is None else f"{dist:6.1f}m"
         goal_s = "?" if goal is None else f"{goal:+6.1f}deg"
+        
+        # Línea de estado compacta por cada paso del bucle
         print(
-            f"step {info['step']:4d} | dist {dist_s} | goal_off {goal_s} | "
+            f"   Step {info['step']:4d} | Dist: {dist_s} | Goal Off: {goal_s} | "
             f"{d.reason}: lin={d.linear:+.2f} ang={d.angular:+.2f}"
         )
+        
 
     runner = MissionRunner(
         client=client,

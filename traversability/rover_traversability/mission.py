@@ -32,6 +32,18 @@ from .policy import CommandDecision, PolicyConfig, suggest_command
 
 log = logging.getLogger(__name__)
 
+import logging
+
+class SoloMissionFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.name == "mission" or record.name.endswith(".mission")
+
+logging.basicConfig(
+    level=logging.INFO,   # usá logging.DEBUG si querés más detalle
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+logging.getLogger().handlers[0].addFilter(SoloMissionFilter())
+
 
 @dataclass
 class Checkpoint:
@@ -73,7 +85,7 @@ class MissionRunner:
         client: RoverClient | None = None,
         predictor=None,
         policy: PolicyConfig | None = None,
-        arrive_attempt_m: float = 8.0,
+        arrive_attempt_m: float = 14.0,
         interval_s: float = 0.5,
         turn_in_place_deg: float = 70.0,
         arc_turn_linear: float = 0.15,
@@ -154,20 +166,34 @@ class MissionRunner:
                 if heading_deg is not None:
                     goal_offset_deg = wrap_angle_deg(degrees(bearing_rad) - heading_deg)
 
+
             # Arrival attempt — backend enforces the true radius.
             if distance_m is not None and distance_m <= self.arrive_attempt_m:
+                log.warning("🎯 [INTENTO REACHED] Distancia de %.2fm <= umbral (%.2fm). Enviando POST /checkpoint-reached...", distance_m, self.arrive_attempt_m)
                 res = self.client.checkpoint_reached()
                 if res.accepted:
                     reached += 1
                     body = res.body or {}
+                    log.warning("✅ [REACHED ACEPTADO] ¡Checkpoint alcanzado con éxito! Respuesta: %s", body)
+
                     if body.get("mission_completed"):
                         return MissionResult(True, reached, steps, "mission completed", history)
+                    
+                    # 1. Guardamos el número del checkpoint que acabamos de completar para el log
+                    completed_seq = target.sequence if target else "desconocido"
+                    log.warning(f"¡Checkpoint {completed_seq} confirmado!") # <--- Tu log en el lugar correcto
+
+                    # 2. Buscamos el siguiente checkpoint
                     target, _ = self._next_checkpoint()
+                    
+                    # 3. Verificamos si ya no quedan objetivos
                     if target is None:
                         return MissionResult(True, reached, steps, "all checkpoints done", history)
-                    log.info("checkpoint reached; next: seq %s", target.sequence)
+                    
+                    log.warning("🔄 [CAMBIO] Siguiente objetivo asignado: seq %s", target.sequence)
                     continue
-                # else: not close enough yet per the backend — keep driving.
+                else:
+                    log.warning("⏳ [REACHED RECHAZADO] El servidor indicó que aún está fuera del radio real. Siguiendo..." )
 
             decision = self._decide(goal_offset_deg)
             if decision.stop:
@@ -181,6 +207,7 @@ class MissionRunner:
                 "heading_deg": heading_deg,
                 "goal_offset_deg": goal_offset_deg,
                 "decision": decision,
+                "target_checkpoint": target,
             }
             history.append(step_info)
             if self.on_step is not None:
