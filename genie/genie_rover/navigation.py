@@ -291,6 +291,44 @@ def front_is_blocked(bev: np.ndarray, resolution_m: float,
     return free_ratio < float(min_free_ratio)
 
 
+def front_clearance_m(bev: np.ndarray, resolution_m: float,
+                      half_width_m: float = 0.30,
+                      traversable_thresh: float = 0.4,
+                      max_check_m: float = 2.0) -> float:
+    """Distancia (m) desde el robot hasta la fila mas cercana, dentro de la
+    franja delantera, donde la mayoria de las celdas dejan de ser transitables.
+
+    A diferencia de front_is_blocked (que es un booleano para frenar), esto es
+    la señal de disparo del regimen cercano: por debajo de ~0.6 m la
+    proyeccion a BEV empieza a degradarse (el obstaculo ocupa cada vez mas
+    campo visual y la distorsion de lente es maxima en los bordes), y esa
+    degradacion hay que detectarla ANTES de que el planner empiece a devolver
+    desvios imposibles, no despues.
+
+    Barre desde el robot hacia adelante y devuelve la distancia a la primera
+    fila con evidencia de obstaculo. Si no hay evidencia de nada (todo
+    desconocido) o todo esta libre hasta max_check_m, devuelve max_check_m:
+    "libre hasta donde se pudo confirmar", no "libre con certeza".
+    """
+    h, w = bev.shape
+    c_half = max(1, int(half_width_m / resolution_m))
+    c_mid = w // 2
+    c0, c1 = max(0, c_mid - c_half), min(w, c_mid + c_half + 1)
+    if c0 >= c1:
+        return float(max_check_m)
+
+    r_limit = max(0, h - 1 - int(max_check_m / resolution_m))
+    for r in range(h - 1, r_limit - 1, -1):
+        strip = bev[r, c0:c1]
+        known = strip >= 0.0
+        if not np.any(known):
+            continue
+        free_ratio = float(np.mean(strip[known] > traversable_thresh))
+        if free_ratio < 0.5:
+            return float((h - 1 - r) * resolution_m)
+    return float(max_check_m)
+
+
 # --------------------------------------------------------------------- tests
 
 def _self_test() -> None:

@@ -142,3 +142,11 @@ memory:
   min_confidence: 0.15                # confianza minima de una celda para contar como "observada" al extraer una ventana BEV
   plan_forward_m: 3.0                 # alcance hacia adelante de la ventana BEV extraida del mapa para planificar
   plan_side_m: 2.0                    # medio-ancho de la ventana BEV extraida del mapa para planificar
+
+near_regime:
+  clearance_thresh_m: 0.6
+  reverse_distance_m: 0.35
+  reverse_speed: 0.15
+  heading_search_radius_m: 2.0
+  corridor_block_s: 30.0
+  fail_intervention_after: 3

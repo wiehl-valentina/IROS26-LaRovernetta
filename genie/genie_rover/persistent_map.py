@@ -226,6 +226,74 @@ class PersistentMap:
         observed = visto.astype(np.uint8)
         return bev, observed
 
+    # ------------------------------------------------------- regimen cercano
+
+    def best_heading(self, pose: Pose, candidate_headings_deg: list[float],
+                     radius_m: float = 2.0, fan_deg: float = 30.0,
+                     n_radial: int = 12, n_angular: int = 5
+                     ) -> tuple[float, dict[float, float]]:
+        """Rumbo (relativo al robot, en grados) con mas DISTANCIA LIBRE
+        CONTINUA segun el mapa persistente, dentro de un sector angular de
+        fan_deg centrado en cada candidato.
+
+        Esta es la pieza que hace posible el regimen cercano: cuando el
+        obstaculo esta tan pegado que el BEV instantaneo ya no sirve para
+        planificar, esta es la unica fuente de informacion razonable, porque
+        conserva la observacion de cuando el obstaculo todavia se veia bien
+        (a 1-1.5 m, antes de entrar en la zona degenerada).
+
+        Importa el promedio y no la distancia continua: un rumbo con el 70%
+        de sus celdas libres pero con el obstaculo pegado al robot en ese
+        mismo rumbo (y campo abierto recien despues) puntuaria alto con un
+        promedio, y es exactamente el rumbo que NO hay que elegir -- el
+        robot chocaria antes de llegar a la parte abierta. Por eso, para
+        cada rayo del sector se camina desde el robot hacia afuera y se para
+        en la primera celda no transitable (o no observada); el score del
+        rumbo es el rayo MAS CORTO del sector, no el promedio: un costado
+        libre en el centro pero bloqueado 10 grados al lado no sirve para
+        pasar con el cuerpo del robot.
+
+        Un rumbo sin ninguna celda observada tiene score 0.0, no radius_m:
+        mejor un costado que sabemos libre que uno que simplemente nunca se
+        vio.
+
+        Devuelve (mejor_rumbo_deg, {rumbo_deg: distancia_libre_m}).
+        """
+        if not candidate_headings_deg:
+            raise ValueError("candidate_headings_deg no puede estar vacio")
+
+        dists = np.linspace(0.2, float(radius_m), int(n_radial))
+        offs = np.linspace(-math.radians(float(fan_deg) / 2),
+                           math.radians(float(fan_deg) / 2), int(n_angular))
+        scores: dict[float, float] = {}
+
+        for heading_deg in candidate_headings_deg:
+            h_rad = math.radians(float(heading_deg))
+            ray_clears: list[float] = []
+            for off in offs:
+                ang = pose.theta + h_rad + off
+                clear = 0.0
+                seen = False
+                for d in dists:
+                    x = pose.x + d * math.cos(ang)
+                    y = pose.y + d * math.sin(ang)
+                    f, c = self.world_to_cell(x, y)
+                    if not (0 <= f < self.n and 0 <= c < self.n) or self.conf[f, c] < self.cfg.min_confidence:
+                        # sale del mapa, o esa franja del sector nunca se vio
+                        # (tipico en los bordes del abanico cerca de +-90):
+                        # se corta ESTE rayo, no se penaliza el rumbo entero.
+                        break
+                    seen = True
+                    if self.value[f, c] <= 0.5:
+                        break  # obstaculo: este rayo no llega mas lejos
+                    clear = float(d)
+                if seen:
+                    ray_clears.append(clear)
+            scores[float(heading_deg)] = min(ray_clears) if ray_clears else 0.0
+
+        best = max(scores, key=scores.get)
+        return best, scores
+
     # ------------------------------------------------------------------ debug
 
     def to_image(self, pose: Pose | None = None) -> np.ndarray:

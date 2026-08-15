@@ -30,12 +30,14 @@ from .navigation import (
     DriveCommand,
     HeadingEstimator,
     PathFollower,
+    front_clearance_m,
     front_is_blocked,
     goal_from_gps,
 )
 from .odometry import Odometry, OdometryConfig, Pose
 from .perception import PerceptionPipeline
 from .persistent_map import MapConfig, PersistentMap
+from .recovery import NearRegimeConfig, NearRegimeController, Regime
 from .sdk_client import Checkpoint, RoverClient, RoverError
 from .navigation import PathFollower,path_robot_to_world,path_world_to_robot
 
@@ -48,6 +50,8 @@ class LoopStats:
     blocked: int = 0
     errors: int = 0
     unstucks: int = 0
+    near_regime_activations: int = 0
+    near_regime_interventions: int = 0
 
 
 class Bridge:
@@ -140,6 +144,47 @@ class Bridge:
         self.recovery_after_empty = int(safety.get("recovery_after_empty_plans", 3))
         self.recovery_turn_s = float(safety.get("recovery_turn_s", 1.5))
         self.loop_period_s = float(safety.get("loop_period_s", 0.0))
+
+        # ---- regimen cercano ---------------------------------------------
+        # Por debajo de near.clearance_thresh_m la proyeccion a BEV esta
+        # geometricamente degradada (el obstaculo tapa la mayor parte del
+        # campo visual, la distorsion es maxima justo donde estaria el hueco
+        # libre): GeNIE deja de ser una fuente de informacion valida y hay
+        # que resolverlo con el mapa persistente en vez de tocar umbrales del
+        # planner. Ver genie_rover/recovery.py para el detalle completo.
+        #
+        # Requiere memoria espacial activa: sin mapa persistente no hay de
+        # donde sacar el rumbo de escape cuando la camara ya no sirve.
+        near = cfg.get("near_regime", {})
+        self.near_ctrl: NearRegimeController | None = None
+        if self.use_map:
+            self.near_ctrl = NearRegimeController(
+                NearRegimeConfig(
+                    clearance_thresh_m=float(near.get("clearance_thresh_m", 0.6)),
+                    clearance_check_m=float(near.get("clearance_check_m", 1.2)),
+                    stall_iters=int(near.get("stall_iters", 5)),
+                    stall_disp_m=float(near.get("stall_disp_m", 0.05)),
+                    reverse_distance_m=float(near.get("reverse_distance_m", 0.35)),
+                    reverse_speed=float(near.get("reverse_speed", 0.15)),
+                    reverse_timeout_s=float(near.get("reverse_timeout_s", 8.0)),
+                    heading_search_radius_m=float(near.get("heading_search_radius_m", 2.0)),
+                    heading_fan_deg=float(near.get("heading_fan_deg", 20.0)),
+                    align_tolerance_deg=float(near.get("align_tolerance_deg", 12.0)),
+                    rotate_timeout_s=float(near.get("rotate_timeout_s", 6.0)),
+                    turn_speed=float(near.get("turn_speed", nav.get("turn_speed", 0.35))),
+                    replan_lock_s=float(near.get("replan_lock_s", 2.0)),
+                    success_clearance_m=float(near.get("success_clearance_m", 0.6)),
+                    corridor_block_s=float(near.get("corridor_block_s", 30.0)),
+                    corridor_half_width_m=float(near.get("corridor_half_width_m", 0.35)),
+                    fail_block_after=int(near.get("fail_block_after", 2)),
+                    fail_intervention_after=int(near.get("fail_intervention_after", 3)),
+                ),
+                angular_sign=nav["angular_sign"],
+            )
+        else:
+            print("[bridge] AVISO: memory.enabled=false -> el regimen cercano queda "
+                  "desactivado (no tiene de donde sacar el rumbo de escape sin mapa "
+                  "persistente). El robot va a depender solo de _recover()/_unstick().")
 
         self.stats = LoopStats()
         self._stop_requested = False
@@ -299,15 +344,33 @@ class Bridge:
         print(f"[{self.stats.iterations:04d}] rumbo={heading if heading is None else round(heading)} "
               f"({self.heading_est.source})  meta: {goal_desc}  "
               f"celdas BEV={res.stats['bev_observed_cells']:.0f}{nota_mapa}")
+
+        pose_now = self.odometry.pose if (self.use_map and self.odometry is not None) else None
+
+        # ---- regimen cercano: freeze de GeNIE si el frente esta degradado -
+        # Por debajo de clearance_thresh_m el BEV instantaneo deja de ser una
+        # fuente de informacion valida para planificar (ver recovery.py). Se
+        # evalua ANTES del freno duro de front_is_blocked: ese es un freno de
+        # un solo frame, y si el robot queda ahi para siempre sin salida es
+        # exactamente el congelamiento que este regimen existe para resolver.
+        if self.near_ctrl is not None and pose_now is not None:
+            clearance = front_clearance_m(res.traversability, self.resolution,
+                                          max_check_m=self.near_ctrl.cfg.clearance_check_m)
+            if self.near_ctrl.should_enter_near(clearance, now):
+                print(f"[bridge] clearance={clearance:.2f} m -> entro a regimen CERCANO")
+                self._run_near_regime()
+                return
+
         # El chequeo de colision usa SIEMPRE la observacion fresca: si algo se
-        # cruzo recien, no queremos que el promedio del mapa lo diluya.
+        # cruzo recien, no queremos que el promedio del mapa lo diluya. Esto
+        # se mantiene como red de seguridad de un solo frame incluso con el
+        # regimen cercano activo (p.ej. si use_map=false).
         if front_is_blocked(res.traversability, self.resolution):
             self.stats.blocked += 1
             self.send(DriveCommand(0.0, 0.0, "OBSTACULO al frente"))
             return
 
         # ---- disparo espacial: solo replanificar si hace falta ----------
-        pose_now = self.odometry.pose if (self.use_map and self.odometry is not None) else None
         need_replan = (
             pose_now is None                      # sin odometria, no hay opcion: replanificar
             or self._current_plan_xy is None
@@ -325,14 +388,25 @@ class Bridge:
                     float(path[0][0]) if len(path) else 0.0, 1.0))) <= self.follower.align_threshold:
                 cmd = DriveCommand(max(cmd.linear, self.min_linear_while_planned), cmd.angular, cmd.reason)
             self.send(cmd)
+            if self.near_ctrl is not None and pose_now is not None:
+                self.near_ctrl.note_iteration(pose_now, cmd, time.time())
             return
+
+        bev_resolution_m = (2.0 * side) / plan_bev.shape[1]
+        if self.near_ctrl is not None and pose_now is not None:
+            # Corredores que quedaron marcados por recuperaciones fallidas
+            # recientes: se le esconden al planner de LEJANO para que no
+            # vuelva a mandar al robot justo ahi. Es una copia, no toca el
+            # mapa persistente en si.
+            plan_bev = self.near_ctrl.mask_blocked_corridors(
+                plan_bev, pose_now, bev_resolution_m, time.time())
 
         plan = plan_on_bev(
             bev_traversability=plan_bev,
             observed_mask=plan_obs,
             goal_x_m=float(goal.x_right_m),
             goal_y_m=float(goal.y_forward_m),
-            bev_resolution_m=(2.0 * side) / plan_bev.shape[1],
+            bev_resolution_m=bev_resolution_m,
             config=self.planner_cfg,
         )
 
@@ -372,7 +446,58 @@ class Bridge:
             self._turn_sign_history.clear()
 
         self.send(cmd)
+        if self.near_ctrl is not None and pose_now is not None:
+            self.near_ctrl.note_iteration(pose_now, cmd, time.time())
         self._maybe_dump_debug(rgb, res, plan)
+
+    def _run_near_regime(self) -> None:
+        """Delega la maniobra completa (retroceder / elegir rumbo por mapa /
+        rotar / escalar) a NearRegimeController.execute(), pasandole los
+        callbacks que necesita para hablar con el rover y con el mapa.
+
+        No atrapa excepciones de red a proposito: si el SDK falla en medio de
+        la maniobra, que suba y la caiga el manejo de errores de run(), que ya
+        manda freno.
+        """
+        assert self.near_ctrl is not None and self.pmap is not None and self.odometry is not None
+
+        def get_pose() -> Pose:
+            return self.odometry.pose
+
+        def compute_clearance() -> float:
+            rgb, _ = self.client.front_frame()
+            res = self.perception.process(rgb)
+            return front_clearance_m(res.traversability, self.resolution,
+                                     max_check_m=self.near_ctrl.cfg.clearance_check_m)
+
+        def request_intervention() -> None:
+            print("[bridge] solicitando intervencion humana ...")
+            self.client.start_intervention()
+
+        resultado = self.near_ctrl.execute(
+            pmap=self.pmap,
+            get_pose=get_pose,
+            compute_clearance=compute_clearance,
+            send=self.send,
+            request_intervention=request_intervention,
+            stopped_flag=lambda: self._stop_requested,
+        )
+        self.stats.near_regime_activations += 1
+        if resultado == "intervencion":
+            self.stats.near_regime_interventions += 1
+        # El track GPS previo y los contadores de titubeo/giro ya no
+        # describen la situacion tras retroceder y rotar.
+        self.heading_est.reset_track()
+        self._consecutive_turns = 0
+        self._turn_sign_history.clear()
+        self._consecutive_empty = 0
+        self._commit_side = 0
+        # El plan cacheado quedo en coordenadas de mundo relativas a una pose
+        # que ya no corresponde a hacia donde mira el robot; forzar
+        # replanificacion completa en la proxima iteracion.
+        self._current_plan_xy = None
+        self._last_plan_pose = None
+        print(f"[bridge] regimen cercano -> {resultado}")
 
     def _unstick(self) -> None:
         """Rompe el ciclo de giros sin avance.
@@ -491,6 +616,8 @@ class Bridge:
         print(f"  planes vacios:          {s.plans_empty}")
         print(f"  frenadas por obstaculo: {s.blocked}")
         print(f"  desatascos forzados:    {s.unstucks}")
+        print(f"  activaciones regimen cercano: {s.near_regime_activations}")
+        print(f"  intervenciones pedidas:       {s.near_regime_interventions}")
         if self.pmap is not None and self.odometry is not None:
             st = self.pmap.stats()
             p = self.odometry.pose
