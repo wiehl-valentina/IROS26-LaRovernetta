@@ -7,15 +7,18 @@ Convenciones (las mismas que genie_path_planner):
 Prueba standalone (matematica pura, no necesita robot):
     python -m genie_rover.navigation
 """
-
 from __future__ import annotations
 
 import math
 from collections import deque
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+if TYPE_CHECKING:
+    from .odometry import Pose
+    
 EARTH_R = 6378137.0
 
 
@@ -54,7 +57,7 @@ class HeadingEstimator:
 
     def __init__(self, min_displacement_m: float = 1.5, history: int = 12,
                  orientation_offset_deg: float = 0.0, orientation_sign: float = 1.0,
-                 trust_orientation: bool = False):
+                 trust_orientation: bool = False,min_linear_while_planned: float = 0.08):
         self.min_disp = float(min_displacement_m)
         self.buf: deque[tuple[float, float, float]] = deque(maxlen=int(history))
         self.offset = float(orientation_offset_deg)
@@ -64,6 +67,7 @@ class HeadingEstimator:
         self._source = "none"
         self.last_gps_heading: float | None = None
         self.last_orientation_heading: float | None = None
+        self.min_linear_while_planned = min_linear_while_planned
 
     def update(self, lat: float, lon: float, orientation: float, t: float) -> float | None:
         self.buf.append((lat, lon, t))
@@ -195,33 +199,69 @@ class PathFollower:
         return p[min(idx, len(p) - 1)]
 
     def command(self, path_xy: np.ndarray | None) -> DriveCommand:
-        if path_xy is None or len(path_xy) < 2:
-            return DriveCommand(0.0, 0.0, "sin camino")
+            if path_xy is None or len(path_xy) < 2:
+                return DriveCommand(0.0, 0.0, "sin camino")
 
-        target = self.lookahead_point(path_xy)
-        if target is None:
-            return DriveCommand(0.0, 0.0, "camino degenerado")
+            target = self.lookahead_point(path_xy)
+            if target is None:
+                return DriveCommand(0.0, 0.0, "camino degenerado")
 
-        # x_right positivo = objetivo a la derecha
-        error_deg = math.degrees(math.atan2(float(target[0]), float(target[1])))
+            # x_right positivo = objetivo a la derecha
+            error_deg = math.degrees(math.atan2(float(target[0]), float(target[1])))
 
-        if abs(error_deg) > self.align_threshold:
-            ang = self.angular_sign * math.copysign(self.turn_speed, error_deg)
-            return DriveCommand(0.0, float(np.clip(ang, -self.max_angular, self.max_angular)),
-                                f"girando en el lugar ({error_deg:+.0f} grados)")
+            # Si el error es grande, gira sobre su propio eje (linear = 0.0)
+            if abs(error_deg) > self.align_threshold:
+                ang = self.angular_sign * math.copysign(self.turn_speed, error_deg)
+                return DriveCommand(0.0, float(np.clip(ang, -self.max_angular, self.max_angular)),
+                                    f"girando en el lugar ({error_deg:+.0f} grados)")
 
-        ratio = abs(error_deg) / max(self.align_threshold, 1e-6)
-        linear = self.max_linear * (1.0 - 0.5 * ratio)
-        ang = self.angular_sign * self.kp * math.radians(error_deg)
-        return DriveCommand(
-            float(np.clip(linear, 0.0, self.max_linear)),
-            float(np.clip(ang, -self.max_angular, self.max_angular)),
-            f"siguiendo camino ({error_deg:+.0f} grados)",
-        )
+            # Si entra acá, ya está alineado (abs(error_deg) <= self.align_threshold)
+            ratio = abs(error_deg) / max(self.align_threshold, 1e-6)
+            linear = self.max_linear * (1.0 - 0.5 * ratio)
+            
+            # =========================================================
+            # PASO 1.3: REGLA DURA (Evita que la velocidad baje del mínimo)
+            # =========================================================
+            linear = max(linear, self.min_linear_while_planned)
+            # =========================================================
+
+            ang = self.angular_sign * self.kp * math.radians(error_deg)
+            return DriveCommand(
+                float(np.clip(linear, 0.0, self.max_linear)),
+                float(np.clip(ang, -self.max_angular, self.max_angular)),
+                f"siguiendo camino ({error_deg:+.0f} grados)",
+            )
+
+# FIXED VELOCIDAD CONSTANTE Y CONGELAMIENTO
+# ------------------------------------------------------ transformar caminos entre marcos
+# (nuevo) el plan de GeNIE viene en [x_right_m, y_forward_m] relativo al robot
+# EN EL MOMENTO de planificar. Para poder reusar un plan viejo en un frame
+# posterior (bridge.py, replanificacion por disparo espacial) hay que poder
+# ir y volver entre ese marco robot-relativo y un marco fijo de mundo.
+
+def path_robot_to_world(path_xy: np.ndarray, pose: "Pose") -> np.ndarray:
+    """[x_right_m, y_forward_m] relativo al robot -> coords de mundo (x, y)."""
+    c, s = math.cos(pose.theta), math.sin(pose.theta)
+    p = np.asarray(path_xy, dtype=np.float64)
+    x_right, y_fwd = p[:, 0], p[:, 1]
+    out = np.empty_like(p)
+    out[:, 0] = pose.x + c * y_fwd - s * x_right
+    out[:, 1] = pose.y + s * y_fwd + c * x_right
+    return out
+
+
+def path_world_to_robot(path_world: np.ndarray, pose: "Pose") -> np.ndarray:
+    """Inverso: coords de mundo -> [x_right_m, y_forward_m] relativo a pose."""
+    c, s = math.cos(-pose.theta), math.sin(-pose.theta)
+    p = np.asarray(path_world, dtype=np.float64)
+    dx = p[:, 0] - pose.x
+    dy = p[:, 1] - pose.y
+    y_fwd = c * dx - s * dy
+    x_right = s * dx + c * dy
+    return np.stack([x_right, y_fwd], axis=1)
 
 
 # ----------------------------------------------------------- chequeo frontal
-
 def front_is_blocked(bev: np.ndarray, resolution_m: float,
                      near_m: float = 0.25, far_m: float = 0.9,
                      half_width_m: float = 0.30,

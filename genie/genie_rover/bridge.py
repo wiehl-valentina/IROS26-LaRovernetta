@@ -37,6 +37,7 @@ from .odometry import Odometry, OdometryConfig, Pose
 from .perception import PerceptionPipeline
 from .persistent_map import MapConfig, PersistentMap
 from .sdk_client import Checkpoint, RoverClient, RoverError
+from .navigation import PathFollower,path_robot_to_world,path_world_to_robot
 
 
 @dataclass
@@ -117,6 +118,21 @@ class Bridge:
             # Cuanto mas lejos y ancho puede mirar el planner gracias al mapa.
             self.plan_forward_m = float(mem.get("plan_forward_m", 3.0))
             self.plan_side_m = float(mem.get("plan_side_m", 2.0))
+
+        #FIX
+        # ---- replanificacion por disparo espacial ------------------------
+        # En vez de replanificar cada frame (5 Hz, ~5 cm de avance = ruido
+        # dominando la decision), guardamos el ultimo plan y solo llamamos a
+        # plan_on_bev cuando el robot se movio lo suficiente como para que
+        # el BEV muestre informacion realmente nueva.
+        self._last_plan_pose: Pose | None = None
+        self._current_plan_xy: np.ndarray | None = None   # camino vigente, en MUNDO
+        self._last_plan_t = 0.0
+        self.replan_distance_m = float(nav.get("replan_distance_m", 0.30))
+        self.replan_max_s = float(nav.get("replan_max_s", 2.0))
+        self.min_linear_while_planned = float(nav.get("min_linear_while_planned", 0.08))
+        # --------------------------------------------------------------------------------
+        
 
         safety = cfg.get("safety", {})
         self.stale_frame_s = float(safety.get("stale_frame_s", 2.0))
@@ -283,12 +299,32 @@ class Bridge:
         print(f"[{self.stats.iterations:04d}] rumbo={heading if heading is None else round(heading)} "
               f"({self.heading_est.source})  meta: {goal_desc}  "
               f"celdas BEV={res.stats['bev_observed_cells']:.0f}{nota_mapa}")
-
         # El chequeo de colision usa SIEMPRE la observacion fresca: si algo se
         # cruzo recien, no queremos que el promedio del mapa lo diluya.
         if front_is_blocked(res.traversability, self.resolution):
             self.stats.blocked += 1
             self.send(DriveCommand(0.0, 0.0, "OBSTACULO al frente"))
+            return
+
+        # ---- disparo espacial: solo replanificar si hace falta ----------
+        pose_now = self.odometry.pose if (self.use_map and self.odometry is not None) else None
+        need_replan = (
+            pose_now is None                      # sin odometria, no hay opcion: replanificar
+            or self._current_plan_xy is None
+            or self._last_plan_pose is None
+            or math.hypot(pose_now.x - self._last_plan_pose.x,
+                          pose_now.y - self._last_plan_pose.y) >= self.replan_distance_m
+            or (time.time() - self._last_plan_t) >= self.replan_max_s
+        )
+
+        if not need_replan:
+            path = path_world_to_robot(self._current_plan_xy, pose_now)
+            cmd = self.follower.command(path)
+            cmd = self._apply_commit(cmd, path)
+            if cmd.linear == 0.0 and cmd.angular != 0.0 and abs(math.degrees(math.atan2(
+                    float(path[0][0]) if len(path) else 0.0, 1.0))) <= self.follower.align_threshold:
+                cmd = DriveCommand(max(cmd.linear, self.min_linear_while_planned), cmd.angular, cmd.reason)
+            self.send(cmd)
             return
 
         plan = plan_on_bev(
@@ -300,6 +336,12 @@ class Bridge:
             config=self.planner_cfg,
         )
 
+        path = plan.final_path_xy_m
+        if pose_now is not None and path is not None and len(path) >= 2:
+            self._current_plan_xy = path_robot_to_world(path, pose_now)
+            self._last_plan_pose = pose_now
+            self._last_plan_t = time.time()
+        
         path = plan.final_path_xy_m
         if path is None or len(path) < 2:
             self.stats.plans_empty += 1

@@ -82,7 +82,10 @@ navigation:
   orientation_sign: 1.0               # signo aplicado a la lectura del magnetometro
   commit_hold_s: 2.0                  # cuanto tiempo se mantiene el "compromiso" de lado de esquive antes de poder recalcular libremente
   commit_min_deg: 8.0                 # por debajo de este error de rumbo, se considera que el camino va derecho (no hay maniobra en curso)
-  commit_override_deg: 30.0           # error de rumbo a partir del cual se permite cambiar de lado de esquive pese al compromiso vigente
+  commit_override_deg: 30.0           # error de rumbo a partir del cual se permte cambiar de lado de esquive pese al compromiso vigente
+  replan_distance_m: 0.30
+  replan_max_s: 2.0
+  min_linear_while_planned: 0.08
 
 planner:
   grid_size: 240                      # tamaño (px) de la grilla cuadrada donde se remuestrea el costmap para planificar

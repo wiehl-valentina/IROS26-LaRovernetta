@@ -58,7 +58,7 @@ def pick_final_path(
     """Pick a final path from the best candidates.
 
     Lower cost is better. This preserves the current GeNIE planner behavior:
-    average the top-k paths using cost-proportional weights, then fall back to
+    average the top-k paths using inverse-cost weights, then fall back to
     the single best path if the averaged path is worse than the selected set.
     """
     if not paths_with_cost:
@@ -69,10 +69,19 @@ def pick_final_path(
     final_rows = np.zeros(int(num_samples), dtype=np.float32)
     final_cols = np.zeros(int(num_samples), dtype=np.float32)
 
-    weights = np.array([p[0] for p in top], dtype=np.float32)
-    if float(np.sum(weights)) <= 1e-8:
-        weights = np.ones_like(weights)
-    weights = weights / np.sum(weights)
+    # FIX 
+    """Principales cambios dentro de pick_final_path:
+    Se reemplazó el cálculo de weights directo por la versión recíproca (inv = 1.0 / np.clip(...)), garantizando que los menores costos adquieran la mayor proporción de peso.
+    Se incluyó el assert que comprueba en tiempo de ejecución que el índice del elemento con menor costo (np.argmin) coincida exactamente con el índice del mayor peso asignado (np.argmax)."""
+    # --- Menor costo = mayor peso ---
+    costs_arr = np.array([p[0] for p in top], dtype=np.float32)
+    inv = 1.0 / np.clip(costs_arr, 1e-6, None)
+    weights = inv / np.sum(inv)
+
+    # Test de regresión rápido
+    assert np.argmax(weights) == np.argmin(costs_arr), (
+        f"El camino de menor costo (índice {np.argmin(costs_arr)}) debe tener el mayor peso (obtenido en índice {np.argmax(weights)})"
+    )
 
     for i in range(int(num_samples)):
         for idx, (_cost, path) in enumerate(top):
