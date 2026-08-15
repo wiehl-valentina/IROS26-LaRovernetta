@@ -167,8 +167,17 @@ class Bridge:
                     reverse_distance_m=float(near.get("reverse_distance_m", 0.35)),
                     reverse_speed=float(near.get("reverse_speed", 0.15)),
                     reverse_timeout_s=float(near.get("reverse_timeout_s", 8.0)),
+                    # ---- corredor por camara (post-retroceso) --------------
+                    corridor_band_width_m=float(near.get("corridor_band_width_m", 0.30)),
+                    corridor_check_m=float(near.get("corridor_check_m", 1.2)),
+                    turn_step_deg=float(near.get("turn_step_deg", 15.0)),
+                    max_local_turns=int(near.get("max_local_turns", 4)),
+                    # ---- respaldo por mapa (solo si la camara no alcanza) --
                     heading_search_radius_m=float(near.get("heading_search_radius_m", 2.0)),
                     heading_fan_deg=float(near.get("heading_fan_deg", 20.0)),
+                    fallback_heading_candidates_deg=tuple(
+                        near.get("fallback_heading_candidates_deg", (-45.0, -30.0, 30.0, 45.0))
+                    ),
                     align_tolerance_deg=float(near.get("align_tolerance_deg", 12.0)),
                     rotate_timeout_s=float(near.get("rotate_timeout_s", 6.0)),
                     turn_speed=float(near.get("turn_speed", nav.get("turn_speed", 0.35))),
@@ -451,9 +460,10 @@ class Bridge:
         self._maybe_dump_debug(rgb, res, plan)
 
     def _run_near_regime(self) -> None:
-        """Delega la maniobra completa (retroceder / elegir rumbo por mapa /
-        rotar / escalar) a NearRegimeController.execute(), pasandole los
-        callbacks que necesita para hablar con el rover y con el mapa.
+        """Delega la maniobra completa (retroceder / elegir corredor por
+        camara / girar en pasos / escalar) a NearRegimeController.execute(),
+        pasandole los callbacks que necesita para hablar con el rover, la
+        camara y el mapa.
 
         No atrapa excepciones de red a proposito: si el SDK falla en medio de
         la maniobra, que suba y la caiga el manejo de errores de run(), que ya
@@ -463,6 +473,15 @@ class Bridge:
 
         def get_pose() -> Pose:
             return self.odometry.pose
+
+        def capture_bev() -> tuple[np.ndarray, float]:
+            """Frame fresco -> BEV + resolucion, para elegir de que lado
+            girar DESPUES del retroceso. No usar antes de retroceder: a esa
+            distancia el BEV todavia esta degradado (ver docstring de
+            recovery.py)."""
+            rgb, _ = self.client.front_frame()
+            res = self.perception.process(rgb)
+            return res.traversability, self.resolution
 
         def compute_clearance() -> float:
             rgb, _ = self.client.front_frame()
@@ -477,6 +496,7 @@ class Bridge:
         resultado = self.near_ctrl.execute(
             pmap=self.pmap,
             get_pose=get_pose,
+            capture_bev=capture_bev,
             compute_clearance=compute_clearance,
             send=self.send,
             request_intervention=request_intervention,
@@ -485,20 +505,14 @@ class Bridge:
         self.stats.near_regime_activations += 1
         if resultado == "intervencion":
             self.stats.near_regime_interventions += 1
-        # El track GPS previo y los contadores de titubeo/giro ya no
-        # describen la situacion tras retroceder y rotar.
         self.heading_est.reset_track()
         self._consecutive_turns = 0
         self._turn_sign_history.clear()
         self._consecutive_empty = 0
         self._commit_side = 0
-        # El plan cacheado quedo en coordenadas de mundo relativas a una pose
-        # que ya no corresponde a hacia donde mira el robot; forzar
-        # replanificacion completa en la proxima iteracion.
         self._current_plan_xy = None
         self._last_plan_pose = None
         print(f"[bridge] regimen cercano -> {resultado}")
-
     def _unstick(self) -> None:
         """Rompe el ciclo de giros sin avance.
 

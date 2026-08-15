@@ -14,19 +14,32 @@ Este modulo es el segundo regimen. Dos reglas separan LEJANO de CERCANO:
     ANTES de planificar, el enmascarado de corredores bloqueados (ver abajo).
 
     CERCANO (este modulo): el frente se cierra, o el robot lleva varias
-    iteraciones comandando movimiento sin desplazarse (el planner puede estar
-    replanificando un camino distinto cada frame sin que el robot avance).
-    Se congela GeNIE y se deja de consultar el BEV fresco para decidir hacia
-    donde ir:
+    iteraciones comandando movimiento sin desplazarse. Se congela GeNIE y
+    se resuelve la maniobra en dos etapas que usan fuentes DISTINTAS a
+    proposito, porque la confiabilidad de la camara cambia con la distancia:
 
         1. retroceder -- la unica accion que reduce la ocupacion angular del
            obstaculo. Girar en el lugar no alcanza: el objeto sigue igual de
            cerca en cualquier orientacion, la zona ciega gira con el robot.
-        2. elegir, SOLO del mapa persistente (no de la camara), el rumbo con
-           mas area libre acumulada dentro de un radio corto
-        3. rotar hacia ese rumbo
-        4. volver a LEJANO con un bloqueo de re-disparo corto, para no
-           oscilar entre regimenes en el limite del umbral
+           ANTES de retroceder la camara sigue degradada: no se consulta.
+
+        2. una vez retrocedido (~0.35 m mas lejos), un frame fresco YA es
+           util. Se parte el frente en tres corredores (izquierda / centro /
+           derecha) y se elige el de mayor espacio libre. Si la camara no
+           tiene evidencia suficiente en ningun corredor (observed vacio, o
+           todos por debajo del umbral de exito), se cae a
+           PersistentMap.best_heading() como respaldo -- ahi si tiene sentido
+           confiar en la memoria acumulada en vez de un frame sin datos.
+
+        3. girar en pasos CHICOS (turn_step_deg) hacia el corredor elegido,
+           re-verificando con la camara despues de cada paso. Si un paso no
+           alcanza, se sigue girando para el mismo lado; nunca se compromete
+           de una sola vez a un heading grande calculado de antemano, porque
+           ese heading pudo haberse calculado con datos ya viejos.
+
+    Los headings candidatos NUNCA incluyen algo cercano a 90/135/180: este
+    robot no tiene sensores traseros ni reversa util, girar tanto significa
+    quedar mirando a ciegas hacia donde no se sabe que hay.
 
 Escalamiento (para no reintentar para siempre contra lo mismo):
     fail_block_after fallos seguidos    -> el corredor elegido se marca
@@ -50,7 +63,7 @@ from typing import Callable
 
 import numpy as np
 
-from .navigation import DriveCommand
+from .navigation import CorridorClearances, DriveCommand, corridor_clearances
 from .odometry import Pose
 from .persistent_map import PersistentMap
 
@@ -67,21 +80,26 @@ class NearRegimeConfig:
     clearance_check_m: float = 1.2          # horizonte de front_clearance_m
     stall_iters: int = 5
     stall_disp_m: float = 0.05
-    # ---- maniobra -----------------------------------------------------
+    # ---- retroceso -----------------------------------------------------
     reverse_distance_m: float = 0.35
     reverse_speed: float = 0.15
     reverse_timeout_s: float = 8.0
+    # ---- corredor por camara (post-retroceso) --------------------------
+    corridor_band_width_m: float = 0.30
+    corridor_check_m: float = 1.2
+    turn_step_deg: float = 15.0
+    max_local_turns: int = 4
+    # ---- respaldo por mapa persistente (solo si la camara no alcanza) --
     heading_search_radius_m: float = 2.0
     heading_fan_deg: float = 20.0
-    heading_candidates_deg: tuple[float, ...] = (
-        0, 30, -30, 60, -60, 90, -90, 135, -135, 180,
-    )
+    fallback_heading_candidates_deg: tuple[float, ...] = (-45.0, -30.0, 30.0, 45.0)
+    # ---- rotacion (comun a ambas fuentes) -------------------------------
     align_tolerance_deg: float = 12.0
     rotate_timeout_s: float = 6.0
     turn_speed: float = 0.35
     # ---- salida / relock ------------------------------------------
     replan_lock_s: float = 2.0
-    success_clearance_m: float = 0.6        # clearance minimo tras la maniobra para considerarla exitosa
+    success_clearance_m: float = 0.6        # clearance minimo para dar la maniobra por exitosa
     # ---- escalamiento --------------------------------------------------
     corridor_block_s: float = 30.0
     corridor_half_width_m: float = 0.35
@@ -195,10 +213,23 @@ class NearRegimeController:
         self._blocked.append(_BlockedCorridor(pose.x, pose.y, heading_abs,
                                               now + self.cfg.corridor_block_s))
 
+    # ------------------------------------------------- eleccion de corredor
+
+    def _choose_from_camera(self, corridors: CorridorClearances) -> float | None:
+        """Devuelve el heading relativo (grados) a intentar segun la camara,
+        o None si ningun corredor tiene evidencia suficiente para decidir."""
+        best = max(corridors.left, corridors.center, corridors.right)
+        if best < self.cfg.success_clearance_m:
+            return None
+        if corridors.center >= self.cfg.success_clearance_m:
+            return 0.0
+        return self.cfg.turn_step_deg if corridors.left >= corridors.right else -self.cfg.turn_step_deg
+
     # ---------------------------------------------------------- maniobra
 
     def execute(self, *, pmap: PersistentMap,
                get_pose: Callable[[], Pose],
+               capture_bev: Callable[[], tuple[np.ndarray, float]],
                compute_clearance: Callable[[], float],
                send: Callable[[DriveCommand], None],
                request_intervention: Callable[[], None],
@@ -207,17 +238,20 @@ class NearRegimeController:
         _unstick() en bridge.py: son maniobras cortas donde no vale la pena
         intercalar el resto del bucle.
 
-        compute_clearance() debe capturar un frame fresco, correr percepcion,
-        y devolver front_clearance_m(...) -- se usa solo para verificar el
-        resultado, nunca para elegir el rumbo.
+        capture_bev() debe capturar un frame fresco y correr percepcion,
+        devolviendo (bev, resolution_m) -- se usa para elegir de que lado
+        girar DESPUES del retroceso.
+
+        compute_clearance() debe capturar un frame fresco y devolver
+        front_clearance_m(...) -- se usa para verificar el resultado de cada
+        paso de giro.
 
         Devuelve "ok", "corredor_bloqueado" o "intervencion".
         """
         self.regime = Regime.CERCANO
-        print("[cercano] frente cerrado o atascado: freno GeNIE, "
-              "trabajo solo con el mapa persistente")
+        print("[cercano] frente cerrado o atascado: freno GeNIE")
 
-        # 1) retroceder -----------------------------------------------------
+        # 1) retroceder -- la camara sigue degradada aca, no se consulta ----
         send(DriveCommand(-abs(self.cfg.reverse_speed), 0.0,
                           "regimen cercano: retrocediendo"))
         t0 = time.time()
@@ -232,35 +266,60 @@ class NearRegimeController:
         send(DriveCommand(0.0, 0.0, "regimen cercano: fin del retroceso"))
         print(f"[cercano] retrocedi {recorrido:.2f} m")
 
-        # 2) elegir rumbo con mas area libre, SOLO del mapa persistente -----
+        # 2) elegir corredor con un frame fresco (post-retroceso) -----------
         pose = get_pose()
-        best_heading_deg, scores = pmap.best_heading(
-            pose,
-            candidate_headings_deg=list(self.cfg.heading_candidates_deg),
-            radius_m=self.cfg.heading_search_radius_m,
-            fan_deg=self.cfg.heading_fan_deg,
+        bev, res_m = capture_bev()
+        corridors = corridor_clearances(
+            bev, res_m,
+            band_width_m=self.cfg.corridor_band_width_m,
+            max_check_m=self.cfg.corridor_check_m,
         )
-        legible = {k: f"{v:.2f} m libres" for k, v in scores.items()}
-        print(f"[cercano] rumbos evaluados (mapa): {legible}")
-        print(f"[cercano] elijo {best_heading_deg:+.0f} grados relativos "
-              f"({scores[best_heading_deg]:.2f} m libres por delante)")
+        print(f"[cercano] corredores (camara): izq={corridors.left:.2f} "
+              f"centro={corridors.center:.2f} der={corridors.right:.2f}")
 
-        # 3) rotar hacia ese rumbo -------------------------------------------
-        target_theta = pose.theta + math.radians(best_heading_deg)
-        t0 = time.time()
-        while not stopped_flag() and (time.time() - t0) < self.cfg.rotate_timeout_s:
-            p = get_pose()
-            err_deg = math.degrees(_wrap_rad(target_theta - p.theta))
-            if abs(err_deg) <= self.cfg.align_tolerance_deg:
+        heading_deg = self._choose_from_camera(corridors)
+        if heading_deg is None:
+            # la camara no tiene evidencia suficiente: respaldo en el mapa,
+            # con headings acotados (nunca cerca de 90/135/180)
+            heading_deg, scores = pmap.best_heading(
+                pose,
+                candidate_headings_deg=list(self.cfg.fallback_heading_candidates_deg),
+                radius_m=self.cfg.heading_search_radius_m,
+                fan_deg=self.cfg.heading_fan_deg,
+            )
+            legible = {k: f"{v:.2f} m libres" for k, v in scores.items()}
+            print(f"[cercano] camara sin evidencia suficiente, uso mapa: {legible}")
+        print(f"[cercano] primer paso: {heading_deg:+.0f} grados relativos")
+
+        # 3) girar en pasos chicos, re-verificando la camara en cada uno ----
+        exito = False
+        for intento in range(1, self.cfg.max_local_turns + 1):
+            if abs(heading_deg) > 1e-6:
+                target_theta = get_pose().theta + math.radians(heading_deg)
+                t0 = time.time()
+                while not stopped_flag() and (time.time() - t0) < self.cfg.rotate_timeout_s:
+                    p = get_pose()
+                    err_deg = math.degrees(_wrap_rad(target_theta - p.theta))
+                    if abs(err_deg) <= self.cfg.align_tolerance_deg:
+                        break
+                    ang = self.angular_sign * math.copysign(self.cfg.turn_speed, err_deg)
+                    send(DriveCommand(0.0, ang,
+                                      f"regimen cercano: paso de giro {intento} ({err_deg:+.0f} grados)"))
+                    time.sleep(0.1)
+                send(DriveCommand(0.0, 0.0, "regimen cercano: fin del paso de giro"))
+
+            clearance = compute_clearance()
+            print(f"[cercano] intento {intento}/{self.cfg.max_local_turns}: "
+                  f"clearance {clearance:.2f} m")
+            if clearance >= self.cfg.success_clearance_m:
+                exito = True
                 break
-            ang = self.angular_sign * math.copysign(self.cfg.turn_speed, err_deg)
-            send(DriveCommand(0.0, ang, f"regimen cercano: rotando ({err_deg:+.0f} grados)"))
-            time.sleep(0.1)
-        send(DriveCommand(0.0, 0.0, "regimen cercano: fin de la rotacion"))
 
-        # 4) verificar con un frame fresco si sirvio -------------------------
-        clearance = compute_clearance()
-        exito = clearance >= self.cfg.success_clearance_m
+            # no alcanzo: seguir girando para el mismo lado, otro paso chico
+            lado = heading_deg if abs(heading_deg) > 1e-6 else self.cfg.turn_step_deg
+            heading_deg = math.copysign(self.cfg.turn_step_deg, lado)
+
+        # 4) resolver el resultado -------------------------------------------
         now = time.time()
 
         if exito:
@@ -288,7 +347,7 @@ class NearRegimeController:
 
         resultado = "ok"
         if self._fail_count >= self.cfg.fail_block_after:
-            self._block_current_corridor(pose, math.radians(best_heading_deg), now)
+            self._block_current_corridor(pose, math.radians(heading_deg), now)
             print(f"[cercano] bloqueo el corredor por {self.cfg.corridor_block_s:.0f} s "
                   "y dejo que LEJANO replanifique alrededor")
             resultado = "corredor_bloqueado"
@@ -303,47 +362,94 @@ class NearRegimeController:
 def _self_test() -> None:
     from .persistent_map import MapConfig
 
-    print("=== eleccion de rumbo desde un mapa sintetico ===")
-    m = PersistentMap(MapConfig(size_m=8.0, resolution_m_per_px=0.03))
-    bev = np.ones((134, 134), dtype=np.float32)
-    obs = np.ones((134, 134), dtype=np.uint8)
-    # una maceta angosta a ~0.2-0.6 m adelante, centrada -- no una pared que
-    # tapa todo el frente: eso es justamente el escenario de la seccion 04
-    bev[90:120, 55:80] = 0.0
-    pose = Pose(0.0, 0.0, 0.0)
-    m.integrate(bev, obs, pose, 2.0, 1.2, t=0.0)
+    print("=== eleccion de corredor desde un BEV sintetico (camara) ===")
+    bev_izq_libre = np.ones((134, 134), dtype=np.float32)
+    bev_izq_libre[90:120, 55:90] = 0.0  # bloqueado centro/derecha, izquierda libre
+    ctrl = NearRegimeController(NearRegimeConfig(success_clearance_m=0.5))
+    corridors = corridor_clearances(bev_izq_libre, 0.015, band_width_m=0.3, max_check_m=1.2)
+    print(f"  corredores: izq={corridors.left:.2f} centro={corridors.center:.2f} "
+          f"der={corridors.right:.2f}")
+    heading = ctrl._choose_from_camera(corridors)
+    print(f"  heading elegido: {heading}")
+    assert heading is not None and heading > 0, "deberia preferir izquierda (heading positivo)"
 
-    best, scores = m.best_heading(pose, [0, 90, -90, 180], radius_m=1.5, fan_deg=18)
-    print(f"  rumbo elegido: {best:+.0f} grados, scores={ {k: round(v,2) for k,v in scores.items()} }")
-    assert scores[0] < scores[90] or scores[0] < scores[-90], (
-        "deberia preferir un costado antes que seguir de frente contra la maceta")
+    print("\n=== camara sin evidencia suficiente -> None (cae a mapa) ===")
+    bev_todo_cerca = np.ones((134, 134), dtype=np.float32)
+    bev_todo_cerca[100:134, :] = 0.0
+    corridors2 = corridor_clearances(bev_todo_cerca, 0.015, band_width_m=0.3, max_check_m=1.2)
+    heading2 = ctrl._choose_from_camera(corridors2)
+    print(f"  corredores: izq={corridors2.left:.2f} centro={corridors2.center:.2f} "
+          f"der={corridors2.right:.2f} -> heading={heading2}")
+    assert heading2 is None
 
     print("\n=== deteccion de estancamiento ===")
-    ctrl = NearRegimeController(NearRegimeConfig(stall_iters=3, stall_disp_m=0.05))
+    ctrl3 = NearRegimeController(NearRegimeConfig(stall_iters=3, stall_disp_m=0.05))
     quieto = Pose(1.0, 1.0, 0.0)
     for t in range(3):
-        ctrl.note_iteration(quieto, DriveCommand(0.0, 0.3, "girando"), float(t))
-    print(f"  estancado (girando sin avanzar): {ctrl.is_stalled()}")
-    assert ctrl.is_stalled()
+        ctrl3.note_iteration(quieto, DriveCommand(0.0, 0.3, "girando"), float(t))
+    print(f"  estancado (girando sin avanzar): {ctrl3.is_stalled()}")
+    assert ctrl3.is_stalled()
 
-    ctrl2 = NearRegimeController(NearRegimeConfig(stall_iters=3, stall_disp_m=0.05))
+    ctrl4 = NearRegimeController(NearRegimeConfig(stall_iters=3, stall_disp_m=0.05))
     for t in range(3):
         p = Pose(1.0 + 0.1 * t, 1.0, 0.0)
-        ctrl2.note_iteration(p, DriveCommand(0.3, 0.0, "avanzando"), float(t))
-    print(f"  avanzando de verdad: {ctrl2.is_stalled()}")
-    assert not ctrl2.is_stalled()
+        ctrl4.note_iteration(p, DriveCommand(0.3, 0.0, "avanzando"), float(t))
+    print(f"  avanzando de verdad: {ctrl4.is_stalled()}")
+    assert not ctrl4.is_stalled()
 
     print("\n=== enmascarado de corredor bloqueado ===")
-    ctrl3 = NearRegimeController(NearRegimeConfig(corridor_block_s=30.0))
+    ctrl5 = NearRegimeController(NearRegimeConfig(corridor_block_s=30.0))
     now = time.time()
-    ctrl3._block_current_corridor(Pose(0, 0, 0), 0.0, now)  # bloquea "adelante"
+    ctrl5._block_current_corridor(Pose(0, 0, 0), 0.0, now)  # bloquea "adelante"
     bev_libre = np.ones((134, 134), dtype=np.float32)
-    masked = ctrl3.mask_blocked_corridors(bev_libre, Pose(0, 0, 0), 0.03, now)
+    masked = ctrl5.mask_blocked_corridors(bev_libre, Pose(0, 0, 0), 0.03, now)
     celdas_bloqueadas = int((masked == 0.0).sum())
     print(f"  celdas puestas en 0 por el bloqueo: {celdas_bloqueadas}")
     assert celdas_bloqueadas > 0
-    assert ctrl3.has_blocked_corridors(now)
-    assert not ctrl3.has_blocked_corridors(now + 31.0), "el bloqueo deberia expirar"
+    assert ctrl5.has_blocked_corridors(now)
+    assert not ctrl5.has_blocked_corridors(now + 31.0), "el bloqueo deberia expirar"
+
+    print("\n=== ejecucion completa con fakes (sin robot) ===")
+    m = PersistentMap(MapConfig(size_m=8.0, resolution_m_per_px=0.03))
+    pose_fake = Pose(0.0, 0.0, 0.0)
+    sent: list[DriveCommand] = []
+
+    def _send(cmd: DriveCommand) -> None:
+        sent.append(cmd)
+        # simular que el robot efectivamente retrocede/gira un poco
+        if cmd.linear < 0:
+            pose_fake.x -= 0.02
+        pose_fake.theta += cmd.angular * 0.1
+
+    bev_seq = iter([bev_izq_libre, bev_izq_libre, bev_izq_libre])
+
+    def _capture_bev():
+        try:
+            return next(bev_seq), 0.015
+        except StopIteration:
+            return bev_izq_libre, 0.015
+
+    clearances_seq = iter([0.2, 0.7])  # primer chequeo insuficiente, segundo ok
+
+    def _compute_clearance():
+        try:
+            return next(clearances_seq)
+        except StopIteration:
+            return 0.7
+
+    ctrl6 = NearRegimeController(NearRegimeConfig(
+        reverse_distance_m=0.01, reverse_timeout_s=0.5,
+        rotate_timeout_s=0.5, align_tolerance_deg=180.0,  # no bloquear en el giro fake
+        success_clearance_m=0.5, max_local_turns=3,
+    ))
+    resultado = ctrl6.execute(
+        pmap=m, get_pose=lambda: pose_fake, capture_bev=_capture_bev,
+        compute_clearance=_compute_clearance, send=_send,
+        request_intervention=lambda: None, stopped_flag=lambda: False,
+    )
+    print(f"  resultado: {resultado}, regimen final: {ctrl6.regime}")
+    assert resultado == "ok"
+    assert ctrl6.regime == Regime.LEJANO
 
     print("\nTodos los asserts pasaron.")
 

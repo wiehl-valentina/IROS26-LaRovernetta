@@ -401,6 +401,44 @@ def _self_test() -> None:
 
     print("\nTodos los asserts pasaron.")
 
+@dataclass
+class CorridorClearances:
+    left: float
+    center: float
+    right: float
+
+
+def corridor_clearances(bev: np.ndarray, resolution_m: float,
+                        band_width_m: float = 0.30,
+                        traversable_thresh: float = 0.4,
+                        max_check_m: float = 1.2) -> CorridorClearances:
+    """Como front_clearance_m pero partido en tres franjas verticales,
+    para decidir de que lado hay lugar, no solo si esta bloqueado."""
+    h, w = bev.shape
+    band_px = max(1, int(band_width_m / resolution_m))
+    c_mid = w // 2
+
+    def _clear(c0: int, c1: int) -> float:
+        c0, c1 = max(0, c0), min(w, c1)
+        if c0 >= c1:
+            return 0.0
+        r_limit = max(0, h - 1 - int(max_check_m / resolution_m))
+        for r in range(h - 1, r_limit - 1, -1):
+            strip = bev[r, c0:c1]
+            known = strip >= 0.0
+            if not np.any(known):
+                continue
+            free_ratio = float(np.mean(strip[known] > traversable_thresh))
+            if free_ratio < 0.5:
+                return float((h - 1 - r) * resolution_m)
+        return float(max_check_m)
+
+    return CorridorClearances(
+        left=_clear(c_mid - 3 * band_px, c_mid - band_px),
+        center=_clear(c_mid - band_px, c_mid + band_px + 1),
+        right=_clear(c_mid + band_px, c_mid + 3 * band_px + 1),
+    )
+
 
 if __name__ == "__main__":
     _self_test()

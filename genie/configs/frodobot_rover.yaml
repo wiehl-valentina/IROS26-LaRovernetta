@@ -150,3 +150,12 @@ near_regime:
   heading_search_radius_m: 2.0
   corridor_block_s: 30.0
   fail_intervention_after: 3
+
+  # --- NUEVO: corredor por camara, post-retroceso ---
+  corridor_band_width_m: 0.25     # ver razon abajo, atado a tu footprint_px
+  corridor_check_m: 1.2
+  turn_step_deg: 15.0
+  max_local_turns: 3              # bajado de 4 -> ver razon abajo (CPU)
+
+  # --- NUEVO: respaldo por mapa (solo si la camara no alcanza) ---
+  fallback_heading_candidates_deg: [-45.0, -30.0, 30.0, 45.0]
