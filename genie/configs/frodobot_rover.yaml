@@ -1,4 +1,4 @@
-  # Config del puente GeNIE <-> Earth Rovers SDK
+# Config del puente GeNIE <-> Earth Rovers SDK
 # Earth Rover Mini+ — calibrado el 2026-07-31
 #
 # Calibracion propia de ESTE robot:
@@ -9,130 +9,133 @@
 # golpe a la camara, hay que recalibrar.
 
 rover:
-  base_url: "http://localhost:8000"
-  timeout_s: 5.0
+  base_url: "http://localhost:8000"   # URL del SDK del Earth Rover (hypercorn local)
+  timeout_s: 5.0                      # timeout de las requests HTTP del RoverClient
 
 samtp:
-  config_path: "sam2/configs/sam2.1_inference_tiny/sam2.1_custom2.yaml"
+  config_path: "sam2/configs/sam2.1_inference_tiny/sam2.1_custom2.yaml"  # yaml de arquitectura/inferencia de SAM-TP (Hiera-tiny)
   checkpoint_path: "sam2_logs/configs/sam2.1_training_tiny/sam2_training_custom2_freezeNoneNone_f57.yaml/checkpoints/checkpoint_2.pt"  # viejo, checkpoint generico del paper
-  #checkpoint_path: "checkpoints/checkpoint_finetuned_v2.pt"   # nuevo, fine-tuneado en 50k frames del Mini+
-  device: null
-  precision: "auto"
-  score_thresh: 0.0
+  #checkpoint_path: "checkpoints/checkpoint_finetuned_v2.pt"   # nuevo, fine-tuneado en 50k frames del Mini+  (comentado = NO se está usando el fine-tune)
+  device: null                        # null = autodetecta cuda/cpu; forzar "cuda" o "cpu" si hace falta
+  precision: "auto"                   # auto = bf16 en Ampere+, fp16 en Turing (ver SamTpRunner); "fp32" fuerza precision completa
+  score_thresh: 0.0                   # threshold que recibe SAM2ImagePredictor (mask_threshold) sobre los logits
+
 camera:
-  calibrated: true
+  calibrated: true                    # gate de seguridad: Bridge._check_placeholders() no arranca si esto no es true
 
-  image_size: [1920, 1080]
+  image_size: [1920, 1080]            # resolucion (w, h) con la que se calibraron K y dist_coeffs
 
-  intrinsics:
+  intrinsics:                         # matriz K 3x3 (fx, fy, cx, cy) del frente del Mini+, medida por calibrate_camera.py
     - [925.265722853314, 0.0, 962.3052531643399]
     - [0.0, 924.6288195383473, 528.3891677741947]
     - [0.0, 0.0, 1.0]
 
   # k1 = -0.263: barril marcado, tipico de un gran angular de ~92 grados.
   # Corregirlo NO es opcional: project_score_to_bev asume pinhole puro.
-  dist_coeffs: [-0.26257227523222204, 0.06503885855790396, -0.00031427372195389234, -0.0011895820486559178, -0.0073726075647136185]
+  dist_coeffs: [-0.26257227523222204, 0.06503885855790396, -0.00031427372195389234, -0.0011895820486559178, -0.0073726075647136185]  # coeficientes de distorsion OpenCV (k1,k2,p1,p2,k3), usados por Undistorter
 
   # Solo se usan si 'pose' es null. Se dejan como referencia.
-  height_m: 0.150
-  pitch_down_deg: 1.85
+  height_m: 0.150                     # altura de la camara sobre el piso (fallback si no hay 'pose')
+  pitch_down_deg: 1.85                # inclinacion hacia abajo de la camara en grados (fallback si no hay 'pose')
 
   # T_world_camera de pose_D (el de menor error). Tiene prioridad sobre
   # height_m y pitch_down_deg.
-  pose:
+  pose:                                # matriz 4x4 T_world_camera medida con camera_pose_from_ground.py (mas precisa que height/pitch)
     - [-0.000313571, -0.032360666, 0.999476207, 0.000000000]
     - [-0.999953056, 0.009689420, -0.000000000, 0.000000000]
     - [-0.009684345, -0.999429288, -0.032362186, 0.150244633]
     - [0.000000000, 0.000000000, 0.000000000, 1.000000000]
 
 projection:
-  ground_z: 0.0
-  resolution_m_per_px: 0.03
+  ground_z: 0.0                       # altura del plano del piso en el frame mundo (referencia para los rayos de proyeccion)
+  resolution_m_per_px: 0.03           # tamaño de celda del BEV, metros por pixel
 
   # PENDIENTE: con la camara a 15 cm, el suelo lejano se ve muy comprimido y
   # la mascara se vuelve poco confiable a partir de cierta distancia. Mirar el
   # BEV sobre una foto de vereda y bajar esto a 2.5-3.0 si hace falta.
-  forward_range_m: 2.0
-  side_range_m: 2.0
-  max_ray_distance_m: 2.5
-  projection_downscale: 2
-navigation:
+  forward_range_m: 2.0                # alcance del BEV hacia adelante, en metros
+  side_range_m: 2.0                   # medio-ancho del BEV a cada lado, en metros
+  max_ray_distance_m: 2.5             # distancia maxima de rayo al proyectar score->BEV (recorta puntos lejanos poco confiables)
+  projection_downscale: 2             # submuestrea el mapa de scores antes de proyectar (menos costo, ver profile_perception.py)
+
+navigation:                        
+                                     
+                                     
   # Determinar con tools/check_angular_sign.py:
   #   -1.0  si angular positivo hace girar a la IZQUIERDA
   #   +1.0  si angular positivo hace girar a la DERECHA
-  angular_sign: -1.0
-
-  max_linear: 0.80        # bien lento para las primeras corridas
-  max_angular: 0.45
-  turn_speed: 0.40
-  kp_angular: 0.9
-  lookahead_m: 1.5
-  align_threshold_deg: 90.0
-
-  goal_range_m: 3.5
-  claim_radius_m: 15.0    # tolerancia oficial del ERC
+  angular_sign: -1.0                  # signo aplicado al angular calculado, para corregir la convencion real del rover
+  max_linear: 0.95                    # velocidad lineal maxima que puede mandar PathFollower 
+  max_angular: 0.45                   # velocidad angular maxima
+  turn_speed: 0.40                    # velocidad angular fija usada al girar en el lugar (error de rumbo grande)
+  kp_angular: 0.9                     # ganancia proporcional de giro cuando el error de rumbo es chico (avanzando)
+  lookahead_m: 1.5                    # distancia de arco sobre el path final donde se toma el punto objetivo (pure pursuit)
+  align_threshold_deg: 90.0           # si el error de rumbo al punto lookahead supera esto, gira en el lugar en vez de avanzar
+  goal_range_m: 3.5                   # rango maximo al que se recorta la meta local (goal_from_gps) dentro del BEV
+  claim_radius_m: 15.0    # tolerancia oficial del ERC   # distancia al checkpoint desde la que se intenta reclamarlo (claim_checkpoint)
 
   # El rumbo sale del track GPS (ruidoso pero sin sesgo). El magnetometro va
   # montado al lado de los motores y suele tener offset variable.
-  heading_min_displacement_m: 1.5
-  trust_orientation: false
-  orientation_offset_deg: 0.0
-  orientation_sign: 1.0
-  commit_hold_s: 2.0
-  commit_min_deg: 8.0
-  commit_override_deg: 30.0
+  heading_min_displacement_m: 1.5     # desplazamiento minimo (m) para que HeadingEstimator confie en el rumbo por GPS-track
+  trust_orientation: false            # si es true, usa el magnetometro (orientation) en vez del rumbo por GPS-track
+  orientation_offset_deg: 0.0         # offset sumado a la lectura del magnetometro (para calibrarlo contra el GPS)
+  orientation_sign: 1.0               # signo aplicado a la lectura del magnetometro
+  commit_hold_s: 2.0                  # cuanto tiempo se mantiene el "compromiso" de lado de esquive antes de poder recalcular libremente
+  commit_min_deg: 8.0                 # por debajo de este error de rumbo, se considera que el camino va derecho (no hay maniobra en curso)
+  commit_override_deg: 30.0           # error de rumbo a partir del cual se permite cambiar de lado de esquive pese al compromiso vigente
+
 planner:
-  grid_size: 240
-  unknown_cost: 0.2
-  smooth_kernel: 3
-  num_goals: 30
-  num_mid_points_per_goal: 20
-  path_num_samples: 100
-  footprint_px: 12        # ~0.30 m de ancho de robot. Medir el Mini y ajustar.
-  threshold_cost: 0.35
-  threshold_points_ratio: 0.02
-  number_of_points_to_filter: 60
-  alpha: 1.0
-  best_k: 12
-  use_clustering: true    # el path fusion del paper
-  max_clusters: 2
-  cluster_angle_threshold_deg: 40.0
-  random_seed: 42
-  include_goal_in_path_bank: false
-  include_random_goals: true
+  grid_size: 240                      # tamaño (px) de la grilla cuadrada donde se remuestrea el costmap para planificar
+  unknown_cost: 0.2                    # costo asignado a celdas no observadas del BEV (0 = tan barato como el mejor terreno conocido)
+  smooth_kernel: 3                    # tamaño del kernel de suavizado gaussiano aplicado al costmap (<=1 desactiva)
+  num_goals: 30                       # cantidad de metas de borde usadas para armar el banco fijo de caminos candidatos
+  num_mid_points_per_goal: 20         # cantidad de puntos medios muestreados por cada meta (variantes de curvatura)
+  path_num_samples: 100               # cantidad de muestras por camino (resolucion del camino final)
+  footprint_px: 12        # ~0.30 m de ancho de robot. Medir el Mini y ajustar.   # tamaño (px) del footprint usado para filtrar/costear caminos
+  threshold_cost: 0.35                # costo a partir del cual una celda del footprint cuenta como "mala" al filtrar caminos
+  threshold_points_ratio: 0.02        # fraccion de celdas "malas" del footprint permitida antes de descartar un punto del camino
+  number_of_points_to_filter: 60      # cantidad de puntos iniciales del camino que se chequean en el filtro de costo alto
+  alpha: 1.0                          # factor de ponderacion exponencial en el calculo de costo del camino
+  best_k: 12                          # cantidad de caminos de menor costo considerados al construir el camino final
+  use_clustering: true                # el path fusion del paper   # si agrupa (k-means) los caminos candidatos y elige el cluster mas alineado a la meta
+  max_clusters: 2                     # tope de clusters para el k-means adaptativo
+  cluster_angle_threshold_deg: 40.0   # umbral de angulo (grados) para fusionar clusters de caminos con rumbo similar
+  random_seed: 42                     # semilla para el muestreo del banco de caminos (reproducibilidad)
+  include_goal_in_path_bank: false    # si inyecta explicitamente el pixel de la meta como uno de los caminos candidatos
+  include_random_goals: true          # si incluye metas de borde muestreadas al azar ademas de la meta real
 
 safety:
-  stale_frame_s: 2.0
-  max_consecutive_errors: 5
-  recovery_after_empty_plans: 3
-  recovery_turn_s: 1.5
-  loop_period_s: 0.2
-  max_consecutive_turns: 4
-  unstick_forward_s: 2.5
-  use_vlm_recovery: true
-  vlm_recovery_timeout_s: 4.0
-  vlm_recovery_min_confidence: 0.35
+  stale_frame_s: 2.0                  # si el frame no cambia por mas de esto (video congelado), _step() lanza RoverError
+  max_consecutive_errors: 5           # cantidad de errores seguidos en el loop antes de abandonar la corrida
+  recovery_after_empty_plans: 3       # cantidad de planes vacios consecutivos antes de disparar _recover()
+  recovery_turn_s: 1.5                # duracion del giro de recuperacion (barrido ciego)
+  loop_period_s: 0.2                 # periodo objetivo del loop principal (0 = sin limitar, corre lo mas rapido posible)
+  max_consecutive_turns: 4            # cantidad de giros-en-el-lugar seguidos (sin avance) antes de considerar "atascado" y forzar _unstick()
+  unstick_forward_s: 2.5              # duracion del avance forzado al desatascar
+  #use_vlm_recovery: true             # (comentado = desactivado) si _recover() debe usar el VLM en vez del barrido ciego
+  #vlm_recovery_timeout_s: 4.0        # (comentado) timeout de la llamada a Gemini para la recuperacion
+  #vlm_recovery_min_confidence: 0.35  # (comentado) confianza minima de la respuesta del VLM para aceptarla
 
   
 odometry:
-  wheel_radius_m: 0.0527
-  track_width_m: 0.15
-  left_rpm_indices: [0, 2]
-  right_rpm_indices: [1, 3]
+  wheel_radius_m: 0.0527              # radio "efectivo" de rueda usado para convertir rpm a velocidad lineal (ver calibrate_wheel_scale.py)
+  track_width_m: 0.15                 # distancia entre ruedas izquierda/derecha, usada para el modelo diferencial
+  left_rpm_indices: [0, 2]            # indices del array rpms que corresponden a las ruedas izquierdas (ver identify_wheels.py)
+  right_rpm_indices: [1, 3]           # indices del array rpms que corresponden a las ruedas derechas
   # El firmware del Mini invierte la convencion diferencial estandar:
   # rueda izquierda adelante + derecha atras = giro a la IZQUIERDA.
   # Verificado con el control manual el 2026-08-01.
-  rotation_sign:  1.0
-  use_gyro_for_rotation: true
-  gps_correction: true
-  min_gps_displacement_m: 1.0
+  rotation_sign:  1.0                 # signo aplicado a la rotacion derivada de las ruedas (omega)
+  use_gyro_for_rotation: true         # si usa el giroscopo (en vez de la diferencia de rpm de ruedas) para integrar rotacion
+  gps_correction: true                # si corrige la escala de la odometria por ruedas usando desplazamiento GPS
+  min_gps_displacement_m: 1.0         # desplazamiento GPS minimo requerido para aplicar una correccion de escala
 
 memory:
-  enabled: true
-  map_size_m: 8.0
-  update_weight: 0.45
-  decay_per_s: 0.08
-  recenter_margin_m: 1.5
-  min_confidence: 0.15
-  plan_forward_m: 3.0
-  plan_side_m: 2.0
+  enabled: true                       # si se usa el PersistentMap (mapa de mundo) en vez de planificar solo sobre el BEV del frame actual
+  map_size_m: 8.0                     # lado (m) del mapa de ocupacion persistente, cuadrado
+  update_weight: 0.45                 # cuanto pesa una observacion nueva al integrarse sobre el valor acumulado de cada celda
+  decay_per_s: 0.08                   # velocidad (por segundo) a la que una celda no revisitada decae hacia "desconocido"
+  recenter_margin_m: 1.5              # margen al borde del mapa que dispara un recentrado cuando el robot se acerca
+  min_confidence: 0.15                # confianza minima de una celda para contar como "observada" al extraer una ventana BEV
+  plan_forward_m: 3.0                 # alcance hacia adelante de la ventana BEV extraida del mapa para planificar
+  plan_side_m: 2.0                    # medio-ancho de la ventana BEV extraida del mapa para planificar

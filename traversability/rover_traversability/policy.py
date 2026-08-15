@@ -40,13 +40,13 @@ class PolicyConfig:
     min_corridor_score: float = 0.35    # a corridor below this is not worth turning toward
     bottom_weight: float = 2.0       # near (bottom) rows weighted up, linear ramp 1 -> this
     min_valid_pixels: int = 200      # fewer finite ROI pixels than this -> stop ("no_data")
-    max_linear: float = 0.8
-    min_linear: float = 0.5
+    max_linear: float = 0.98
+    min_linear: float = 0.8
     max_angular: float = 0.5
     k_angular: float = 1.2           # steering gain on normalized image-x offset
     hfov_deg: float = DEFAULT_HFOV_DEG
     goal_sigma: float = 0.5          # width of the goal-bias gaussian in normalized x
-    goal_bias_floor: float = 0.7     # off-goal corridors keep this fraction of their score
+    goal_bias_floor: float = 0.2     # off-goal corridors keep this fraction of their score
 
 
 @dataclass(frozen=True)
