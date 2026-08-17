@@ -173,7 +173,7 @@ class PathFollower:
     def __init__(self, lookahead_m: float = 1.0, align_threshold_deg: float = 25.0,
                  max_linear: float = 0.35, max_angular: float = 0.5,
                  turn_speed: float = 0.35, kp_angular: float = 0.9,
-                 angular_sign: float = -1.0):
+                 angular_sign: float = -1.0,min_linear_while_planned=0.08):
         self.lookahead_m = float(lookahead_m)
         self.align_threshold = float(align_threshold_deg)
         self.max_linear = float(max_linear)
@@ -181,6 +181,7 @@ class PathFollower:
         self.turn_speed = float(turn_speed)
         self.kp = float(kp_angular)
         self.angular_sign = float(angular_sign)
+        self.min_linear_while_planned = float(min_linear_while_planned)  
 
     def lookahead_point(self, path_xy: np.ndarray) -> np.ndarray | None:
         """Punto a lookahead_m de arco desde el robot."""

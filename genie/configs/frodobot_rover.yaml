@@ -65,7 +65,7 @@ navigation:
   #   -1.0  si angular positivo hace girar a la IZQUIERDA
   #   +1.0  si angular positivo hace girar a la DERECHA
   angular_sign: -1.0                  # signo aplicado al angular calculado, para corregir la convencion real del rover
-  max_linear: 0.95                    # velocidad lineal maxima que puede mandar PathFollower 
+  max_linear: 0.8                   # velocidad lineal maxima que puede mandar PathFollower 
   max_angular: 0.45                   # velocidad angular maxima
   turn_speed: 0.40                    # velocidad angular fija usada al girar en el lugar (error de rumbo grande)
   kp_angular: 0.9                     # ganancia proporcional de giro cuando el error de rumbo es chico (avanzando)

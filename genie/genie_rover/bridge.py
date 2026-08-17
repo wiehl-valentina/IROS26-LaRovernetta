@@ -33,13 +33,14 @@ from .navigation import (
     front_clearance_m,
     front_is_blocked,
     goal_from_gps,
+    path_robot_to_world,
+    path_world_to_robot,
 )
 from .odometry import Odometry, OdometryConfig, Pose
 from .perception import PerceptionPipeline
 from .persistent_map import MapConfig, PersistentMap
 from .recovery import NearRegimeConfig, NearRegimeController, Regime
 from .sdk_client import Checkpoint, RoverClient, RoverError
-from .navigation import PathFollower,path_robot_to_world,path_world_to_robot
 
 
 @dataclass
@@ -80,6 +81,7 @@ class Bridge:
             turn_speed=nav.get("turn_speed", 0.35),
             kp_angular=nav.get("kp_angular", 0.9),
             angular_sign=nav["angular_sign"],
+            min_linear_while_planned=nav.get("min_linear_while_planned", 0.08),  # <-- agregar
         )
         self.goal_range_m = float(nav.get("goal_range_m", 3.5))
         self.claim_radius_m = float(nav.get("claim_radius_m", 8.0))
@@ -104,7 +106,14 @@ class Bridge:
                 track_width_m=float(odo_cfg.get("track_width_m", 0.15)),
                 left_rpm_indices=tuple(odo_cfg.get("left_rpm_indices", (0, 2))),
                 right_rpm_indices=tuple(odo_cfg.get("right_rpm_indices", (1, 3))),
-                rotation_sign=float(odo_cfg.get("rotation_sign", 1.0)),
+                # BUGFIX: el default aca era 1.0, pero OdometryConfig.rotation_sign
+                # default es -1.0. Si el YAML no trae rotation_sign, se estaba
+                # invirtiendo el signo silenciosamente respecto del default
+                # "oficial" del dataclass. Hoy es inofensivo porque
+                # use_gyro_for_rotation=True por defecto (se ignora la
+                # rotacion por ruedas), pero es una trampa si algun dia se
+                # desactiva el gyro.
+                rotation_sign=float(odo_cfg.get("rotation_sign", -1.0)),
                 use_gyro_for_rotation=bool(odo_cfg.get("use_gyro_for_rotation", True)),
                 gps_correction=bool(odo_cfg.get("gps_correction", True)),
                 min_gps_displacement_m=float(odo_cfg.get("min_gps_displacement_m", 1.0)),
@@ -310,6 +319,11 @@ class Bridge:
             )
 
         telem = self.client.telemetry()
+
+        if self.debug_dir:
+            print("DEBUG telem.raw keys:", list(telem.raw.keys()),
+                  "rpms:", len(telem.raw.get("rpms", [])),
+                  "gyros:", len(telem.raw.get("gyros", [])))
         heading = self.heading_est.update(telem.latitude, telem.longitude,
                                           telem.orientation, telem.timestamp)
 
@@ -322,11 +336,26 @@ class Bridge:
                 if ok:
                     print(f"[bridge] ✓ checkpoint #{target.sequence} conseguido: {msg}")
                     self.refresh_checkpoints()
+                    # BUGFIX: sin esto, el resto de la iteracion (goal_desc,
+                    # planificacion, comando) seguia usando target/goal del
+                    # checkpoint que ACABAMOS de reclamar en vez del proximo.
+                    # Recalculamos con el nuevo target antes de seguir.
+                    target = self.current_target()
+                    if target is not None:
+                        goal = goal_from_gps(telem.latitude, telem.longitude, heading,
+                                             target.latitude, target.longitude,
+                                             self.goal_range_m)
+                    else:
+                        goal = type("G", (), {"x_right_m": 0.0,
+                                              "y_forward_m": self.goal_range_m})()
                 else:
                     print(f"[bridge] cerca del checkpoint ({goal.distance_m:.1f} m) "
                           f"pero rechazado: {msg}")
-            goal_desc = (f"cp#{target.sequence} a {goal.distance_m:.0f} m, "
-                         f"rel {goal.relative_bearing_deg:+.0f} grados")
+            if target is not None:
+                goal_desc = (f"cp#{target.sequence} a {goal.distance_m:.0f} m, "
+                             f"rel {goal.relative_bearing_deg:+.0f} grados")
+            else:
+                goal_desc = "derecho adelante (sin mas checkpoints)"
         else:
             goal = type("G", (), {"x_right_m": 0.0, "y_forward_m": self.goal_range_m})()
             goal_desc = "derecho adelante (sin meta GPS)"
@@ -393,8 +422,17 @@ class Bridge:
             path = path_world_to_robot(self._current_plan_xy, pose_now)
             cmd = self.follower.command(path)
             cmd = self._apply_commit(cmd, path)
-            if cmd.linear == 0.0 and cmd.angular != 0.0 and abs(math.degrees(math.atan2(
-                    float(path[0][0]) if len(path) else 0.0, 1.0))) <= self.follower.align_threshold:
+            # BUGFIX: usaba path[0][0] (primer punto del camino, no el punto
+            # de lookahead) sobre un denominador fijo en 1.0, que no es la
+            # misma formula que PathFollower.command()/_apply_commit() usan
+            # para el error de rumbo (atan2(x_right, y_forward) del punto de
+            # lookahead). Con eso el chequeo "ya esta alineado" solo daba el
+            # resultado correcto por casualidad, cuando y_forward del primer
+            # punto era ~1 m.
+            target = self.follower.lookahead_point(path)
+            if (cmd.linear == 0.0 and cmd.angular != 0.0 and target is not None
+                    and abs(math.degrees(math.atan2(float(target[0]), float(target[1]))))
+                    <= self.follower.align_threshold):
                 cmd = DriveCommand(max(cmd.linear, self.min_linear_while_planned), cmd.angular, cmd.reason)
             self.send(cmd)
             if self.near_ctrl is not None and pose_now is not None:
@@ -422,7 +460,14 @@ class Bridge:
         path = plan.final_path_xy_m
         if pose_now is not None and path is not None and len(path) >= 2:
             self._current_plan_xy = path_robot_to_world(path, pose_now)
-            self._last_plan_pose = pose_now
+            # BUGFIX: Odometry.update() muta self.odometry.pose in-place
+            # (nunca reasigna un Pose nuevo), asi que pose_now es siempre el
+            # MISMO objeto que self.odometry.pose. Guardar la referencia
+            # directa hacia que _last_plan_pose "avanzara sola" junto con la
+            # pose actual, dejando la distancia recorrida en 0 para siempre
+            # y matando el disparo de replanificacion por distancia
+            # (replan_distance_m). Hay que guardar una copia congelada.
+            self._last_plan_pose = Pose(pose_now.x, pose_now.y, pose_now.theta)
             self._last_plan_t = time.time()
         
         path = plan.final_path_xy_m
@@ -472,7 +517,15 @@ class Bridge:
         assert self.near_ctrl is not None and self.pmap is not None and self.odometry is not None
 
         def get_pose() -> Pose:
-            return self.odometry.pose
+            # BUGFIX: antes devolvia self.odometry.pose sin refrescar
+            # telemetria, asi que la pose quedaba congelada durante todo
+            # execute() (retroceso y giros). Eso hacia que recorrido/err_deg
+            # nunca cambiaran y que ambos loops corrieran siempre hasta su
+            # timeout en vez de cortar cuando correspondia. Hay que pedir
+            # telemetria fresca y volver a integrar en cada llamada, igual
+            # que hace el bucle normal en _step().
+            telem = self.client.telemetry()
+            return self.odometry.update(telem.raw)
 
         def capture_bev() -> tuple[np.ndarray, float]:
             """Frame fresco -> BEV + resolucion, para elegir de que lado
@@ -527,6 +580,17 @@ class Bridge:
               f"(sentido dominante {'izq' if sentido > 0 else 'der'}). "
               f"Fuerzo un avance de {self.unstick_forward_s:.1f} s.")
 
+        # BUGFIX: antes se confiaba ciegamente en unstick_forward_s de tiempo
+        # de motor sin verificar que el robot realmente se desplazara. Una
+        # rueda patinando (o el robot trabado contra algo fuera del cono que
+        # chequea front_is_blocked) mandaba "avance maximo" el tiempo entero
+        # sin que nada lo notara. Si hay odometria, se verifica desplazamiento
+        # real y se corta si no avanza tras darle un margen de arranque.
+        start_pose = self.odometry.pose if (self.use_map and self.odometry is not None) else None
+        if start_pose is not None:
+            start_pose = Pose(start_pose.x, start_pose.y, start_pose.theta)
+        stall_grace_s = min(0.6, self.unstick_forward_s / 2)
+
         self.send(DriveCommand(self.follower.max_linear, 0.0, "avance forzado"))
         t0 = time.time()
         while time.time() - t0 < self.unstick_forward_s and not self._stop_requested:
@@ -537,6 +601,15 @@ class Bridge:
                 if front_is_blocked(res.traversability, self.resolution):
                     print("[bridge] obstaculo durante el avance forzado, corto")
                     break
+                if start_pose is not None and (time.time() - t0) > stall_grace_s:
+                    telem = self.client.telemetry()
+                    pose = self.odometry.update(telem.raw)
+                    avance = math.hypot(pose.x - start_pose.x, pose.y - start_pose.y)
+                    if avance < 0.03:
+                        print(f"[bridge] avance forzado sin desplazamiento real "
+                              f"({avance*100:.1f} cm) -- posible rueda patinando "
+                              "o robot trabado, corto")
+                        break
             except Exception:
                 break
 

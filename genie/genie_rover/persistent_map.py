@@ -242,10 +242,10 @@ class PersistentMap:
         conserva la observacion de cuando el obstaculo todavia se veia bien
         (a 1-1.5 m, antes de entrar en la zona degenerada).
 
-        Importa el promedio y no la distancia continua: un rumbo con el 70%
-        de sus celdas libres pero con el obstaculo pegado al robot en ese
-        mismo rumbo (y campo abierto recien despues) puntuaria alto con un
-        promedio, y es exactamente el rumbo que NO hay que elegir -- el
+        No importa el promedio, importa la DISTANCIA CONTINUA: un rumbo con
+        el 70% de sus celdas libres pero con el obstaculo pegado al robot en
+        ese mismo rumbo (y campo abierto recien despues) puntuaria alto con
+        un promedio, y es exactamente el rumbo que NO hay que elegir -- el
         robot chocaria antes de llegar a la parte abierta. Por eso, para
         cada rayo del sector se camina desde el robot hacia afuera y se para
         en la primera celda no transitable (o no observada); el score del
@@ -255,7 +255,15 @@ class PersistentMap:
 
         Un rumbo sin ninguna celda observada tiene score 0.0, no radius_m:
         mejor un costado que sabemos libre que uno que simplemente nunca se
-        vio.
+        vio. Si TODOS los rumbos candidatos dan 0.0 (mapa sin informacion
+        util en ninguna direccion -- arranque en frio, mapa recien
+        recentrado, decay total), no hay base real para preferir ninguno, y
+        max() por si solo devolveria el primer candidato de la lista, que
+        por default es 0 grados (adelante). Elegir "seguir derecho" es
+        justo lo peor posible cuando no se sabe nada: se recae contra el
+        obstaculo del que el robot acaba de retroceder. En ese caso se
+        prefiere, entre los candidatos, el de mayor |rumbo| (el giro mas
+        alejado de "seguir derecho"), como ultimo recurso razonable.
 
         Devuelve (mejor_rumbo_deg, {rumbo_deg: distancia_libre_m}).
         """
@@ -292,6 +300,12 @@ class PersistentMap:
             scores[float(heading_deg)] = min(ray_clears) if ray_clears else 0.0
 
         best = max(scores, key=scores.get)
+        if scores[best] <= 0.0:
+            # Empate en "no se sabe nada": max() solo devolveria el primer
+            # candidato de la lista (0 grados por default), que es la peor
+            # eleccion posible en este caso puntual. Preferimos, entre los
+            # candidatos, alejarnos lo mas posible de "seguir derecho".
+            best = max(scores, key=lambda h: abs(h))
         return best, scores
 
     # ------------------------------------------------------------------ debug

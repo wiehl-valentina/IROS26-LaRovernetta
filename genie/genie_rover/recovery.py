@@ -217,13 +217,24 @@ class NearRegimeController:
 
     def _choose_from_camera(self, corridors: CorridorClearances) -> float | None:
         """Devuelve el heading relativo (grados) a intentar segun la camara,
-        o None si ningun corredor tiene evidencia suficiente para decidir."""
-        best = max(corridors.left, corridors.center, corridors.right)
-        if best < self.cfg.success_clearance_m:
+        o None si ningun corredor tiene evidencia suficiente para decidir.
+
+        BUGFIX: la version anterior elegia CENTRO en cuanto superaba el
+        umbral, sin comparar contra izquierda/derecha -- si centro daba
+        0.65 m e izquierda 1.5 m (umbral 0.6 m), se quedaba con centro pese
+        a que izquierda tenia mucho mas espacio, contradiciendo el docstring
+        del modulo ("se elige el de mayor espacio libre"). Ahora se compara
+        el maximo real entre los tres candidatos.
+        """
+        opciones = {
+            0.0: corridors.center,
+            self.cfg.turn_step_deg: corridors.left,
+            -self.cfg.turn_step_deg: corridors.right,
+        }
+        mejor_heading, mejor_clearance = max(opciones.items(), key=lambda kv: kv[1])
+        if mejor_clearance < self.cfg.success_clearance_m:
             return None
-        if corridors.center >= self.cfg.success_clearance_m:
-            return 0.0
-        return self.cfg.turn_step_deg if corridors.left >= corridors.right else -self.cfg.turn_step_deg
+        return mejor_heading
 
     # ---------------------------------------------------------- maniobra
 
