@@ -25,5 +25,5 @@ matplotlib>=3.10.0
 # Jupyter (opcional pero recomendado)
 jupyter
 ipykernel
-
+numpy
 
