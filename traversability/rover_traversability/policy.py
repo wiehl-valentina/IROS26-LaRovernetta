@@ -3,7 +3,10 @@
 The mask is the SAM-TP output: HxW float32 in [0, 1], 1 = drivable. The policy
 looks at the lower part of the image (near ground), splits it into vertical
 corridors, and steers toward the most drivable corridor — optionally biased
-toward a GPS goal direction. It is pure numpy, stateless and deterministic.
+toward a GPS goal direction. It is pure numpy and deterministic: it holds no
+internal state itself, but accepts the previously-chosen corridor as a plain
+argument (``prev_best_corridor``) so a caller can add hysteresis without this
+function keeping anything between calls.
 
 Two field-proven rules are inherited from the auto-navigation-mini research
 stack's BEV controller:
@@ -47,6 +50,9 @@ class PolicyConfig:
     hfov_deg: float = DEFAULT_HFOV_DEG
     goal_sigma: float = 0.5          # width of the goal-bias gaussian in normalized x
     goal_bias_floor: float = 0.7     # off-goal corridors keep this fraction of their score
+    corridor_hysteresis: float = 0.15  # bonus given to the previously-chosen corridor so
+                                        # frame-to-frame mask noise doesn't flip the turn
+                                        # direction back and forth without ever committing
 
 
 @dataclass(frozen=True)
@@ -71,6 +77,7 @@ def suggest_command(
     mask: np.ndarray,
     cfg: PolicyConfig = PolicyConfig(),
     goal_offset_deg: float | None = None,
+    prev_best_corridor: int | None = None,
 ) -> CommandDecision:
     """Turn a traversability mask into a (linear, angular) command.
 
@@ -79,6 +86,12 @@ def suggest_command(
         cfg: tuning knobs.
         goal_offset_deg: bearing to the goal relative to the rover's heading
             (positive = goal is to the RIGHT). None = pure obstacle avoidance.
+        prev_best_corridor: index of the corridor chosen on the previous call
+            (same cfg.num_corridors), if any. Gets a small score bonus
+            (cfg.corridor_hysteresis) so that near-tied corridors don't swap
+            the winner every frame from mask noise alone — the caller (e.g.
+            MissionRunner) is responsible for tracking this across steps;
+            this function stays pure/stateless otherwise.
     """
     m = np.asarray(mask, dtype=np.float32)
     if m.ndim != 2 or m.size == 0:
@@ -127,6 +140,13 @@ def suggest_command(
         centers_norm = (centers - w / 2.0) / (w / 2.0)
         gauss = np.exp(-0.5 * ((centers_norm - gx) / cfg.goal_sigma) ** 2)
         biased = corridor_scores * (cfg.goal_bias_floor + (1.0 - cfg.goal_bias_floor) * gauss)
+
+    if (prev_best_corridor is not None and 0 <= prev_best_corridor < n
+            and corridor_scores[prev_best_corridor] >= cfg.min_corridor_score):
+        # Only reinforce a still-viable corridor — a bonus on a corridor that
+        # has actually closed up would just delay reacting to it.
+        biased = biased.copy()
+        biased[prev_best_corridor] *= (1.0 + cfg.corridor_hysteresis)
 
     # Best corridor; ties resolved toward the center.
     order = np.argsort(-biased, kind="stable")

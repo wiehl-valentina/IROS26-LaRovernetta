@@ -62,7 +62,7 @@ navigation:
   #   +1.0  si angular positivo hace girar a la DERECHA
   angular_sign: -1.0
 
-  max_linear: 0.80        # bien lento para las primeras corridas
+  max_linear: 0.7       # bien lento para las primeras corridas
   max_angular: 0.45
   turn_speed: 0.40
   kp_angular: 0.9
@@ -81,6 +81,18 @@ navigation:
   commit_hold_s: 2.0
   commit_min_deg: 8.0
   commit_override_deg: 30.0
+
+  # El planner geometrico (plan_on_bev) NO corre en cada frame: solo cuando
+  # el robot avanzo esto desde el ultimo plan (medido sobre la pose de
+  # odometry.py, ya corregida por GPS cuando hay fix), o antes si al camino
+  # cacheado le queda menos de replan_min_remaining_m por delante. Entre
+  # medio, el bridge sigue el ultimo camino calculado, reproyectado a la pose
+  # actual (transform_path_xy en navigation.py) — asi el robot se sigue
+  # moviendo en vez de quedarse "pensando" cada frame. Un obstaculo al frente
+  # (front_is_blocked) sigue frenando de inmediato, cada frame, sin esperar
+  # a que se cumpla esta distancia.
+  replan_every_m: 1.0
+  replan_min_remaining_m: 0.4
 planner:
   grid_size: 240
   unknown_cost: 0.2
@@ -113,7 +125,28 @@ safety:
   vlm_recovery_timeout_s: 4.0
   vlm_recovery_min_confidence: 0.35
 
-  
+  # Obstaculo persistente: cuantos frames SEGUIDOS de "OBSTACULO al frente"
+  # antes de evaluar un retroceso (no reaccionar a un bloqueo de un solo
+  # frame, p.ej. alguien que cruzo caminando).
+  obstacle_persist_frames: 4
+  # Umbrales sobre lo que dice la MEMORIA (PersistentMap, no una camara
+  # trasera real) del rumbo "atras" para animarse a retroceder.
+  retroceso_min_libre_pct: 55.0
+  retroceso_min_cobertura_pct: 30.0
+  retroceso_max_m: 0.6
+  retroceso_paso_m: 0.2
+  # Negativo = reversa. Sin verificar empiricamente todavia (no hay un
+  # tools/ equivalente a check_angular_sign.py para esto) — confirmalo a
+  # mano la primera vez, con espacio de sobra detras del robot.
+  retroceso_linear: -0.18
+
+  # Recuperacion informada por memoria: rumbos candidatos (grados relativos
+  # al actual) que _recover() evalua con el mapa antes de girar. 0=adelante
+  # (por si el bloqueo ya se disolvio), 180=atras.
+  recovery_headings_deg: [0.0, 90.0, -90.0, 180.0]
+  recovery_min_cobertura_pct: 25.0
+
+
 odometry:
   wheel_radius_m: 0.0527
   track_width_m: 0.15
