@@ -1,0 +1,8 @@
+{
+  "route": "missions/routes/test_route_200m.json",
+  "meters_between_interventions": null,
+  "pct_checkpoints_reached": null,
+  "seconds_per_mission": null,
+  "measured_on": null,
+  "model_checkpoint_sha256": null
+}

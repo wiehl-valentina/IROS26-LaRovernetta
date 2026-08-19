@@ -1,0 +1,29 @@
+# ==========================
+# Proyecto: SAM-TP Earth Rover
+# ==========================
+
+# Manejo de datasets
+datasets>=4.0.0
+huggingface_hub>=0.34.0
+
+# DataFrames y formatos
+pandas>=2.2.2
+numpy>=2.0.0
+pyarrow>=21.0.0
+
+# Procesamiento de imágenes y video
+opencv-python>=4.10.0
+Pillow>=11.0.0
+
+# Utilidades
+tqdm>=4.67.0
+PyYAML>=6.0.2
+
+# Visualización
+matplotlib>=3.10.0
+
+# Jupyter (opcional pero recomendado)
+jupyter
+ipykernel
+
+

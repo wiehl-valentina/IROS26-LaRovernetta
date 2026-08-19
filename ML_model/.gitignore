@@ -1,0 +1,28 @@
+# Entornos virtuales
+.venv/
+venv/
+ENV/
+
+# Datos pesados, metadatos masivos y checkpoints
+data/raw/
+data/frames/
+data/masks/
+frodobots_metadata/
+checkpoints/
+outputs/
+
+# Archivos binarios y multimedia
+*.tar
+*.mp4
+*.pt
+*.pth
+*.parquet
+
+
+data/
+checkpoints/
+external/
+*.pt
+*.tar
+__pycache__/
+venv/
