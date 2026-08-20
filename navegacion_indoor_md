@@ -1,0 +1,246 @@
+
+# Navegación indoor sin GPS + búsqueda de cono (agosto 2026)
+
+Implementación de `Navegacion_sin_gps.html` (`Documentos/Modulos/Indoor/` en
+el repo — es el mismo archivo que Pablo subió al chat) sobre `genie_rover`.
+Pedido: llevar el diagrama de ese doc a código, modularizando y reutilizando
+todo lo que ya existe en el repo en vez de reescribir desde cero.
+
+Se partió de clonar `wiehl-valentina/IROS26-LaRovernetta` (rama `main`) por
+HTTPS en la sesión, igual que las entregas anteriores. **No se tocó
+`bridge.py`, `navigation.py`, `odometry.py`, `persistent_map.py`,
+`perception.py`, `sdk_client.py` ni `genie_path_planner/`** — todo lo nuevo
+vive en archivos aparte que se apoyan en esos módulos sin modificarlos, para
+no arriesgar el comportamiento que ya está validado en el robot real para
+el modo ERC/outdoor.
+
+## Resumen de una línea
+
+`IndoorBridge` (subclase de `Bridge`) agrega detección de cono
+(`cone_detector.py`) y una máquina de estados de misión (`mission.py`)
+encima de la misma percepción/mapa/planner/seguidor que ya existían — el
+mapa GPS→meta local (`goal_from_gps`) se reemplaza por
+`ConeMissionFSM`→meta local, y todo lo de más abajo (planner de
+transitabilidad, `front_is_blocked`, recuperación, freno de seguridad) sigue
+siendo exactamente el mismo código.
+
+## Qué se reutiliza tal cual (sin modificar)
+
+| Pieza existente | Para qué se reusa |
+| --- | --- |
+| `PerceptionPipeline` (SAM-TP → BEV) | Sigue siendo la única fuente de "por dónde puedo manejar" |
+| `Odometry` | Pose sin GPS: ya soportaba `gps_correction: false` de antes — no necesitó ningún cambio, solo se lo enciende con esa bandera en el config nuevo |
+| `PersistentMap` | Memoria del mundo (igual que afuera) + base de la exploración por frontera nueva |
+| `PathFollower` / `plan_on_bev` / `front_is_blocked` | Conducción y frenado de seguridad, sin cambios |
+| `Bridge._recover` / `_unstick` / `_apply_commit` / `send` / `run` / `request_stop` | `IndoorBridge` los hereda todos sin tocarlos |
+| `genie_path_planner.geometry.camera_planar_axes` / `as_matrix` | Convención forward/left para ubicar el cono en el piso — la misma que usa `project_score_to_bev` para armar el BEV, así evita un desfasaje de signo entre "dónde está el cono" y "dónde puedo pisar" |
+| `programs/client/genai_client.ask_image_structured` | Verificación opcional del cono con Gemini (mismo cliente que ya existe para `vlm_recovery`, sin wirear todavía según `bridge_fix_agosto2026.md` — acá se le encuentra un segundo uso concreto) |
+| Patrón de `test_recover_offline.py` | Las pruebas nuevas (`test_indoor_mission_offline.py`) siguen el mismo criterio: llaman al método real de la clase real sobre un objeto armado a mano, no reinventan la lógica en el test |
+
+## Archivos nuevos
+
+```
+genie/genie_rover/cone_detector.py            detección del cono + su posición en el piso
+genie/genie_rover/mission.py                  máquina de estados SEARCH/NAVIGATE/APPROACH/VERIFY/STOP
+genie/genie_rover/indoor_bridge.py             orquestador (subclase de Bridge)
+genie/genie_rover/test_indoor_mission_offline.py   prueba de integración offline
+genie/configs/indoor_cone_search.yaml          config nuevo (cone: + mission:, resto = frodobot_rover.yaml)
+genie/configs/waypoints_example.yaml           ejemplo de ruta para Opción A (mapa conocido)
+```
+
+`cone_detector.py` y `mission.py` traen su propia autoprueba (mismo patrón
+que `odometry.py`/`navigation.py`/`persistent_map.py`):
+
+```bash
+cd genie
+python -m genie_rover.cone_detector
+python -m genie_rover.mission
+python -m genie_rover.test_indoor_mission_offline
+```
+
+Las tres corren en CPU, sin robot, sin SAM-TP y sin `ultralytics` — **se
+corrieron en esta sesión y las tres pasan**. Lo que NO se corrió (no había
+robot ni checkpoint de SAM-TP disponibles): `IndoorBridge` contra el SDK y
+la cámara reales. Antes de usarlo en el robot, correr primero en `dry-run`
+(por defecto, sin `--go`) y mirar los logs antes de agregar `--go`.
+
+## `cone_detector.py`: detección + geometría
+
+Dos backends intercambiables por config (`cone.backend: "color" | "yolo"`),
+mismo patrón que `perception.py` separa `SamTpRunner` de `PerceptionPipeline`:
+
+- **`color`** (default): HSV + contornos con OpenCV. Cero entrenamiento,
+  corre hoy mismo en CPU. Sirve para probar el resto del pipeline de punta a
+  punta y como red de respaldo barata, **no** como detector final — en un
+  pasillo real con carteles naranjas, mochilas o luz cálida va a dar falsos
+  positivos. Los umbrales HSV/forma están en `cone.color.*` del config.
+- **`yolo`**: envoltorio sobre `ultralytics.YOLO`, carga un `.pt` una sola
+  vez (igual que `SamTpRunner` con el checkpoint de SAM-TP). Es el camino
+  real para producción — ver "Cómo entrenar el detector real" más abajo.
+
+Lo geométricamente nuevo es `ground_point_from_pixel`: toma el pixel
+inferior-central del bounding box (donde el cono toca el piso) y lo
+reproyecta al plano del suelo con la misma familia de cuentas que
+`project_score_to_bev` usa para armar el BEV completo, pero para un solo
+punto. Reutiliza `genie_path_planner.geometry.camera_planar_axes` en vez de
+re-derivar a mano el signo de "adelante"/"izquierda" — ese tipo de
+desalineación de convención es exactamente la clase de bug que
+`bridge_fix_agosto2026.md` y `fix_pitch_velocidad_agosto2026.md` ya
+tuvieron que perseguir con `angular_sign`/`gyro_yaw_index`, así que acá se
+evitó de raíz reusando el helper real en vez de escribir el propio.
+
+`GroundPoint.to_bev_goal()` convierte esa posición a la convención
+`(x_right_m, y_forward_m)` que espera `plan_on_bev` — el mismo formato que
+ya usa `goal_from_gps` en el bridge original.
+
+## `mission.py`: la máquina de estados
+
+Los cinco estados del doc, con una simplificación consciente:
+
+- **SEARCH** y **NAVIGATE** comparten el mismo mecanismo de manejo (seguir
+  conduciendo evitando obstáculos vía `plan_on_bev`, igual que el bridge sin
+  GPS) y solo difieren en **de dónde sale la meta**: en SEARCH no hay cono a
+  la vista (ni memoria reciente) y la meta sale de la estrategia de
+  búsqueda; en NAVIGATE el cono está a la vista (o se perdió hace poco) pero
+  todavía lejos, y la meta es directamente la posición del cono en el piso.
+- **APPROACH**: igual que NAVIGATE pero a menos de `approach_start_m`
+  (2.0 m, valor del doc). Se le aplica `approach_max_linear_scale` (0.6 por
+  defecto) a la velocidad lineal — no hace falta tocar `PathFollower`, se
+  escala el `DriveCommand` ya calculado.
+- **VERIFY**: a `verify_at_m` (0.8 m) o menos. Exige varias detecciones
+  seguidas (`verify_hits_required`, default 3 de una ventana de
+  `verify_window`, default 6) con confianza mínima y **posición estable**
+  (`verify_max_jump_m`) antes de confiar en que es el cono de verdad — esto
+  evita frenar por un falso positivo de un solo frame del detector color.
+  Opcionalmente (`mission.verify_with_vlm: true`) exige además que
+  `ConeMissionFSM.confirm_with_vlm()` confirme con Gemini; si la llamada
+  falla (sin `GEMINI_API_KEY`, timeout, lo que sea) **no frena a ciegas**,
+  sigue esperando más evidencia geométrica — mismo criterio defensivo que el
+  resto del repo con llamadas externas.
+- **STOP**: confirmado y a `stop_distance_m` (0.5 m) o menos. Terminal:
+  `mission_done=True` para siempre, `IndoorBridge` llama a
+  `self.request_stop()` (heredado de `Bridge`) y el bucle principal termina
+  solo, frena y llama a `_print_summary()`.
+
+Si el cono se pierde de vista (oclusión, un frame ruidoso) se mantiene el
+último punto conocido por `lost_cone_grace_s` (1.5 s) antes de volver a
+SEARCH — evita que un solo frame perdido tire toda la aproximación de
+vuelta a explorar.
+
+### Desviación deliberada del doc: no hay `steering = Kp * error`
+
+El pseudocódigo original (`error = cone_center_x - image_center_x; steering
+= Kp * error`) dirige el robot directo al cono mirando solo la imagen, sin
+ver el piso. Acá la posición del cono se pasa como **meta** al mismo
+`plan_on_bev` que evita obstáculos en todo el resto del recorrido — así la
+aproximación final sigue esquivando gente/mobiliario en vez de ir en línea
+recta hacia el pixel del cono. Es más código reusado, y más seguro para un
+pasillo real.
+
+### Dos estrategias de búsqueda, además del `wander` de siempre
+
+- **`waypoints_path`** (Opción A del doc — mapa conocido): `WaypointRoute`
+  sigue una lista de puntos `(x_m, y_m)` **en el marco de la odometría**
+  (no GPS — ver `configs/waypoints_example.yaml` y sus instrucciones de cómo
+  armarla con `tools/diag_odometry.py`).
+- **`frontier`** (Opción B del doc — mapa desconocido): `pick_frontier_goal`
+  opera directamente sobre las grillas numpy de `PersistentMap` (`.value`,
+  `.conf`) para encontrar celdas transitables-conocidas con un vecino nunca
+  visto, y elige la más cercana a una distancia preferida
+  (`frontier_preferred_m`) dentro de un cono de visión hacia adelante
+  (`frontier_fov_deg`) — si no hay ninguna en ese cono, lo relaja antes de
+  rendirse (mismo espíritu que `_recover()` intenta varios rumbos antes de
+  girar a ciegas). No agrega ningún estado propio: reusa el mapa que
+  `bridge.py` ya mantenía.
+
+Si no se configura ninguna de las dos (`search_mode: "wander"`, el default),
+el comportamiento es idéntico al fallback ya existente en `bridge.py` sin
+checkpoint GPS: derecho adelante evitando obstáculos.
+
+## `indoor_bridge.py`: el orquestador
+
+`IndoorBridge(Bridge)` llama a `super().__init__()` (carga SAM-TP, abre el
+cliente HTTP, arma `Odometry`/`PersistentMap`/`PathFollower`/`PlannerConfig`
+— cero código duplicado ahí) y agrega `self.cone_detector` y `self.mission`.
+Lo único que reemplaza por completo es `_step()`: la versión original arma
+la meta desde un checkpoint GPS; la de acá corre percepción + detección de
+cono + odometría/mapa (igual que el original) y le pide la meta a
+`ConeMissionFSM` en vez de a `goal_from_gps`. De ahí para abajo — chequeo de
+obstáculo, `plan_on_bev`, seguimiento, `_apply_commit`, recuperación por
+plan vacío o por giros atascados — es exactamente la misma secuencia de
+llamadas que `Bridge._step`, a los mismos métodos heredados.
+
+`_maybe_dump_debug_indoor` extiende el volcado de debug de `Bridge` para
+dibujar el bounding box del cono sobre el frame guardado, cuando hay
+`--debug-dir`.
+
+## Cómo correrlo
+
+```bash
+cd genie
+
+# simulacro (no manda comandos, solo imprime)
+python -m genie_rover.indoor_bridge --config configs/indoor_cone_search.yaml
+
+# de verdad, con límite de tiempo y volcado de debug (recomendado las primeras veces)
+python -m genie_rover.indoor_bridge --config configs/indoor_cone_search.yaml \
+    --go --max-seconds 120 --debug-dir debug/indoor_run1
+```
+
+Mismas reglas de seguridad que `bridge.py`: dry-run por defecto,
+`_check_placeholders()` no te deja arrancar con `camera.calibrated: false`,
+y `Ctrl-C` frena en cualquier momento.
+
+## Cómo entrenar el detector real (YOLO)
+
+`cone_detector.py` no entrena nada — cuando haya un checkpoint entrenado,
+solo hay que cambiar `cone.backend: "yolo"` y apuntar
+`cone.yolo.weights_path`. Para conseguir ese checkpoint, el camino más corto
+reutiliza lo que ya existe:
+
+1. **Recolectar frames**: `ML_model/scripts/pipe_nuestras_rides/0_mission_recorder.py`
+   / `1_encontrar_candidatos.py` ya arman el pipeline de candidatos de una
+   corrida — se puede reusar tal cual para juntar frames de pasillos con el
+   cono en distintas posiciones/distancias/luces.
+2. **Etiquetar bounding boxes**: `pipeline_etiquetado_agosto2026.md` ya
+   documenta cómo levantar CVAT con Segment Anything para máscaras — CVAT
+   soporta rectángulos nativamente y exporta directo en formato **YOLO
+   1.1**, así que no hace falta ningún script nuevo, solo elegir esa
+   herramienta y ese formato de exportación en vez de "Segmentation mask".
+3. **Entrenar**: `ultralytics` trae su propio `yolo train` sobre ese
+   dataset exportado — no forma parte de esta entrega (necesita GPU y el
+   dataset real, ninguno de los dos disponibles en esta sesión).
+4. Mientras tanto, el backend `color` deja probar `mission.py` e
+   `indoor_bridge.py` de punta a punta sin esperar el entrenamiento.
+
+## Qué falta / próximos pasos
+
+- **No se corrió contra el robot ni contra SAM-TP real** (sin GPU/checkpoint
+  en esta sesión, mismo límite que las entregas anteriores). Antes de usarlo
+  de verdad: correr en dry-run, mirar unos cuantos frames de
+  `--debug-dir` (bbox del cono dibujado, BEV, mapa) y recién después
+  `--go` con `--max-seconds` chico.
+- El detector `color` es un piso, no la solución final — priorizar
+  entrenar un YOLO real antes de confiar en esto para una demo.
+- `pick_frontier_goal` nunca se probó con un mapa parcialmente explorado
+  real (solo con mapas sintéticos en el self-test) — vigilar sobre todo el
+  caso "pasillo en T" (dos fronteras válidas a la vez, hoy gana la más
+  cercana a `frontier_preferred_m`, puede no ser la mejor elección real).
+- `verify_with_vlm` está implementado pero no probado con credenciales
+  reales en esta sesión (mismo estado que `vlm_recovery`/`use_vlm_recovery`
+  en `bridge_fix_agosto2026.md`: escrito, no ejercitado contra Gemini de
+  verdad).
+- Si el robot va a usarse en ambos modos (ERC afuera / cono adentro), separar
+  bien qué config usar en cada corrida — `indoor_cone_search.yaml` no tiene
+  `use_vlm_recovery`/`retroceso_*`/`recovery_headings_deg` de la rama que
+  vive solo en el chat (`fix_pitch_velocidad_agosto2026.md`): si esa rama
+  se termina subiendo al repo, hay que decidir si `IndoorBridge` la hereda
+  también (llamaría a los mismos métodos heredados, no debería requerir
+  cambios en `indoor_bridge.py`, pero no se probó esa combinación).
+
+## Entrega
+
+Paquete de archivos completos (los seis listados en "Archivos nuevos") +
+este doc, enviados directo al chat (`navegacion_indoor_agosto2026.zip`).
+Sin push a GitHub — sin `gh` ni conector disponible en la sesión, mismo
+criterio que todas las entregas anteriores de `genie_rover`.
