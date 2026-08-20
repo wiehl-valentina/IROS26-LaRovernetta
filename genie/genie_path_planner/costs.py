@@ -57,9 +57,10 @@ def pick_final_path(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Pick a final path from the best candidates.
 
-    Lower cost is better. This preserves the current GeNIE planner behavior:
-    average the top-k paths using cost-proportional weights, then fall back to
-    the single best path if the averaged path is worse than the selected set.
+    Lower cost is better, so the mix weights each candidate by inverse cost:
+    the best path in the top-k dominates the average instead of the worst one
+    (using the raw cost as the weight would do the opposite, since higher
+    cost would get more weight).
     """
     if not paths_with_cost:
         return np.array([], dtype=np.float32), np.array([], dtype=np.float32)
@@ -69,9 +70,8 @@ def pick_final_path(
     final_rows = np.zeros(int(num_samples), dtype=np.float32)
     final_cols = np.zeros(int(num_samples), dtype=np.float32)
 
-    weights = np.array([p[0] for p in top], dtype=np.float32)
-    if float(np.sum(weights)) <= 1e-8:
-        weights = np.ones_like(weights)
+    costs = np.array([p[0] for p in top], dtype=np.float32)
+    weights = 1.0 / (costs + 1e-6)
     weights = weights / np.sum(weights)
 
     for i in range(int(num_samples)):
@@ -91,3 +91,30 @@ def pick_final_path(
         best_path = np.asarray(top[0][1], dtype=np.float32)
         return best_path[:, 0].astype(np.float32), best_path[:, 1].astype(np.float32)
     return final_rows, final_cols
+
+
+def _self_test() -> None:
+    # Tres caminos de un solo punto, en fila sobre el eje x: costo 0.1 (mejor,
+    # x=0), 0.5 (x=10) y 0.9 (peor, x=20). La mezcla tiene que quedar mucho
+    # mas cerca del mejor camino que del peor.
+    low = np.array([[0.0, 0.0]], dtype=np.float32)
+    mid = np.array([[10.0, 0.0]], dtype=np.float32)
+    high = np.array([[20.0, 0.0]], dtype=np.float32)
+    paths_with_cost = [(0.9, high), (0.1, low), (0.5, mid)]
+    # Costo muy bajo en todo el mapa: el promedio ponderado no dispara el
+    # fallback a "mejor camino solo" (weighted_cost > worst_top_cost), asi
+    # que el assert de abajo prueba de verdad los pesos de la mezcla.
+    cost_map = np.full((30, 30), -50.0, dtype=np.float32)
+
+    rows, cols = pick_final_path(
+        paths_with_cost, best_k=3, num_samples=1, cost_map=cost_map,
+        alpha=0.5, footprint_px=4,
+    )
+    x = float(rows[0])
+    print(f"mezcla de x=[0,10,20] con costos [0.1,0.5,0.9]: x={x:.2f} (esperado < 5)")
+    assert x < 5.0, "el peor camino sigue pesando de mas en la mezcla"
+    print("Todos los asserts pasaron.")
+
+
+if __name__ == "__main__":
+    _self_test()
