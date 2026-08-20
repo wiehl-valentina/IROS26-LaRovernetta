@@ -1,0 +1,191 @@
+  # Config de IndoorBridge: navegacion SIN GPS + busqueda de un cono.
+#
+# Parte de la MISMA calibracion de camara que configs/frodobot_rover.yaml
+# (rover/samtp/camera/projection/planner/odometry/memory: si calibraste el
+# robot para el modo ERC, es la misma camara y el mismo SAM-TP, asi que estas
+# secciones se copian tal cual). Lo nuevo esta al final: `cone:` y `mission:`.
+#
+# Si tu robot / camara es distinto, corre primero tools/calibrate_camera.py
+# y tools/camera_pose_from_ground.py como en frodobot_rover.yaml — sin eso
+# _check_placeholders() no te deja arrancar (a proposito).
+
+rover:
+  base_url: "http://localhost:8000"
+  timeout_s: 5.0
+
+samtp:
+  config_path: "sam2/configs/sam2.1_inference_tiny/sam2.1_custom2.yaml"
+  checkpoint_path: "sam2_logs/configs/sam2.1_training_tiny/sam2_training_custom2_freezeNoneNone_f57.yaml/checkpoints/checkpoint_2.pt"
+  device: null
+  precision: "auto"
+  score_thresh: 0.0
+
+camera:
+  calibrated: true
+  image_size: [1920, 1080]
+  intrinsics:
+    - [925.265722853314, 0.0, 962.3052531643399]
+    - [0.0, 924.6288195383473, 528.3891677741947]
+    - [0.0, 0.0, 1.0]
+  dist_coeffs: [-0.26257227523222204, 0.06503885855790396, -0.00031427372195389234, -0.0011895820486559178, -0.0073726075647136185]
+  height_m: 0.150
+  pitch_down_deg: 1.85
+  pose:
+    - [-0.000313571, -0.032360666, 0.999476207, 0.000000000]
+    - [-0.999953056, 0.009689420, -0.000000000, 0.000000000]
+    - [-0.009684345, -0.999429288, -0.032362186, 0.150244633]
+    - [0.000000000, 0.000000000, 0.000000000, 1.000000000]
+
+projection:
+  ground_z: 0.0
+  resolution_m_per_px: 0.03
+  # Pasillo interior: mas corto que afuera porque hay menos espacio para
+  # frenar/maniobrar. Si el pasillo es angosto (< 2 m) bajar side_range_m.
+  forward_range_m: 2.0
+  side_range_m: 1.5
+  max_ray_distance_m: 2.5
+  projection_downscale: 2
+
+navigation:
+  # Determinar con tools/check_angular_sign.py, es el mismo robot.
+  angular_sign: -1.0
+  max_linear: 0.5        # mas lento que afuera: pasillo angosto, gente cerca
+  max_angular: 0.45
+  turn_speed: 0.35
+  kp_angular: 0.9
+  lookahead_m: 1.0
+  align_threshold_deg: 40.0
+  commit_hold_s: 2.0
+  commit_min_deg: 8.0
+  commit_override_deg: 30.0
+  # goal_range_m / claim_radius_m / heading_* / orientation_* / trust_orientation:
+  # los usa el flujo GPS de bridge.py (goal_from_gps / HeadingEstimator). Los
+  # dejamos en el archivo por si algun dia corres bridge.py normal con este
+  # mismo config, pero indoor_bridge.py NO los lee — la meta sale siempre de
+  # genie_rover.mission, nunca de un checkpoint GPS.
+  goal_range_m: 3.5
+  claim_radius_m: 8.0
+  heading_min_displacement_m: 1.5
+  trust_orientation: false
+  orientation_offset_deg: 0.0
+  orientation_sign: 1.0
+
+planner:
+  grid_size: 200
+  unknown_cost: 0.2
+  smooth_kernel: 3
+  num_goals: 24
+  num_mid_points_per_goal: 16
+  path_num_samples: 80
+  footprint_px: 12
+  threshold_cost: 0.35
+  threshold_points_ratio: 0.02
+  number_of_points_to_filter: 60
+  alpha: 1.0
+  best_k: 10
+  use_clustering: true
+  max_clusters: 2
+  cluster_angle_threshold_deg: 40.0
+  random_seed: 42
+  include_goal_in_path_bank: false
+  include_random_goals: true
+
+safety:
+  stale_frame_s: 2.0
+  max_consecutive_errors: 5
+  recovery_after_empty_plans: 3
+  recovery_turn_s: 1.2
+  loop_period_s: 0.2
+  max_consecutive_turns: 5
+  unstick_forward_s: 1.5
+
+odometry:
+  wheel_radius_m: 0.0527
+  track_width_m: 0.15
+  left_rpm_indices: [0, 2]
+  right_rpm_indices: [1, 3]
+  rotation_sign: 1.0
+  use_gyro_for_rotation: true
+  # SIN GPS: no hay fix adentro del edificio. odometry.py ya tolera esto (si
+  # lat/lon no vienen o son el codigo "sin fix" del SDK, simplemente no
+  # corrige nada) — lo apagamos aca de forma explicita para que quede
+  # documentado por que nunca va a haber "correcciones GPS: N>0" en el resumen.
+  gps_correction: false
+  min_gps_displacement_m: 1.0
+
+memory:
+  enabled: true              # IndoorBridge lo exige (frontier + goal del cono lo necesitan)
+  map_size_m: 8.0
+  update_weight: 0.45
+  decay_per_s: 0.06           # un poco mas lento que afuera: adentro cambia menos
+  recenter_margin_m: 1.5
+  min_confidence: 0.15
+  plan_forward_m: 3.0
+  plan_side_m: 2.0
+
+# ------------------------------------------------------------- cono (nuevo)
+cone:
+  # "color": heuristica HSV+forma, cero entrenamiento, para arrancar hoy.
+  # "yolo":  ultralytics YOLO, requiere checkpoint entrenado (ver doc).
+  backend: "color"
+
+  color:
+    hsv_low: [5, 120, 120]
+    hsv_high: [18, 255, 255]
+    hsv_low2: null            # segundo rango HSV opcional (naranja que se corre a rojo)
+    hsv_high2: null
+    min_area_px: 250
+    min_aspect_ratio: 0.25
+    max_aspect_ratio: 1.3
+    min_fill_ratio: 0.35
+    morph_kernel: 5
+
+  yolo:
+    weights_path: "checkpoints/cone_yolo.pt"
+    class_names: ["cone"]
+    conf_thresh: 0.35
+    device: null
+    img_size: 640
+
+# ---------------------------------------------------------- mision (nuevo)
+mission:
+  # "wander":    sin mapa ni waypoints, derecho adelante evitando obstaculos
+  #              (Opcion mas simple; usa el estado NAVIGATE con meta fija en
+  #              cuanto ve el cono. Sirve de fallback siempre.)
+  # "frontier":  Opcion B del doc (mapa desconocido): explora hacia el borde
+  #              entre lo conocido-transitable y lo nunca-visto en
+  #              PersistentMap.
+  # "waypoints": Opcion A del doc (mapa conocido): sigue una ruta fija, ver
+  #              waypoints_example.yaml.
+  search_mode: "wander"
+  waypoints_path: null          # ej. "configs/waypoints_example.yaml"
+  waypoint_reach_radius_m: 0.6
+  wander_forward_m: 3.0
+
+  frontier_free_thresh: 0.55
+  frontier_min_m: 0.6
+  frontier_max_m: 3.5
+  frontier_preferred_m: 1.6
+  frontier_fov_deg: 140.0
+  frontier_goal_hold_s: 4.0
+
+  # Fase 4 del doc: 2.0 m empieza a aproximarse con cuidado, 0.5 m frena.
+  detect_confidence_min: 0.45
+  approach_start_m: 2.0
+  verify_at_m: 0.8
+  stop_distance_m: 0.5
+  approach_max_linear_scale: 0.6
+  lost_cone_grace_s: 1.5
+
+  verify_hits_required: 3
+  verify_window: 6
+  verify_min_confidence: 0.55
+  verify_max_jump_m: 0.6
+
+  # Confirmacion opcional con Gemini antes de dar el cono por bueno (mismo
+  # cliente que usa vlm_recovery, programs/client/genai_client.py). Requiere
+  # GEMINI_API_KEY en el entorno. Si falla o da timeout, NO frena a ciegas:
+  # sigue esperando mas evidencia geometrica.
+  verify_with_vlm: false
+  vlm_timeout_s: 4.0
+  vlm_min_confidence: 0.5
