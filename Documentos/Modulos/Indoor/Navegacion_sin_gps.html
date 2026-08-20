@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rover Autónomo - Búsqueda de Cono</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f4f6f8;
+            color: #1f2937;
+            line-height: 1.6;
+        }
+
+        header {
+            background: #111827;
+            color: white;
+            padding: 50px 20px;
+            text-align: center;
+        }
+
+        header h1 {
+            margin: 0 0 10px;
+            font-size: 2.5rem;
+        }
+
+        header p {
+            margin: 0;
+            color: #d1d5db;
+            font-size: 1.1rem;
+        }
+
+        main {
+            max-width: 1100px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+
+        section {
+            background: white;
+            margin-bottom: 30px;
+            padding: 30px;
+            border-radius: 14px;
+            box-shadow: 0 3px 12px rgba(0, 0, 0, 0.08);
+        }
+
+        h2 {
+            margin-top: 0;
+            color: #111827;
+            border-bottom: 2px solid #e5e7eb;
+            padding-bottom: 10px;
+        }
+
+        h3 {
+            color: #374151;
+        }
+
+        .architecture {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            margin: 30px 0;
+        }
+
+        .box {
+            width: 80%;
+            max-width: 650px;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            background: #eef2ff;
+            border: 2px solid #6366f1;
+        }
+
+        .box strong {
+            display: block;
+            font-size: 1.15rem;
+            margin-bottom: 5px;
+        }
+
+        .arrow {
+            font-size: 25px;
+            font-weight: bold;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            padding: 20px;
+            border-radius: 12px;
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+        }
+
+        .card h3 {
+            margin-top: 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        th,
+        td {
+            padding: 14px;
+            border-bottom: 1px solid #e5e7eb;
+            text-align: left;
+        }
+
+        th {
+            background: #111827;
+            color: white;
+        }
+
+        tr:nth-child(even) {
+            background: #f9fafb;
+        }
+
+        .state-machine {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            margin: 30px 0;
+        }
+
+        .state {
+            padding: 15px 20px;
+            background: #ecfdf5;
+            border: 2px solid #10b981;
+            border-radius: 10px;
+            font-weight: bold;
+        }
+
+        .state-arrow {
+            font-size: 25px;
+        }
+
+        .important {
+            background: #fffbeb;
+            border-left: 5px solid #f59e0b;
+            padding: 20px;
+            border-radius: 8px;
+        }
+
+        .phase {
+            border-left: 5px solid #6366f1;
+            padding: 20px;
+            margin: 20px 0;
+            background: #f8fafc;
+        }
+
+        .code {
+            background: #111827;
+            color: #e5e7eb;
+            padding: 20px;
+            border-radius: 10px;
+            overflow-x: auto;
+            font-family: Consolas, monospace;
+            white-space: pre;
+        }
+
+        footer {
+            text-align: center;
+            padding: 30px;
+            color: #6b7280;
+        }
+
+        @media (max-width: 600px) {
+            header h1 {
+                font-size: 1.8rem;
+            }
+
+            section {
+                padding: 20px;
+            }
+
+            .box {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<header>
+    <h1>Rover Autónomo sin GPS</h1>
+    <p>Navegación por pasillos universitarios y búsqueda de un cono</p>
+</header>
+
+<main>
+
+    <!-- OBJETIVO -->
+    <section>
+        <h2>🎯 Objetivo</h2>
+
+        <p>
+            El rover debe desplazarse de forma autónoma dentro de una universidad,
+            donde no existe señal GPS, recorrer los pasillos y encontrar un cono.
+        </p>
+
+        <div class="important">
+            <strong>Problema principal:</strong>
+            no se trata solamente de detectar el cono.
+            El rover necesita saber dónde está, por dónde puede circular,
+            cómo llegar al cono y cuándo detenerse.
+        </div>
+    </section>
+
+
+    <!-- ARQUITECTURA -->
+    <section>
+        <h2>🏗️ Arquitectura general</h2>
+
+        <div class="architecture">
+
+            <div class="box">
+                <strong>📷 Sensores</strong>
+                Cámara · IMU · Odometría · LiDAR opcional
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="box">
+                <strong>👁️ Percepción</strong>
+                SAM-TP · Detector de cono
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="box">
+                <strong>📍 Localización</strong>
+                SLAM / Visual-Inertial Odometry
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="box">
+                <strong>🧭 Navegación</strong>
+                Search Planner · Path Planner
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="box">
+                <strong>🎮 Control</strong>
+                Steering · Velocidad · Seguridad
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="box">
+                <strong>🤖 Rover</strong>
+                Motores
+            </div>
+
+        </div>
+    </section>
+
+
+    <!-- COMPONENTES -->
+    <section>
+        <h2>🧩 Componentes principales</h2>
+
+        <div class="grid">
+
+            <div class="card">
+                <h3>📷 Cámara</h3>
+                <p>
+                    Permite observar el pasillo, detectar obstáculos
+                    y localizar el cono.
+                </p>
+            </div>
+
+            <div class="card">
+                <h3>🧠 SAM-TP</h3>
+                <p>
+                    Analiza la transitabilidad del terreno para determinar
+                    por dónde es seguro avanzar.
+                </p>
+            </div>
+
+            <div class="card">
+                <h3>🔶 Detector de cono</h3>
+                <p>
+                    Un modelo como YOLO puede detectar el cono y devolver
+                    su bounding box y nivel de confianza.
+                </p>
+            </div>
+
+            <div class="card">
+                <h3>📍 SLAM / VIO</h3>
+                <p>
+                    Permite estimar la posición y orientación del rover
+                    sin utilizar GPS.
+                </p>
+            </div>
+
+            <div class="card">
+                <h3>🧭 Planner</h3>
+                <p>
+                    Decide qué pasillo recorrer y cuál es el camino
+                    para llegar al objetivo.
+                </p>
+            </div>
+
+            <div class="card">
+                <h3>🎮 Controller</h3>
+                <p>
+                    Convierte las decisiones de navegación en comandos
+                    concretos para los motores.
+                </p>
+            </div>
+
+        </div>
+    </section>
+
+
+    <!-- DETECCION -->
+    <section>
+        <h2>🔶 Detección del cono</h2>
+
+        <p>
+            La cámara obtiene imágenes continuamente. El detector busca
+            la presencia del cono.
+        </p>
+
+        <div class="code">
+Frame de cámara
+       ↓
+Detector YOLO
+       ↓
+¿Cono detectado?
+       ├── NO → continuar búsqueda
+       │
+       └── SÍ
+            ↓
+       Bounding Box
+            ↓
+       Centro del cono
+            ↓
+       Dirección del cono
+        </div>
+
+        <h3>Ejemplo de resultado</h3>
+
+        <div class="code">
+{
+    "class": "cone",
+    "confidence": 0.93,
+    "bbox": [421, 180, 512, 390]
+}
+        </div>
+    </section>
+
+
+    <!-- CONTROL DEL CONO -->
+    <section>
+        <h2>🎮 Control visual hacia el cono</h2>
+
+        <p>
+            Una vez detectado el cono, se puede utilizar su posición
+            horizontal dentro de la imagen para dirigir el rover.
+        </p>
+
+        <div class="code">
+             CONO
+              🔶
+              ↑
+              │
+        ┌───────────────┐
+        │       │       │
+        │       │       │
+        │       🚗      │
+        │               │
+        └───────────────┘
+                ↑
+         centro imagen
+        </div>
+
+        <p>Por ejemplo:</p>
+
+        <div class="code">
+error = cone_center_x - image_center_x
+
+steering = Kp * error
+        </div>
+
+        <p>
+            Si el cono está a la izquierda, el rover gira a la izquierda.
+            Si está a la derecha, gira a la derecha.
+            Si está centrado, avanza.
+        </p>
+    </section>
+
+
+    <!-- MAQUINA DE ESTADOS -->
+    <section>
+        <h2>🔄 Máquina de estados</h2>
+
+        <div class="state-machine">
+
+            <div class="state">SEARCH</div>
+
+            <div class="state-arrow">→</div>
+
+            <div class="state">NAVIGATE</div>
+
+            <div class="state-arrow">→</div>
+
+            <div class="state">APPROACH</div>
+
+            <div class="state-arrow">→</div>
+
+            <div class="state">VERIFY</div>
+
+            <div class="state-arrow">→</div>
+
+            <div class="state">STOP</div>
+
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Estado</th>
+                    <th>Qué hace</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                <tr>
+                    <td>SEARCH</td>
+                    <td>Busca el cono mientras explora.</td>
+                </tr>
+
+                <tr>
+                    <td>NAVIGATE</td>
+                    <td>Recorre los pasillos.</td>
+                </tr>
+
+                <tr>
+                    <td>APPROACH</td>
+                    <td>Se dirige hacia el cono.</td>
+                </tr>
+
+                <tr>
+                    <td>VERIFY</td>
+                    <td>Confirma que realmente es el objetivo.</td>
+                </tr>
+
+                <tr>
+                    <td>STOP</td>
+                    <td>Se detiene cuando llega a una distancia segura.</td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+
+
+    <!-- BÚSQUEDA -->
+    <section>
+        <h2>🔎 Estrategia de búsqueda</h2>
+
+        <h3>Opción A — Mapa conocido</h3>
+
+        <p>
+            Si tenés previamente el mapa de la universidad, es la opción
+            más sencilla y robusta.
+        </p>
+
+        <div class="code">
+Mapa
+ ↓
+Waypoints
+ ↓
+Pasillo 1
+ ↓
+Pasillo 2
+ ↓
+Pasillo 3
+ ↓
+Pasillo 4
+ ↓
+Cono encontrado
+        </div>
+
+        <h3>Opción B — Mapa desconocido</h3>
+
+        <p>
+            Si el rover no conoce el edificio, deberá utilizar SLAM
+            para construir progresivamente el mapa.
+        </p>
+
+        <div class="code">
+SLAM
+ ↓
+Construir mapa
+ ↓
+Detectar zonas desconocidas
+ ↓
+Explorar
+ ↓
+Buscar cono
+        </div>
+    </section>
+
+
+    <!-- FASES -->
+    <section>
+        <h2>🚀 Desarrollo por fases</h2>
+
+        <div class="phase">
+            <h3>Fase 1 — Conducción</h3>
+            <p>
+                Implementar cámara + SAM-TP + control.
+            </p>
+
+            <div class="code">
+Camera
+   ↓
+SAM-TP
+   ↓
+Traversability
+   ↓
+Navigation
+   ↓
+Motor
+            </div>
+        </div>
+
+        <div class="phase">
+            <h3>Fase 2 — Detección del cono</h3>
+            <p>
+                Entrenar o utilizar un detector de objetos para reconocer
+                el cono.
+            </p>
+
+            <div class="code">
+Camera
+   ↓
+YOLO
+   ↓
+Cone / No Cone
+            </div>
+        </div>
+
+        <div class="phase">
+            <h3>Fase 3 — Aproximación</h3>
+            <p>
+                Utilizar la posición del cono dentro de la imagen para
+                controlar la dirección.
+            </p>
+
+            <div class="code">
+Cone
+ ↓
+Bounding Box
+ ↓
+Centro X
+ ↓
+Error
+ ↓
+Steering
+            </div>
+        </div>
+
+        <div class="phase">
+            <h3>Fase 4 — Distancia</h3>
+            <p>
+                Determinar cuándo el rover está suficientemente cerca
+                del cono.
+            </p>
+
+            <div class="code">
+Cone detected
+      ↓
+Distance = 2.0 m
+      ↓
+Approach
+      ↓
+Distance = 0.5 m
+      ↓
+STOP
+            </div>
+        </div>
+
+        <div class="phase">
+            <h3>Fase 5 — Búsqueda autónoma</h3>
+            <p>
+                Combinar mapa, navegación y detección del cono.
+            </p>
+
+            <div class="code">
+MAP
+ ↓
+SEARCH PLAN
+ ↓
+PASILLO 1
+ ↓
+PASILLO 2
+ ↓
+PASILLO 3
+ ↓
+CONE FOUND
+ ↓
+APPROACH
+ ↓
+STOP
+            </div>
+        </div>
+    </section>
+
+
+    <!-- ARQUITECTURA FINAL -->
+    <section>
+        <h2>🏁 Arquitectura final propuesta</h2>
+
+        <div class="architecture">
+
+            <div class="box">
+                <strong>📷 SENSORS</strong>
+                Camera · IMU · Wheel Odometry · LiDAR opcional
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="box">
+                <strong>👁️ PERCEPTION</strong>
+                SAM-TP + Cone Detector
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="box">
+                <strong>📍 LOCALIZATION</strong>
+                SLAM / VIO
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="box">
+                <strong>🧭 NAVIGATION</strong>
+                Search Planner + Path Planner
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="box">
+                <strong>🎮 CONTROL</strong>
+                Steering + Speed + Safety
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="box">
+                <strong>🤖 ROVER</strong>
+                Motors
+            </div>
+
+        </div>
+    </section>
+
+
+    <!-- RESUMEN -->
+    <section>
+        <h2>📌 Resumen</h2>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Problema</th>
+                    <th>Tecnología</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                <tr>
+                    <td>¿Dónde estoy?</td>
+                    <td>VIO / SLAM</td>
+                </tr>
+
+                <tr>
+                    <td>¿Por dónde puedo manejar?</td>
+                    <td>SAM-TP / LiDAR</td>
+                </tr>
+
+                <tr>
+                    <td>¿Dónde está el cono?</td>
+                    <td>YOLO / Detector de objetos</td>
+                </tr>
+
+                <tr>
+                    <td>¿Cómo llego?</td>
+                    <td>Path Planner</td>
+                </tr>
+
+                <tr>
+                    <td>¿Cómo controlo el rover?</td>
+                    <td>Controller</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="important" style="margin-top: 25px;">
+            <strong>Recomendación:</strong>
+            no intentar resolver todo de una vez.
+            Primero hacer conducción autónoma por pasillos,
+            después detección del cono, luego aproximación al cono
+            y finalmente agregar SLAM y búsqueda global.
+        </div>
+    </section>
+
+</main>
+
+<footer>
+    Rover Autónomo · Navegación Indoor · Computer Vision · SLAM
+</footer>
+
+</body>
+</html>
