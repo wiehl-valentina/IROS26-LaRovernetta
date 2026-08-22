@@ -255,7 +255,85 @@ class PersistentMap:
             "origen": (self.origin_x, self.origin_y),
         }
 
+        
+    def export_ros_map(self, path_prefix, image_format: str = "pgm") -> tuple:
+        """Exporta este PersistentMap al formato ROS `map_server` (yaml+pgm) --
+        el mismo formato que ya lee `external_map.load_ros_occupancy_map`, y el
+        mismo que exportan `map_server`/`slam_toolbox`/RTAB-Map (Database Viewer
+        -> File -> "Export 2D occupancy grid").
 
+        Uso tipico, al terminar (o periodicamente durante) una sesion de mapeo:
+
+            pmap.export_ros_map("maps/sesion1")
+            # produce maps/sesion1.yaml y maps/sesion1.pgm
+
+        Para reusarlo despues con indoor_bridge.py, en el config:
+
+            memory:
+            external_map:
+                enabled: true
+                yaml_path: "maps/sesion1.yaml"
+                start_pose_map:
+                x_m: <donde estas parado ahora, en ESTE mapa>
+                y_m: <...>
+                yaw_deg: <...>
+
+        Parametros
+        ----------
+        path_prefix : str | Path
+            Prefijo de salida SIN extension (ej. "maps/sesion1"). Se escriben
+            `{path_prefix}.yaml` y `{path_prefix}.{image_format}`.
+        image_format : str
+            "pgm" (estandar ROS) o "png" (mismo contenido, mas facil de abrir
+            con un visor de imagenes comun para inspeccionar a ojo).
+
+        Devuelve (yaml_path, image_path) como pathlib.Path.
+        """
+        from pathlib import Path
+
+        import numpy as np
+        from PIL import Image
+
+        prefix = Path(path_prefix)
+        prefix.parent.mkdir(parents=True, exist_ok=True)
+        yaml_path = prefix.with_suffix(".yaml")
+        img_path = prefix.with_suffix(f".{image_format}")
+
+        r = self.cfg.resolution_m_per_px
+        n = self.n
+        seen = self.conf >= self.cfg.min_confidence
+
+        # Binarizamos a proposito -- ver docstring del modulo.
+        img = np.full((n, n), 205, dtype=np.uint8)          # desconocido
+        img[seen & (self.value >= 0.5)] = 254                # libre
+        img[seen & (self.value < 0.5)] = 0                   # ocupado
+
+        # Reindexado (fila,col) de PersistentMap -> (row,col) de la imagen ROS,
+        # de forma que el roundtrip con ros_map_to_grids() reproduzca EXACTO el
+        # mismo world_x/world_y para cada celda (ver derivacion en el docstring
+        # del modulo / verificado con test de roundtrip):
+        #   col_img = n - 1 - fila     row_img = col
+        img_out = img.T[:, ::-1]
+
+        # origin: pose del pixel INFERIOR-IZQUIERDO de la imagen, en el marco
+        # propio de este PersistentMap (x adelante, y izquierda -- yaw0 = 0
+        # siempre, porque nunca rotamos el mapa respecto de si mismo).
+        ros_origin_x = self.origin_x - r * (n - 1) / 2.0
+        ros_origin_y = self.origin_y - r * (n - 1) / 2.0
+
+        Image.fromarray(img_out, mode="L").save(img_path)
+
+        yaml_text = (
+            f"image: {img_path.name}\n"
+            f"resolution: {r:.6f}\n"
+            f"origin: [{ros_origin_x:.6f}, {ros_origin_y:.6f}, 0.0]\n"
+            f"negate: 0\n"
+            f"occupied_thresh: 0.65\n"
+            f"free_thresh: 0.196\n"
+        )
+        yaml_path.write_text(yaml_text)
+        return yaml_path, img_path
+        
 # --------------------------------------------------------------------- pruebas
 
 def _bev_sintetico(h=134, w=134, obstaculo_col=None, obstaculo_fila=None):
