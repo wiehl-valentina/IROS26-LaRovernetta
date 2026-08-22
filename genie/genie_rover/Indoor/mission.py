@@ -32,7 +32,7 @@ de transitabilidad que el resto del recorrido. Es una desviacion deliberada
 del doc, mas segura para un pasillo real con gente/mobiliario.
 
 Autoprueba (no necesita robot, camara ni modelo):
-    python -m genie_rover.mission
+    python -m genie_rover.Indoor.mission
 """
 
 from __future__ import annotations

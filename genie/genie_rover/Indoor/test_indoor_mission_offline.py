@@ -30,7 +30,7 @@ PersistentMap.integrate/extract_bev, Odometry.update, y sobre todo
 ConeMissionFSM.update — que es el modulo nuevo mas critico de esta entrega.
 
 Uso:
-    python -m genie_rover.test_indoor_mission_offline
+    python -m genie_rover.Indoor.test_indoor_mission_offline
 """
 
 from __future__ import annotations

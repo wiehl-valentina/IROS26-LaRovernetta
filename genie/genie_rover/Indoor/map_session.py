@@ -23,11 +23,11 @@ del repo: subclasear, no tocar lo ya validado).
 Uso (mismo patron que bridge.py/indoor_bridge.py: dry-run por defecto):
 
     # simulacro, no mueve al robot
-    python -m genie_rover.Indoor.map_session --config configs/indoor_mapping.yaml
+    python -m genie_rover.Indoor.Indoor.map_session --config configs/indoor_mapping.yaml
 
     # de verdad, con correccion de RTAB-Map (rtabmap_mapping.launch.py ya
     # corriendo en otra terminal)
-    python -m genie_rover.Indoor.map_session --config configs/indoor_mapping.yaml \\
+    python -m genie_rover.Indoor.Indoor.map_session --config configs/indoor_mapping.yaml \\
         --go --max-seconds 300 --map-out maps/sesion1
 
 Al terminar (tiempo agotado, Ctrl+C, o error) SIEMPRE intenta un export

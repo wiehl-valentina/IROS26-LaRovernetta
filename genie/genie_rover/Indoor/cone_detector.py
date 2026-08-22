@@ -28,7 +28,7 @@ signo a mano y que quede desalineado con el planner que ya esta calibrado y
 probado en este robot.
 
 Autoprueba (no necesita camara, robot, ni modelo):
-    python -m genie_rover.cone_detector
+    python -m genie_rover.indoor.cone_detector
 """
 
 from __future__ import annotations

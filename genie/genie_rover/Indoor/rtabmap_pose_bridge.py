@@ -1,6 +1,6 @@
 """Puente liviano hacia la correccion de pose de RTAB-Map (TF `map -> base_link`).
 
-genie_rover normalmente calcula su propia pose por dead-reckoning
+genie_rover normalmente calcula su propia pose por dead-reckoning.
 (rueda+giro+GPS, ver `odometry.py`). Este modulo permite REEMPLAZAR esa pose,
 cuadro a cuadro, por la que resulta de componer:
 

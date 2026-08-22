@@ -33,10 +33,10 @@ para el modo ERC/outdoor.
 Uso (mismo patron que bridge.py: dry-run por defecto, --go para moverse):
 
     # simulacro
-    python -m genie_rover.indoor_bridge --config configs/indoor_cone_search.yaml
+    python -m genie_rover.indoor.indoor_bridge --config configs/indoor_cone_search.yaml
 
     # de verdad
-    python -m genie_rover.indoor_bridge --config configs/indoor_cone_search.yaml \
+    python -m genie_rover.indoor.indoor_bridge --config configs/indoor_cone_search.yaml \
         --go --max-seconds 180 --debug-dir debug/indoor_run1
 """
 
