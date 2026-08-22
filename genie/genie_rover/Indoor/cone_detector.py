@@ -331,7 +331,7 @@ def _self_test() -> None:
     print("=== ground_point_from_pixel: geometria pura ===")
     # Camara a 15 cm, apenas inclinada hacia abajo (mismos valores que el
     # config real calibrado del robot, frodobot_rover.yaml).
-    from .perception import camera_pose_from_height_pitch
+    from ..perception import camera_pose_from_height_pitch
     pose = camera_pose_from_height_pitch(height_m=0.15, pitch_down_deg=15.0)
     k = np.array([[900.0, 0.0, 960.0],
                   [0.0, 900.0, 540.0],

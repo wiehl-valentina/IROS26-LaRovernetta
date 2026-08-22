@@ -47,10 +47,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .cone_detector import ConeDetection, GroundPoint
-from .odometry import Pose
+from ..odometry import Pose
 
 if TYPE_CHECKING:  # solo para hints, sin crear un import circular en runtime
-    from .persistent_map import PersistentMap
+    from ..persistent_map import PersistentMap
 
 
 # ------------------------------------------------------------------- config
@@ -376,7 +376,7 @@ def _self_test() -> None:
     assert route.idx == 1, "deberia haber avanzado al siguiente waypoint"
 
     print("\n=== pick_frontier_goal ===")
-    from .persistent_map import MapConfig, PersistentMap
+    from ..persistent_map import MapConfig, PersistentMap
     pmap = PersistentMap(MapConfig(size_m=8.0, resolution_m_per_px=0.05))
     bev = np.ones((100, 100), dtype=np.float32)
     obs = np.ones((100, 100), dtype=np.uint8)

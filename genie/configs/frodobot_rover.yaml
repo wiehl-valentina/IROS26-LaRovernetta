@@ -62,8 +62,8 @@ navigation:
   #   +1.0  si angular positivo hace girar a la DERECHA
   angular_sign: -1.0
 
-  max_linear: 0.7       # bien lento para las primeras corridas
-  max_angular: 0.45
+  max_linear: 0.90       # bien lento para las primeras corridas
+  max_angular: 0.60
   turn_speed: 0.40
   kp_angular: 0.9
   lookahead_m: 1.5

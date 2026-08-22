@@ -49,12 +49,12 @@ projection:
 navigation:
   # Determinar con tools/check_angular_sign.py, es el mismo robot.
   angular_sign: -1.0
-  max_linear: 0.5        # mas lento que afuera: pasillo angosto, gente cerca
+  max_linear: 0.8        # mas lento que afuera: pasillo angosto, gente cerca
   max_angular: 0.45
   turn_speed: 0.35
   kp_angular: 0.9
-  lookahead_m: 1.0
-  align_threshold_deg: 40.0
+  lookahead_m: 1.5
+  align_threshold_deg: 90.0
   commit_hold_s: 2.0
   commit_min_deg: 8.0
   commit_override_deg: 30.0

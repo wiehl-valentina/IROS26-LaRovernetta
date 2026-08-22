@@ -53,11 +53,13 @@ import yaml
 
 from genie_path_planner.planner import plan_on_bev
 
-from .bridge import Bridge, _check_placeholders
+from ..bridge import Bridge, _check_placeholders
 from .cone_detector import ConeDetectorConfig, ConeDetectorPipeline, ground_point_from_bbox
+from .external_map import load_ros_occupancy_map
 from .mission import ConeMissionFSM, MissionConfig
-from .navigation import DriveCommand, front_is_blocked
-from .sdk_client import RoverError
+from ..navigation import DriveCommand, front_is_blocked
+from ..odometry import Pose
+from ..sdk_client import RoverError
 
 
 class IndoorBridge(Bridge):
@@ -71,6 +73,8 @@ class IndoorBridge(Bridge):
                 "ubicar al cono en el piso."
             )
 
+        self._maybe_load_external_map(cfg.get("memory", {}))
+
         cone_cfg = ConeDetectorConfig.from_dict(cfg.get("cone", {}))
         self.cone_detector = ConeDetectorPipeline(cone_cfg)
 
@@ -82,6 +86,47 @@ class IndoorBridge(Bridge):
         self.cone_frames_detected = 0
         self.mission_final_state = "SEARCH"
         self.mission_final_distance_m: float | None = None
+
+    # ------------------------------------------------------ mapa importado
+
+    def _maybe_load_external_map(self, mem_cfg: dict) -> None:
+        """Reemplaza el PersistentMap vacio (armado por Bridge.__init__) por
+        uno importado de ROS map_server / RTAB-Map, si el config lo pide.
+
+        Ver genie_rover/external_map.py para el formato soportado y, sobre
+        todo, la limitacion importante: sin esto el mapa arranca vacio
+        (comportamiento de siempre); CON esto, el mapa arranca poblado pero
+        SOLO queda bien alineado con la realidad si `start_pose_map` refleja
+        de verdad donde esta parado el robot en el instante de arrancar.
+        """
+        ext = (mem_cfg or {}).get("external_map", {}) or {}
+        if not ext.get("enabled", False):
+            return
+
+        yaml_path = ext.get("yaml_path")
+        if not yaml_path:
+            raise ValueError("memory.external_map.enabled=true pero falta yaml_path")
+
+        self.pmap = load_ros_occupancy_map(
+            yaml_path,
+            resolution_m_per_px=ext.get("resolution_m_per_px") or self.resolution,
+            margin_m=float(ext.get("margin_m", 1.5)),
+            update_weight=float(mem_cfg.get("update_weight", 0.45)),
+            decay_per_s=float(mem_cfg.get("decay_per_s", 0.08)),
+            recenter_margin_m=float(mem_cfg.get("recenter_margin_m", 1.5)),
+            min_confidence=float(mem_cfg.get("min_confidence", 0.15)),
+        )
+
+        sp = ext.get("start_pose_map", {}) or {}
+        self.odometry.pose = Pose(
+            float(sp.get("x_m", 0.0)), float(sp.get("y_m", 0.0)),
+            math.radians(float(sp.get("yaw_deg", 0.0))),
+        )
+        print(f"[indoor_bridge] AVISO: arrancando con mapa importado de {yaml_path}. "
+              f"Esto asume que el robot esta PARADO AHORA en "
+              f"({self.odometry.pose.x:+.2f}, {self.odometry.pose.y:+.2f}) mirando a "
+              f"{math.degrees(self.odometry.pose.theta):+.0f} grados de ESE mapa. "
+              "Si no es asi, el mapa va a quedar desalineado con lo que ve la camara.")
 
     # ------------------------------------------------------------------ paso
 

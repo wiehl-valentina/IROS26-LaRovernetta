@@ -43,14 +43,14 @@ import numpy as np
 from genie_path_planner.geometry import camera_planar_axes
 from genie_path_planner.planner import PlannerConfig
 
-from .bridge import LoopStats
+from ..bridge import LoopStats
 from .cone_detector import ConeDetection
 from .indoor_bridge import IndoorBridge
 from .mission import ConeMissionFSM, MissionConfig
-from .navigation import HeadingEstimator, PathFollower
-from .odometry import Odometry, OdometryConfig
-from .perception import BevResult, camera_pose_from_height_pitch
-from .persistent_map import MapConfig, PersistentMap
+from ..navigation import HeadingEstimator, PathFollower
+from ..odometry import Odometry, OdometryConfig
+from ..perception import BevResult, camera_pose_from_height_pitch
+from ..persistent_map import MapConfig, PersistentMap
 
 
 def _pixel_from_ground(x_forward: float, y_left: float, camera_k: np.ndarray,
