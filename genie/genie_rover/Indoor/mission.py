@@ -1,5 +1,11 @@
 """Maquina de estados de la mision indoor: SEARCH -> NAVIGATE -> APPROACH ->
-VERIFY -> STOP (el diagrama de Documentos/Modulos/Indoor/Navegacion_sin_gps.html).
+VERIFY -> PHOTO -> (SEARCH de nuevo, o STOP) — el diagrama de
+Documentos/Modulos/Indoor/Navegacion_sin_gps.html, extendido a VARIOS conos:
+cada cono es un checkpoint, no el final de la mision. Al confirmar y
+fotografiar uno, la maquina vuelve a SEARCH a buscar el proximo en vez de
+terminar ahi; STOP solo llega cuando se agota la ruta conocida (modo
+"waypoints") o la exploracion por frontera (modo "frontier") SIN un cono
+anchorado en ese momento — ver `_route_exhausted`.
 
 Simplificacion consciente respecto del doc: SEARCH y NAVIGATE comparten el
 mismo mecanismo de manejo (conducir evitando obstaculos via plan_on_bev,
@@ -16,11 +22,30 @@ igual que bridge.py sin GPS) y solo difieren en COMO se elige la meta local:
     VERIFY    lo bastante cerca (verify_at_m): exige varias detecciones
               seguidas con confianza y posicion estables antes de confiar en
               que es el cono de verdad (evita frenar por un falso positivo de
-              un solo frame). Opcionalmente confirma con un VLM
-              (programs/client/genai_client, ya existe en el repo para
-              vlm_recovery — mismo cliente, otro uso).
-    STOP      confirmado y a stop_distance_m o menos: frena y no se mueve
-              mas. Terminal (mission_done=True para siempre).
+              un solo frame). Existe un metodo `confirm_with_vlm()` opcional
+              (mismo cliente Gemini que usa vlm_recovery en el resto del
+              repo) para sumar una confirmacion visual, pero HOY esta
+              desconectado del bridge a proposito: indoor_bridge.py NO lo
+              llama, y `verify_with_vlm` viene en False por defecto. Queda
+              el metodo listo en la clase para engancharlo el dia que se
+              decida usarlo (ver mas abajo, "confirm_with_vlm"), pero no es
+              parte de la solucion actual.
+    PHOTO     el cono ya esta verificado y a stop_distance_m o menos: pide
+              (via MissionGoal.request_photo=True) que quien llama guarde
+              una foto del frame actual. Frena y espera — no vuelve a
+              moverse — hasta que alguien confirma la foto con
+              `mark_photo_taken()`. Ese cono queda registrado como
+              "visitado" (posicion en el mapa) para no volver a engancharse
+              con el (ver `revisit_radius_m`), y la maquina vuelve a SEARCH
+              a buscar el proximo — SALVO que la ruta/exploracion ya se
+              agoto, en cuyo caso pasa directo a STOP (ver `_route_exhausted`).
+    STOP      terminal (mission_done=True para siempre): se llega aca desde
+              PHOTO (o directo desde VERIFY si take_photo=False) cuando,
+              ademas, ya no queda ruta fija por recorrer (modo "waypoints")
+              o exploracion por frontera pendiente (modo "frontier"). En
+              modo "wander" esta condicion nunca se cumple sola — ese modo
+              no tiene fin propio, la corrida se corta por --max-seconds en
+              indoor_bridge.py.
 
 IMPORTANTE (misma logica de seguridad que bridge.py): esta maquina de
 estados solo decide la META (x_right_m, y_forward_m) que se le pasa a
@@ -83,9 +108,30 @@ class MissionConfig:
     verify_window: int = 6
     verify_min_confidence: float = 0.55
     verify_max_jump_m: float = 0.6
+    # Confirmacion opcional con VLM (Gemini). Metodo disponible en la clase
+    # (confirm_with_vlm) pero NO conectado al bridge hoy: indoor_bridge.py
+    # nunca lo invoca, e independientemente de este flag la mision solo lo
+    # exigiria si alguien lo llama a mano. Se deja listo para el dia que se
+    # decida incorporarlo, sin que forme parte de la solucion actual.
     verify_with_vlm: bool = False
     vlm_timeout_s: float = 4.0
     vlm_min_confidence: float = 0.5
+
+    # --- foto del cono (checkpoint) ------------------------------------------
+    take_photo: bool = True         # pedir foto al completar cada checkpoint
+    photo_dir: str = "checkpoint_photos"
+
+    # --- varios conos (tour de checkpoints) -----------------------------------
+    # Radio (m), en el mapa/odometria, para considerar que una nueva deteccion
+    # es el MISMO cono que uno ya visitado (y por lo tanto ignorarla y seguir
+    # buscando otro) en vez de volver a enganchar NAVIGATE/APPROACH/VERIFY con
+    # el que ya se fotografio.
+    revisit_radius_m: float = 1.0
+    # Modo "frontier": cuanto tiempo sin encontrar una frontera nueva antes de
+    # dar la exploracion por agotada (y terminar la mision si en ese momento
+    # no hay ningun cono anchorado). Evita cortar la mision por un solo frame
+    # sin frontera candidata.
+    frontier_exhausted_grace_s: float = 6.0
 
     @classmethod
     def from_dict(cls, d: dict) -> "MissionConfig":
@@ -97,6 +143,7 @@ class MissionState(str, Enum):
     NAVIGATE = "NAVIGATE"
     APPROACH = "APPROACH"
     VERIFY = "VERIFY"
+    PHOTO = "PHOTO"
     STOP = "STOP"
 
 
@@ -108,6 +155,7 @@ class MissionGoal:
     reason: str
     mission_done: bool = False
     linear_scale: float = 1.0
+    request_photo: bool = False
 
 
 # --------------------------------------------------------- ruta de waypoints
@@ -230,6 +278,17 @@ class ConeMissionFSM:
         self._last_cone_ground: GroundPoint | None = None
         self._last_cone_t: float | None = None
         self._vlm_confirmed = False
+        self._photo_taken = False
+
+        # --- tour de checkpoints -------------------------------------------
+        self._visited_cones: list[tuple[float, float]] = []  # (x, y) mundo
+        self._checkpoints_done = 0
+        self._no_frontier_since: float | None = None
+
+    @property
+    def checkpoints_done(self) -> int:
+        """Cuantos conos se dieron por completados (con o sin foto) hasta ahora."""
+        return self._checkpoints_done
 
     # ------------------------------------------------------------- publico
 
@@ -240,8 +299,28 @@ class ConeMissionFSM:
             return MissionGoal(0.0, 0.0, self.state.value,
                                "mision cumplida: cono alcanzado", mission_done=True)
 
+        if self.state == MissionState.PHOTO:
+            # Sticky: no se mueve mas mientras espera que guarden la foto.
+            # No depende de seguir viendo el cono (ya esta confirmado) para
+            # no arrancar a moverse de nuevo por perderlo de vista un frame.
+            if self._photo_taken:
+                self._photo_taken = False
+                return self._complete_checkpoint(pose, pmap, now)
+            return MissionGoal(0.0, 0.0, self.state.value,
+                               "cono confirmado: esperando que se guarde la foto antes de seguir",
+                               request_photo=True)
+
         cone_visible = (cone is not None and cone_ground is not None
                         and cone.confidence >= self.cfg.detect_confidence_min)
+        if cone_visible and self._visited_cones:
+            wx, wy = self._cone_world_xy(pose, cone_ground)
+            if any(math.hypot(wx - vx, wy - vy) <= self.cfg.revisit_radius_m
+                  for vx, vy in self._visited_cones):
+                # Mismo cono que ya fotografiamos (o completamos): ignorarlo
+                # y seguir tratando este frame como "sin cono nuevo", asi la
+                # busqueda no vuelve a enganchar con el de vuelta.
+                cone_visible = False
+
         if cone_visible:
             self._last_cone_ground = cone_ground
             self._last_cone_t = now
@@ -252,13 +331,20 @@ class ConeMissionFSM:
         anchored = cone_visible or (grace_ok and self._last_cone_ground is not None)
 
         if not anchored:
+            if self._route_exhausted(pose, pmap, now):
+                self.state = MissionState.STOP
+                return MissionGoal(0.0, 0.0, self.state.value,
+                                   f"ruta/exploracion agotada ({self._checkpoints_done} "
+                                   "checkpoint(s) completado(s)), freno",
+                                   mission_done=True)
             if self.state != MissionState.SEARCH:
                 self.state = MissionState.SEARCH
                 self._hits.clear()
             goal = self._search_goal(pose, pmap, now)
             x_right, y_fwd = goal.to_bev_goal()
             return MissionGoal(x_right, y_fwd, self.state.value,
-                               f"explorando (modo={self.cfg.search_mode})")
+                               f"explorando (modo={self.cfg.search_mode}, "
+                               f"{self._checkpoints_done} checkpoint(s) completado(s))")
 
         ground = self._last_cone_ground
         assert ground is not None
@@ -277,10 +363,12 @@ class ConeMissionFSM:
             stable = self._check_stable_hits()
             confirmado = stable and (not self.cfg.verify_with_vlm or self._vlm_confirmed)
             if confirmado and dist <= self.cfg.stop_distance_m:
-                self.state = MissionState.STOP
-                return MissionGoal(0.0, 0.0, self.state.value,
-                                   f"cono verificado a {dist:.2f} m, freno",
-                                   mission_done=True)
+                if self.cfg.take_photo:
+                    self.state = MissionState.PHOTO
+                    return MissionGoal(0.0, 0.0, self.state.value,
+                                       f"cono verificado a {dist:.2f} m, tomando foto antes de seguir",
+                                       mission_done=False, request_photo=True)
+                return self._complete_checkpoint(pose, pmap, now)
             razon = (f"verificando ({len(self._hits)} hits, estable={stable}, "
                     f"dist={dist:.2f} m)")
             return MissionGoal(x_right, y_fwd, self.state.value, razon,
@@ -291,11 +379,25 @@ class ConeMissionFSM:
                            f"{self.state.value.lower()} hacia el cono (dist={dist:.2f} m)",
                            linear_scale=scale)
 
+    def mark_photo_taken(self) -> None:
+        """Llamar despues de guardar la foto que pidio un MissionGoal con
+        request_photo=True (estado PHOTO). El proximo update() completa ese
+        checkpoint (ver `_complete_checkpoint`) y sigue con el proximo cono,
+        salvo que la ruta/exploracion ya se haya agotado. Idempotente:
+        llamarlo de mas no rompe nada, solo hace falta la primera vez."""
+        self._photo_taken = True
+
     def confirm_with_vlm(self, rgb_crop_bytes: bytes) -> bool:
         """Confirmacion opcional con Gemini (programs.client.genai_client, el
         mismo cliente que vlm_recovery usa en el resto del repo). Nunca
         lanza: si falla, la maquina de estados sigue esperando mas evidencia
         geometrica en vez de confiar ciegamente en una llamada que no llego.
+
+        IMPORTANTE: este metodo existe pero indoor_bridge.py NO lo llama.
+        Hoy el VLM esta deliberadamente desconectado del bridge indoor (no
+        forma parte de la solucion actual); esto queda como el punto de
+        enganche para el dia que se decida sumarlo, sin tener que tocar la
+        maquina de estados de nuevo.
         """
         try:
             from pydantic import BaseModel, Field
@@ -323,6 +425,72 @@ class ConeMissionFSM:
             return False
 
     # -------------------------------------------------------------- privado
+
+    @staticmethod
+    def _cone_world_xy(pose: Pose, ground: GroundPoint) -> tuple[float, float]:
+        """Posicion (x, y) del cono en el marco MUNDO (mismo marco que
+        PersistentMap/WaypointRoute), a partir de la pose del robot y la
+        posicion del cono relativa a el (forward/left). Inversa de la
+        rotacion que usa pick_frontier_goal para ir de mundo a robot."""
+        c, s = math.cos(pose.theta), math.sin(pose.theta)
+        wx = pose.x + c * ground.x_forward_m - s * ground.y_left_m
+        wy = pose.y + s * ground.x_forward_m + c * ground.y_left_m
+        return wx, wy
+
+    def _complete_checkpoint(self, pose: Pose, pmap: "PersistentMap | None",
+                             now: float) -> MissionGoal:
+        """Da un cono por completado (con o sin foto, segun take_photo):
+        registra su posicion en el mundo para no re-engancharlo
+        (revisit_radius_m), limpia el estado de verificacion, y decide si
+        segir buscando el proximo (SEARCH) o terminar la mision (STOP,
+        cuando ya no queda ruta/exploracion pendiente)."""
+        if self._last_cone_ground is not None:
+            self._visited_cones.append(self._cone_world_xy(pose, self._last_cone_ground))
+        self._checkpoints_done += 1
+        self._hits.clear()
+        self._last_cone_ground = None
+        self._last_cone_t = None
+        self._vlm_confirmed = False
+
+        if self._route_exhausted(pose, pmap, now):
+            self.state = MissionState.STOP
+            return MissionGoal(0.0, 0.0, self.state.value,
+                               f"{self._checkpoints_done} checkpoint(s) completado(s), "
+                               "ruta/exploracion agotada, freno",
+                               mission_done=True)
+
+        self.state = MissionState.SEARCH
+        goal = self._search_goal(pose, pmap, now)
+        x_right, y_fwd = goal.to_bev_goal()
+        return MissionGoal(x_right, y_fwd, self.state.value,
+                           f"checkpoint {self._checkpoints_done} completado, "
+                           "sigo buscando el proximo cono",
+                           mission_done=False)
+
+    def _route_exhausted(self, pose: Pose, pmap: "PersistentMap | None", now: float) -> bool:
+        """True si ya no queda ruta/exploracion pendiente:
+
+        "waypoints"  la ruta fija (WaypointRoute) ya se recorrio entera.
+        "frontier"   hace frontier_exhausted_grace_s que pick_frontier_goal
+                     no encuentra una frontera nueva para explorar.
+        "wander"     nunca (no tiene nocion de "recorrido completo"): en ese
+                     modo la mision no termina sola por agotamiento de ruta,
+                     la corta --max-seconds en indoor_bridge.py.
+        """
+        if self.cfg.search_mode == "waypoints":
+            return self._route is not None and self._route.done
+
+        if self.cfg.search_mode == "frontier" and pmap is not None:
+            picked = pick_frontier_goal(pmap, pose, self.cfg)
+            if picked is not None:
+                self._no_frontier_since = None
+                return False
+            if self._no_frontier_since is None:
+                self._no_frontier_since = now
+                return False
+            return (now - self._no_frontier_since) >= self.cfg.frontier_exhausted_grace_s
+
+        return False
 
     def _check_stable_hits(self) -> bool:
         if len(self._hits) < self.cfg.verify_hits_required:
@@ -418,23 +586,80 @@ def _self_test() -> None:
     assert "NAVIGATE" in estados
     assert "APPROACH" in estados
     assert "VERIFY" in estados
-    assert goal.state in ("VERIFY", "STOP"), "todavia no confirmo con suficientes hits"
+    assert goal.state in ("VERIFY", "PHOTO"), "todavia no confirmo con suficientes hits"
 
-    # Sigue acercandose una vez estable -> deberia parar cerca de stop_distance_m
+    # Sigue acercandose una vez estable -> deberia pedir foto cerca de stop_distance_m
     for d in [0.55, 0.5, 0.5]:
         det = ConeDetection(bbox_xyxy=(100, 100, 150, 200), confidence=0.8)
         ground = GroundPoint(x_forward_m=d, y_left_m=0.0, distance_m=d)
         t += 0.3
         goal = fsm.update(pose, None, det, ground, t)
-    print(f"  estado final: {goal.state} mision_cumplida={goal.mission_done}")
-    assert goal.state == "STOP" and goal.mission_done
+    print(f"  estado tras confirmar: {goal.state} pide_foto={goal.request_photo}")
+    assert goal.state == "PHOTO" and goal.request_photo and not goal.mission_done
     assert goal.x_right_m == 0.0 and goal.y_forward_m == 0.0
 
-    # STOP es terminal: aunque vuelva a "ver" el cono lejos, se queda frenado.
-    det = ConeDetection(bbox_xyxy=(100, 100, 150, 200), confidence=0.9)
-    ground = GroundPoint(x_forward_m=3.0, y_left_m=0.0, distance_m=3.0)
-    goal2 = fsm.update(pose, None, det, ground, t + 1.0)
-    assert goal2.state == "STOP" and goal2.mission_done
+    # Sigue frenado hasta que se confirma la foto.
+    goal_espera = fsm.update(pose, None, det, ground, t + 0.3)
+    assert goal_espera.state == "PHOTO" and not goal_espera.mission_done
+
+    # Con la foto confirmada: en modo "wander" no hay ruta que agotar, asi
+    # que el cono es un CHECKPOINT, no el final -> vuelve a SEARCH, no a STOP.
+    fsm.mark_photo_taken()
+    goal = fsm.update(pose, None, det, ground, t + 0.6)
+    print(f"  estado tras la foto: {goal.state} checkpoints_done={fsm.checkpoints_done}")
+    assert goal.state == "SEARCH" and not goal.mission_done
+    assert fsm.checkpoints_done == 1
+
+    # El MISMO cono (misma posicion en el mundo, pose sin moverse) no debe
+    # volver a enganchar NAVIGATE/APPROACH/VERIFY: esta dentro de
+    # revisit_radius_m del que ya se fotografio.
+    goal_mismo = fsm.update(pose, None, det, ground, t + 0.9)
+    print(f"  mismo cono otra vez: state={goal_mismo.state} (deberia seguir en SEARCH)")
+    assert goal_mismo.state == "SEARCH"
+
+    # Un cono NUEVO, lejos del anterior, si debe enganchar de nuevo.
+    det2 = ConeDetection(bbox_xyxy=(100, 100, 150, 200), confidence=0.9)
+    ground2 = GroundPoint(x_forward_m=3.0, y_left_m=2.5, distance_m=3.9)
+    goal2 = fsm.update(pose, None, det2, ground2, t + 1.2)
+    print(f"  cono nuevo lejos del anterior: state={goal2.state}")
+    assert goal2.state == "NAVIGATE"
+
+    print("\n=== ConeMissionFSM: take_photo=False tambien sigue de largo (checkpoint sin foto) ===")
+    cfg_sin_foto = MissionConfig(detect_confidence_min=0.4, approach_start_m=2.0,
+                                 verify_at_m=0.8, stop_distance_m=0.5,
+                                 verify_hits_required=2, verify_window=3,
+                                 verify_min_confidence=0.5, verify_max_jump_m=0.5,
+                                 take_photo=False)
+    fsm_sf = ConeMissionFSM(cfg_sin_foto)
+    tt = 0.0
+    for d in [0.7, 0.6, 0.5, 0.48]:
+        det = ConeDetection(bbox_xyxy=(100, 100, 150, 200), confidence=0.8)
+        ground = GroundPoint(x_forward_m=d, y_left_m=0.0, distance_m=d)
+        tt += 0.3
+        goal_sf = fsm_sf.update(pose, None, det, ground, tt)
+    assert goal_sf.state == "SEARCH" and not goal_sf.mission_done and fsm_sf.checkpoints_done == 1
+
+    print("\n=== ConeMissionFSM: modo waypoints, STOP solo cuando se agota la ruta ===")
+    cfg_wp = MissionConfig(detect_confidence_min=0.4, approach_start_m=2.0, verify_at_m=0.8,
+                           stop_distance_m=0.5, verify_hits_required=2, verify_window=3,
+                           verify_min_confidence=0.5, verify_max_jump_m=0.5,
+                           search_mode="waypoints", take_photo=False)
+    fsm_wp = ConeMissionFSM(cfg_wp)
+    fsm_wp._route = WaypointRoute([(5.0, 0.0)], reach_radius_m=0.3)  # ruta larga, no se agota sola
+    tw = 0.0
+    for d in [0.7, 0.6, 0.5, 0.48]:
+        det = ConeDetection(bbox_xyxy=(100, 100, 150, 200), confidence=0.8)
+        ground = GroundPoint(x_forward_m=d, y_left_m=0.0, distance_m=d)
+        tw += 0.3
+        goal_wp = fsm_wp.update(pose, None, det, ground, tw)
+    print(f"  tras completar el cono con ruta pendiente: state={goal_wp.state}")
+    assert goal_wp.state == "SEARCH" and not goal_wp.mission_done, \
+        "con ruta todavia pendiente no deberia terminar la mision"
+    # Ahora se agota la ruta (sin cono a la vista) -> recien ahi STOP.
+    fsm_wp._route.idx = len(fsm_wp._route.points)  # simula que ya se recorrio toda la ruta
+    goal_wp_fin = fsm_wp.update(pose, None, None, None, tw + 5.0)
+    print(f"  ruta agotada, sin cono: state={goal_wp_fin.state} mision_cumplida={goal_wp_fin.mission_done}")
+    assert goal_wp_fin.state == "STOP" and goal_wp_fin.mission_done
 
     print("\n=== cono perdido momentaneamente (grace period) ===")
     cfg2 = MissionConfig(lost_cone_grace_s=1.0, approach_start_m=2.0, verify_at_m=0.8,

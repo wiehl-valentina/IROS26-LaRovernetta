@@ -137,9 +137,54 @@ def ground_point_from_pixel(
 
 
 def ground_point_from_bbox(detection: ConeDetection, camera_k: np.ndarray,
-                           camera_pose: np.ndarray, ground_z: float = 0.0
+                           camera_pose: np.ndarray, ground_z: float = 0.0,
+                           real_height_m: float | None = None,
                            ) -> GroundPoint | None:
-    return ground_point_from_pixel(detection.bottom_center, camera_k, camera_pose, ground_z)
+    """Punto en el piso para un cono, con respaldo para conos que NO tocan el
+    piso visible en la imagen: apoyados sobre un escalon/estante/cordon (otra
+    altura), o con la base tapada por otro objeto (parcialmente ocultos).
+
+    Primero intenta la interseccion exacta con el plano del piso (misma
+    geometria de siempre). Si eso falla (rayo que no cruza el piso hacia
+    adelante — tipico cuando el cono esta elevado y su borde inferior visible
+    ya no es el punto de apoyo real) y se paso `real_height_m`, cae a una
+    estimacion por tamaño aparente (`ground_point_from_apparent_size`): mas
+    ruidosa, pero alcanza para seguir orientando la aproximacion en vez de
+    perder el cono por completo.
+    """
+    gp = ground_point_from_pixel(detection.bottom_center, camera_k, camera_pose, ground_z)
+    if gp is not None:
+        return gp
+    if not real_height_m or detection.height_px <= 1:
+        return None
+    return ground_point_from_apparent_size(detection, camera_k, real_height_m)
+
+
+def ground_point_from_apparent_size(detection: ConeDetection, camera_k: np.ndarray,
+                                    real_height_m: float) -> GroundPoint | None:
+    """Distancia monocular por tamaño aparente (pinhole: distancia = altura_real *
+    fy / altura_px), con rumbo (izquierda/derecha) a partir del pixel central del
+    bbox. Ignora la pose/pitch de la camara (no proyecta al piso real) — es a
+    proposito una aproximacion de respaldo, no reemplaza la interseccion con el
+    piso cuando esta disponible. Util para un cono a otra altura (estante,
+    escalon) o parcialmente tapado, donde el borde inferior del bbox ya no
+    corresponde al punto de apoyo real en el piso.
+    """
+    k = as_matrix(camera_k, (3, 3), "camera_k")
+    fx, fy = float(k[0, 0]), float(k[1, 1])
+    cx = float(k[0, 2])
+    if fx <= 0.0 or fy <= 0.0 or detection.height_px <= 1:
+        return None
+
+    distance_m = (float(real_height_m) * fy) / detection.height_px
+    if distance_m <= 0.0:
+        return None
+
+    u = detection.center_x
+    bearing = math.atan2(u - cx, fx)  # + hacia la derecha de la imagen
+    forward_m = distance_m * math.cos(bearing)
+    left_m = -distance_m * math.sin(bearing)
+    return GroundPoint(x_forward_m=forward_m, y_left_m=left_m, distance_m=distance_m)
 
 
 # ------------------------------------------------------------ backend color
@@ -173,6 +218,20 @@ class ColorShapeConeDetector:
         self.cfg = cfg or ColorConeConfig()
 
     def detect(self, rgb: np.ndarray) -> ConeDetection | None:
+        candidates = self.detect_all(rgb)
+        return candidates[0] if candidates else None
+
+    def detect_all(self, rgb: np.ndarray) -> list[ConeDetection]:
+        """Todos los contornos candidatos, no solo el mejor.
+
+        Puede haber mas de un cono a la vista, o el cono "obvio" (mas area)
+        puede en realidad ser un falso positivo mas cercano/grande mientras el
+        cono real, parcialmente tapado, queda como un contorno mas chico. Se
+        devuelven todos los que pasan el filtro para que quien llame (mission/
+        indoor_bridge) elija con mas contexto (p.ej. el que de una posicion en
+        el piso valida y mas cercana), en vez de descartar todo menos el de
+        mayor area aca mismo.
+        """
         import cv2
 
         c = self.cfg
@@ -188,8 +247,7 @@ class ColorShapeConeDetector:
             mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        best: ConeDetection | None = None
-        best_area = 0.0
+        found: list[ConeDetection] = []
 
         for cnt in contours:
             area = float(cv2.contourArea(cnt))
@@ -204,14 +262,14 @@ class ColorShapeConeDetector:
             fill = area / float(w * h)
             if fill < c.min_fill_ratio:
                 continue
-            if area > best_area:
-                best_area = area
-                # confianza heuristica: mas area y mas "compacto" -> mas confianza,
-                # acotada para no competir de igual a igual con un YOLO real.
-                conf = float(np.clip(0.35 + 0.35 * min(1.0, area / 4000.0), 0.0, 0.7))
-                best = ConeDetection(bbox_xyxy=(float(x), float(y), float(x + w), float(y + h)),
-                                     confidence=conf, label="cone(color)")
-        return best
+            # confianza heuristica: mas area y mas "compacto" -> mas confianza,
+            # acotada para no competir de igual a igual con un YOLO real.
+            conf = float(np.clip(0.35 + 0.35 * min(1.0, area / 4000.0), 0.0, 0.7))
+            found.append(ConeDetection(bbox_xyxy=(float(x), float(y), float(x + w), float(y + h)),
+                                       confidence=conf, label="cone(color)"))
+
+        found.sort(key=lambda d: d.width_px * d.height_px, reverse=True)
+        return found
 
 
 # -------------------------------------------------------------- backend YOLO
@@ -256,29 +314,37 @@ class YoloConeDetector:
               f"(clases del modelo: {list(self.model.names.values())})")
 
     def detect(self, rgb: np.ndarray) -> ConeDetection | None:
+        candidates = self.detect_all(rgb)
+        return candidates[0] if candidates else None
+
+    def detect_all(self, rgb: np.ndarray) -> list[ConeDetection]:
+        """Todas las detecciones de cono del frame, ordenadas por confianza
+        descendente (ver ColorShapeConeDetector.detect_all: mismo motivo,
+        puede haber mas de un cono o uno parcialmente tapado con menos
+        confianza que un falso positivo)."""
         results = self.model.predict(
             source=rgb, imgsz=self.cfg.img_size, conf=self.cfg.conf_thresh,
             device=self.cfg.device, verbose=False,
         )
         if not results:
-            return None
+            return []
         r = results[0]
         if r.boxes is None or len(r.boxes) == 0:
-            return None
+            return []
 
         wanted = set(self.cfg.class_names)
-        best: ConeDetection | None = None
+        found: list[ConeDetection] = []
         for box in r.boxes:
             cls_id = int(box.cls[0])
             name = self.model.names.get(cls_id, str(cls_id))
             if wanted and name not in wanted:
                 continue
             conf = float(box.conf[0])
-            if best is not None and conf <= best.confidence:
-                continue
             x0, y0, x1, y1 = [float(v) for v in box.xyxy[0]]
-            best = ConeDetection(bbox_xyxy=(x0, y0, x1, y1), confidence=conf, label=name)
-        return best
+            found.append(ConeDetection(bbox_xyxy=(x0, y0, x1, y1), confidence=conf, label=name))
+
+        found.sort(key=lambda d: d.confidence, reverse=True)
+        return found
 
 
 # ------------------------------------------------------------------ pipeline
@@ -286,6 +352,12 @@ class YoloConeDetector:
 @dataclass
 class ConeDetectorConfig:
     backend: str = "color"   # "color" | "yolo"
+    # Alto real del cono en metros. Se usa SOLO como respaldo en
+    # ground_point_from_bbox cuando el cono no toca el piso visible en la
+    # imagen (esta a otra altura -- estante, escalon, cordon -- o su base
+    # esta tapada) para estimar distancia por tamaño aparente en vez de
+    # perder la deteccion. Cono de trafico chico tipico indoor: ~0.30 m.
+    real_height_m: float = 0.30
     color: ColorConeConfig = field(default_factory=ColorConeConfig)
     yolo: YoloConeConfig = field(default_factory=YoloConeConfig)
 
@@ -305,12 +377,14 @@ class ConeDetectorConfig:
         if "class_names" in yolo_d:
             yolo_d["class_names"] = tuple(yolo_d["class_names"])
         return cls(backend=d.get("backend", "color"),
+                   real_height_m=float(d.get("real_height_m", 0.30)),
                    color=ColorConeConfig(**color_d),
                    yolo=YoloConeConfig(**yolo_d))
 
 
 class ConeDetectorPipeline:
-    """Punto de entrada unico: .detect(rgb) sin importar el backend."""
+    """Punto de entrada unico: .detect(rgb) / .detect_all(rgb) sin importar
+    el backend."""
 
     def __init__(self, cfg: ConeDetectorConfig):
         self.cfg = cfg
@@ -323,6 +397,9 @@ class ConeDetectorPipeline:
 
     def detect(self, rgb: np.ndarray) -> ConeDetection | None:
         return self.impl.detect(rgb)
+
+    def detect_all(self, rgb: np.ndarray) -> list[ConeDetection]:
+        return self.impl.detect_all(rgb)
 
 
 # --------------------------------------------------------------------- pruebas

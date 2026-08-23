@@ -87,6 +87,11 @@ class IndoorBridge(Bridge):
         self.mission_final_state = "SEARCH"
         self.mission_final_distance_m: float | None = None
 
+        self.photo_dir = Path(mission_cfg.photo_dir)
+        if mission_cfg.take_photo:
+            self.photo_dir.mkdir(parents=True, exist_ok=True)
+        self.cone_photos_saved = 0
+
     # ------------------------------------------------------ mapa importado
 
     def _maybe_load_external_map(self, mem_cfg: dict) -> None:
@@ -128,6 +133,44 @@ class IndoorBridge(Bridge):
               f"{math.degrees(self.odometry.pose.theta):+.0f} grados de ESE mapa. "
               "Si no es asi, el mapa va a quedar desalineado con lo que ve la camara.")
 
+    # ------------------------------------------------------------------ cono
+
+    def _pick_cone(self, rgb: np.ndarray) -> tuple:
+        """Elige QUE deteccion de cono usar este frame, entre TODAS las que
+        dio el detector (no solo la de mas confianza/area).
+
+        Puede haber mas de un cono a la vista, y el detector puede preferir
+        por area/confianza un falso positivo mas grande antes que el cono
+        real, mas chico porque esta parcialmente tapado o mas lejos. Ademas,
+        un cono a otra altura (estante, escalon) puede no dar interseccion
+        valida con el plano del piso para su bbox "obvio" pero si para una
+        deteccion secundaria mas cercana al piso. Por eso se calcula el punto
+        en el piso (con el respaldo por tamaño aparente de
+        ground_point_from_bbox) para CADA candidato, se descartan los que no
+        dan una posicion valida, y se elige el mas cercano de los que quedan
+        — es la señal mas confiable de "este es el cono al que hay que ir",
+        mejor que la confianza cruda del detector.
+        """
+        detector = self.cone_detector
+        if hasattr(detector, "detect_all"):
+            candidates = detector.detect_all(rgb)
+        else:  # compatibilidad si algun backend viejo no lo implementa
+            one = detector.detect(rgb)
+            candidates = [one] if one is not None else []
+
+        real_height_m = getattr(getattr(detector, "cfg", None), "real_height_m", None)
+        best_det, best_ground = None, None
+        for det in candidates:
+            ground = ground_point_from_bbox(
+                det, self.perception.camera_k, self.perception.camera_pose,
+                ground_z=self.perception.ground_z, real_height_m=real_height_m,
+            )
+            if ground is None:
+                continue
+            if best_ground is None or ground.distance_m < best_ground.distance_m:
+                best_det, best_ground = det, ground
+        return best_det, best_ground
+
     # ------------------------------------------------------------------ paso
 
     def _step(self) -> None:
@@ -145,14 +188,9 @@ class IndoorBridge(Bridge):
         telem = self.client.telemetry()
         res = self.perception.process(rgb)
 
-        cone = self.cone_detector.detect(rgb)
-        cone_ground = None
+        cone, cone_ground = self._pick_cone(rgb)
         if cone is not None:
             self.cone_frames_detected += 1
-            cone_ground = ground_point_from_bbox(
-                cone, self.perception.camera_k, self.perception.camera_pose,
-                ground_z=self.perception.ground_z,
-            )
 
         pose = self.odometry.update(telem.raw)
         self.pmap.integrate(res.traversability, res.observed, pose,
@@ -174,6 +212,12 @@ class IndoorBridge(Bridge):
               f"y_forward={mission_goal.y_forward_m:+.2f})  {cono_desc}  "
               f"pose=({pose.x:+.2f},{pose.y:+.2f},{math.degrees(pose.theta):+.0f}gr)  "
               f"mapa: {st['celdas_vistas']} celdas  -- {mission_goal.reason}")
+
+        if mission_goal.request_photo:
+            self.send(DriveCommand(0.0, 0.0, mission_goal.reason))
+            self._save_cone_photo(rgb, cone)
+            self.mission.mark_photo_taken()
+            return
 
         if mission_goal.mission_done:
             self.send(DriveCommand(0.0, 0.0, mission_goal.reason))
@@ -230,6 +274,36 @@ class IndoorBridge(Bridge):
         self.send(cmd)
         self._maybe_dump_debug_indoor(rgb, res, plan, cone)
 
+    # ------------------------------------------------------------------ foto
+
+    def _save_cone_photo(self, rgb: np.ndarray, cone) -> None:
+        """Guarda una foto del checkpoint (cono) apenas se confirma y el
+        rover esta a stop_distance_m o menos. Llamada desde _step() cuando
+        mission_goal.request_photo es True (estado PHOTO de ConeMissionFSM).
+        Nunca lanza: si falla, la mision igual sigue su curso (mark_photo_taken
+        se llama de todas formas para no quedar trabada esperando para
+        siempre por un error de disco/permmisos).
+        """
+        try:
+            from PIL import Image, ImageDraw
+            frame = Image.fromarray(rgb)
+            if cone is not None:
+                draw = ImageDraw.Draw(frame)
+                x0, y0, x1, y1 = cone.bbox_xyxy
+                draw.rectangle([x0, y0, x1, y1], outline=(255, 140, 0), width=4)
+                dist_txt = (f"{self.mission_final_distance_m:.2f}m"
+                           if self.mission_final_distance_m is not None else "?")
+                draw.text((x0, max(0, y0 - 14)),
+                         f"{cone.label} {cone.confidence:.2f} @ {dist_txt}",
+                         fill=(255, 140, 0))
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            path = self.photo_dir / f"cono_{self.cone_photos_saved:03d}_{ts}.jpg"
+            frame.save(path, quality=90)
+            self.cone_photos_saved += 1
+            print(f"[indoor_bridge] foto del cono (checkpoint) guardada en {path}")
+        except Exception as exc:
+            print(f"[indoor_bridge] no pude guardar la foto del cono: {exc}")
+
     # ------------------------------------------------------------------ debug
 
     def _maybe_dump_debug_indoor(self, rgb, res, plan, cone) -> None:
@@ -257,6 +331,8 @@ class IndoorBridge(Bridge):
         super()._print_summary()
         print("  --- mision indoor (cono) ---")
         print(f"  frames con cono detectado: {self.cone_frames_detected}")
+        print(f"  checkpoints completados:   {self.mission.checkpoints_done}")
+        print(f"  fotos del cono guardadas:  {self.cone_photos_saved}")
         print(f"  estado final:              {self.mission_final_state}")
         if self.mission_final_distance_m is not None:
             print(f"  ultima distancia al cono:  {self.mission_final_distance_m:.2f} m")

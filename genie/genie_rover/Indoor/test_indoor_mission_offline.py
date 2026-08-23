@@ -35,8 +35,10 @@ Uso:
 
 from __future__ import annotations
 
+import tempfile
 import time
 import types
+from pathlib import Path
 
 import numpy as np
 
@@ -147,7 +149,15 @@ def _build_stub() -> IndoorBridge:
         stop_distance_m=0.5, verify_hits_required=3, verify_window=5,
         verify_min_confidence=0.5, verify_max_jump_m=0.6, lost_cone_grace_s=1.0,
         search_mode="wander", approach_max_linear_scale=0.6,
+        # take_photo=True (default) a proposito: esta prueba tambien cubre
+        # IndoorBridge._save_cone_photo escribiendo un jpg de verdad. En modo
+        # "wander" no hay condicion de ruta agotada, asi que despues de la
+        # foto la mision vuelve a SEARCH en vez de terminar — eso tambien se
+        # valida aca (checkpoints_done y que no vuelva a NAVIGATE de una al
+        # mismo cono, gracias al filtro de revisit_radius_m).
     ))
+    b.photo_dir = Path(tempfile.mkdtemp(prefix="indoor_test_photos_"))
+    b.cone_photos_saved = 0
 
     # --- estado de seguridad / bucle, igual que Bridge.__init__ ------------
     b.stats = LoopStats()
@@ -182,21 +192,37 @@ def main() -> None:
         b._step()
         estados.append(b.mission_final_state)
 
+    fotos = sorted(b.photo_dir.glob("*.jpg"))
     print(f"\nprogresion de estados: {estados}")
     print(f"stop_requested: {b._stop_requested}")
     print(f"cone_frames_detected: {b.cone_frames_detected}")
     print(f"mission_final_distance_m: {b.mission_final_distance_m}")
+    print(f"checkpoints_done: {b.mission.checkpoints_done}")
+    print(f"fotos guardadas: {[p.name for p in fotos]}")
 
     assert "NAVIGATE" in estados or "APPROACH" in estados, \
         "nunca reacciono a la deteccion del cono"
     assert "VERIFY" in estados, "nunca llego a verificar"
-    assert estados[-1] == "STOP", f"deberia terminar en STOP, termino en {estados[-1]}"
-    assert b._stop_requested, "STOP deberia haber pedido frenar el bucle (request_stop)"
+    assert "PHOTO" in estados, "nunca pidio la foto del checkpoint"
+    assert b.cone_photos_saved == 1 and len(fotos) == 1, \
+        f"deberia haber guardado exactamente una foto, guardo {b.cone_photos_saved}"
+    assert b.mission.checkpoints_done == 1, \
+        f"deberia haber completado 1 checkpoint, completo {b.mission.checkpoints_done}"
+    # modo "wander": no hay condicion de ruta agotada, asi que despues de la
+    # foto la mision vuelve a SEARCH (no termina) y sigue ahi el resto de la
+    # corrida — sin volver a NAVIGATE/APPROACH sobre el MISMO cono (filtro
+    # de revisit_radius_m).
+    assert estados[-1] == "SEARCH", f"deberia seguir buscando en SEARCH, termino en {estados[-1]}"
+    assert not b._stop_requested, "wander no deberia haber terminado la mision sola"
+    idx_photo = estados.index("PHOTO")
+    assert "NAVIGATE" not in estados[idx_photo + 1:] and "APPROACH" not in estados[idx_photo + 1:], \
+        "volvio a engancharse con el mismo cono ya fotografiado (revisit_radius_m no filtro)"
     assert b.cone_frames_detected >= 3
     assert b.stats.errors == 0, "no debería haber habido excepciones en ningun _step()"
 
     print("\nTodos los asserts pasaron: percepcion(stub) -> deteccion(stub+geometria real) "
-          "-> mapa(real) -> mision(real) -> planner(real) -> seguidor(real) -> freno.")
+          "-> mapa(real) -> mision(real) -> planner(real) -> seguidor(real) -> foto -> "
+          "vuelve a buscar sin repetir el mismo cono.")
 
 
 if __name__ == "__main__":

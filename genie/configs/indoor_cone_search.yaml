@@ -129,6 +129,13 @@ cone:
   # "yolo":  ultralytics YOLO, requiere checkpoint entrenado (ver doc).
   backend: "color"
 
+  # Alto real del cono en metros. Se usa SOLO como respaldo cuando el cono
+  # NO toca el piso visible en la imagen (esta a otra altura -- arriba de un
+  # cordon/escalon/estante -- o su base esta parcialmente tapada): en vez de
+  # perder la deteccion, estima la distancia por tamaño aparente en la
+  # imagen. Ajustar al cono real que se use en la pista.
+  real_height_m: 0.30
+
   color:
     hsv_low: [5, 120, 120]
     hsv_high: [18, 255, 255]
@@ -157,8 +164,20 @@ mission:
   #              PersistentMap.
   # "waypoints": Opcion A del doc (mapa conocido): sigue una ruta fija, ver
   #              waypoints_example.yaml.
+  #
+  # RECOMENDADO si ya tenes un mapeo previo del recorrido (ver
+  # genie_rover.Indoor.map_session / configs/indoor_mapping.yaml): usar
+  # "waypoints" con la ruta estimada de ese mapeo (waypoints_path) COMBINADO
+  # con memory.external_map (mas abajo) para arrancar con el mapa ya
+  # poblado en vez de vacio. Asi el rover sigue la ruta conocida en vez de
+  # explorar a ciegas, y en cuanto el detector engancha un cono (Fase 4,
+  # abajo) la maquina de estados abandona la ruta y va derecho al cono —
+  # el cono funciona como un checkpoint sobre/cerca de esa ruta, no como
+  # el unico mecanismo de navegacion.
+  # "frontier" queda como fallback si el mapeo previo no cubre toda la
+  # zona (explora la parte desconocida) y "wander" como ultimo recurso.
   search_mode: "wander"
-  waypoints_path: null          # ej. "configs/waypoints_example.yaml"
+  waypoints_path: null          # ej. "configs/waypoints_example.yaml" (ruta estimada del mapeo previo)
   waypoint_reach_radius_m: 0.6
   wander_forward_m: 3.0
 
@@ -168,6 +187,12 @@ mission:
   frontier_preferred_m: 1.6
   frontier_fov_deg: 140.0
   frontier_goal_hold_s: 4.0
+  # Modo "frontier": cuanto esperar sin frontera nueva antes de dar la
+  # exploracion por agotada (recien ahi, y solo si en ese momento no hay
+  # ningun cono enganchado, termina la mision). En "waypoints" el fin de
+  # ruta ya es explicito (ultimo waypoint alcanzado) y esto no aplica; en
+  # "wander" no hay condicion de fin propia (ver mission.py).
+  frontier_exhausted_grace_s: 6.0
 
   # Fase 4 del doc: 2.0 m empieza a aproximarse con cuidado, 0.5 m frena.
   detect_confidence_min: 0.45
@@ -186,6 +211,28 @@ mission:
   # cliente que usa vlm_recovery, programs/client/genai_client.py). Requiere
   # GEMINI_API_KEY en el entorno. Si falla o da timeout, NO frena a ciegas:
   # sigue esperando mas evidencia geometrica.
+  #
+  # DESCONECTADO DEL BRIDGE HOY A PROPOSITO: aunque se ponga en true,
+  # indoor_bridge.py no llama a ConeMissionFSM.confirm_with_vlm() en ningun
+  # punto de _step(), asi que este flag no tiene efecto todavia. No es parte
+  # de la solucion actual (puede sumarse mas adelante conectando ese
+  # llamado; el metodo ya esta listo en mission.py).
   verify_with_vlm: false
   vlm_timeout_s: 4.0
   vlm_min_confidence: 0.5
+
+  # --- foto del cono (checkpoint) ------------------------------------------
+  # Cuando el cono queda confirmado y el rover llega a stop_distance_m, se
+  # frena y se guarda una foto del frame actual (con el bbox dibujado). Cada
+  # cono es un CHECKPOINT, no el final de la mision: despues de la foto (o
+  # directo despues de confirmar, si take_photo=false) el rover sigue
+  # buscando el proximo. La mision solo termina (STOP) cuando se agota la
+  # ruta fija ("waypoints") o la exploracion por frontera ("frontier") y en
+  # ese momento no hay ningun cono enganchado — ver mission.py.
+  take_photo: true
+  photo_dir: "checkpoint_photos"
+
+  # Radio (m) en el mapa/odometria para no re-fotografiar el mismo cono: una
+  # deteccion nueva a esta distancia o menos de un cono ya visitado se
+  # ignora, y la busqueda sigue de largo hacia el proximo.
+  revisit_radius_m: 1.0
