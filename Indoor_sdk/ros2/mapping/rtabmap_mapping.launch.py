@@ -86,14 +86,15 @@ def generate_launch_description():
         DeclareLaunchArgument("sdk_url", default_value="http://localhost:8000"),
         DeclareLaunchArgument("feed_fps", default_value="15"),
         DeclareLaunchArgument("database_path", default_value="~/.ros/rtabmap_mapping.db"),
-        DeclareLaunchArgument("camera_width", default_value="1280"),
-        DeclareLaunchArgument("camera_height", default_value="720"),
-        DeclareLaunchArgument("camera_fx", default_value="900.0"),
-        DeclareLaunchArgument("camera_fy", default_value="900.0"),
-        DeclareLaunchArgument("camera_cx", default_value="640.0"),
-        DeclareLaunchArgument("camera_cy", default_value="360.0"),
-        DeclareLaunchArgument("wheel_radius_m", default_value="0.045"),
+        DeclareLaunchArgument("camera_width", default_value="1920"),
+        DeclareLaunchArgument("camera_height", default_value="1080"),
+        DeclareLaunchArgument("camera_fx", default_value="925.265722853314"),
+        DeclareLaunchArgument("camera_fy", default_value="924.6288195383473"),
+        DeclareLaunchArgument("camera_cx", default_value="962.3052531643399"),
+        DeclareLaunchArgument("camera_cy", default_value="528.3891677741947"),
+        DeclareLaunchArgument("wheel_radius_m", default_value="0.0527"),
         DeclareLaunchArgument("track_width_m", default_value="0.15"),
+
 
         # --- bridge del SDK: imagen, imu, gps, y /earth_rover/odom + TF -----
         ExecuteProcess(

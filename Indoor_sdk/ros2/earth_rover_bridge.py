@@ -143,25 +143,34 @@ class EarthRoverBridge(Node):
         self._static_tf_broadcaster = StaticTransformBroadcaster(self)
         self._send_static_camera_tf()
 
-        # cmd_vel -> /control: keep only the latest command, send at a fixed
-        # rate, and stop the rover if commands stop arriving.
-        self._latest_cmd = None
-        self._last_cmd_at = 0.0
-        self._stopped = True
-        self._cmd_lock = threading.Lock()
-        self.create_subscription(Twist, "cmd_vel", self._on_cmd_vel, command_qos)
+        # cmd_vel -> /control: DESHABILITADO (capa extra de seguridad).
+        # Este bridge ya NO se suscribe a /cmd_vel ni corre el hilo de
+        # control, para que jamas pueda escribir en /control sin importar
+        # que nodos esten corriendo (p.ej. teleop_twist_keyboard) durante la
+        # sesion. Manejar el rover exclusivamente desde el dashboard del SDK.
+        # Si en el futuro se necesita reactivar, descomentar estas lineas:
+        # self._latest_cmd = None
+        # self._last_cmd_at = 0.0
+        # self._stopped = True
+        # self._cmd_lock = threading.Lock()
+        # self.create_subscription(Twist, "cmd_vel", self._on_cmd_vel, command_qos)
 
         self._session = requests.Session()
         self._running = True
         self._stop_event = threading.Event()
-        self._control_thread = threading.Thread(target=self._control_loop, daemon=True)
-        self._control_thread.start()
+        # self._control_thread = threading.Thread(target=self._control_loop, daemon=True)
+        # self._control_thread.start()
         threading.Thread(target=self._feed_loop, daemon=True).start()
         threading.Thread(target=self._telemetry_loop, daemon=True).start()
 
-        self.get_logger().info(f"Bridging Earth Rovers SDK at {self.sdk_url}")
+        self.get_logger().info(
+            f"Bridging Earth Rovers SDK at {self.sdk_url} "
+            "(cmd_vel/control DESHABILITADO -- manejar desde el dashboard)"
+        )
 
     # ------------------------------------------------------------- control
+    # Deshabilitado por completo (ver comentario en __init__): estos metodos
+    # quedan sin uso mientras no se reactive la suscripcion a cmd_vel.
 
     def _on_cmd_vel(self, msg: Twist):
         with self._cmd_lock:
@@ -375,19 +384,20 @@ class EarthRoverBridge(Node):
     def destroy_node(self):
         self._running = False
         self._stop_event.set()
-        self._control_thread.join(timeout=1.0)
-        # Do not leave the last motion command active when the bridge exits.
-        for _ in range(3):
-            try:
-                response = self._session.post(
-                    f"{self.sdk_url}/control",
-                    json={"command": {"linear": 0, "angular": 0}},
-                    timeout=CONTROL_HTTP_TIMEOUT_S,
-                )
-                response.raise_for_status()
-                break
-            except requests.RequestException:
-                continue
+        # self._control_thread.join(timeout=1.0)  # hilo deshabilitado
+        # POST de "stop" al salir tambien deshabilitado -- este bridge no
+        # debe tocar /control bajo ninguna circunstancia (ver __init__).
+        # for _ in range(3):
+        #     try:
+        #         response = self._session.post(
+        #             f"{self.sdk_url}/control",
+        #             json={"command": {"linear": 0, "angular": 0}},
+        #             timeout=CONTROL_HTTP_TIMEOUT_S,
+        #         )
+        #         response.raise_for_status()
+        #         break
+        #     except requests.RequestException:
+        #         continue
         self._session.close()
         super().destroy_node()
 
