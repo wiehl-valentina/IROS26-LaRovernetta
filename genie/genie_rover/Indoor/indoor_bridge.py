@@ -1,3 +1,4 @@
+
 """IndoorBridge: variante de Bridge para navegar SIN GPS y buscar un cono.
 
 Hereda de genie_rover.bridge.Bridge y reutiliza TAL CUAL (no reimplementa
@@ -347,9 +348,30 @@ def main() -> int:
                     help="enviar comandos de verdad (sin esto es simulacro)")
     ap.add_argument("--max-seconds", type=float, default=None)
     ap.add_argument("--debug-dir", default=None)
+    ap.add_argument("--search-mode", choices=["wander", "frontier", "waypoints"],
+                    default=None,
+                    help="pisa mission.search_mode del config, para elegir el modo "
+                         "de busqueda del tour de checkpoints sin editar el yaml "
+                         "(wander | frontier | waypoints)")
+    ap.add_argument("--waypoints-path", default=None,
+                    help="pisa mission.waypoints_path del config (solo tiene efecto "
+                         "con --search-mode waypoints o si el config ya lo pide), "
+                         "ej. configs/waypoints_example.yaml")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(Path(args.config).read_text())
+
+    mission_cfg = cfg.setdefault("mission", {})
+    if args.search_mode is not None:
+        mission_cfg["search_mode"] = args.search_mode
+    if args.waypoints_path is not None:
+        mission_cfg["waypoints_path"] = args.waypoints_path
+    if mission_cfg.get("search_mode") == "waypoints" and not mission_cfg.get("waypoints_path"):
+        raise SystemExit(
+            "search_mode 'waypoints' necesita mission.waypoints_path (via config o "
+            "--waypoints-path) -- ver configs/waypoints_example.yaml."
+        )
+
     _check_placeholders(cfg)
 
     bridge = IndoorBridge(cfg, dry_run=not args.go, debug_dir=args.debug_dir)
@@ -357,11 +379,15 @@ def main() -> int:
     if args.go:
         print("\n" + "=" * 62)
         print("  MODO REAL: el rover se va a mover buscando el cono.")
+        print(f"  Modo de busqueda: {mission_cfg.get('search_mode', 'wander')}")
         print("  Ctrl-C frena. Tene el robot a la vista.")
         print("=" * 62)
         for i in (3, 2, 1):
             print(f"  {i} ...")
             time.sleep(1)
+    else:
+        print(f"[indoor_bridge] modo de busqueda: {mission_cfg.get('search_mode', 'wander')} "
+              f"(dry-run)")
 
     bridge.run(max_seconds=args.max_seconds)
     return 0

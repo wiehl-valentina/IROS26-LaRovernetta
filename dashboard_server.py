@@ -51,8 +51,8 @@ ALLOWED = {
     "perception": ["image", "config", "out"],
     "genie-bridge": ["config", "go", "max-seconds", "start-mission"],
     "mapping-ros2": ["db"],
-    "map-session": ["config", "go", "max-seconds", "map-out"],
-    "indoor-bridge": ["config", "go", "max-seconds", "debug-dir"],
+    "map-session": ["config", "go", "max-seconds", "map-out", "debug-dir", "export-every-s"],
+    "indoor-bridge": ["config", "go", "max-seconds", "debug-dir", "search-mode", "waypoints-path"],
     "traversability": ["level", "image", "out", "save-dir"],
 }
 
@@ -166,10 +166,11 @@ INDEX_HTML = """<!doctype html>
   h1 { font-size:18px; margin:0 0 4px; }
   .sub { color:#8a8f98; font-size:13px; margin-bottom:20px; }
   h2.section-title { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:#7ea6d6; margin:22px 0 10px; border-bottom:1px solid #22262e; padding-bottom:6px; }
-  .layout { display:grid; grid-template-columns: 360px 1fr; gap:24px; align-items:start; }
+  .layout { display:grid; grid-template-columns: 680px 1fr; gap:24px; align-items:start; }
   .col-forms { position:sticky; top:24px; }
-  .primary-grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
-  .card { background:#161a20; border:1px solid #262b33; border-radius:10px; padding:14px; margin-bottom:12px; }
+  .primary-grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; align-items:start; }
+  .card { background:#161a20; border:1px solid #262b33; border-radius:10px; padding:14px; margin-bottom:12px; transition: background-color .15s, border-color .15s; }
+  .card.armed { background:#1c150a; border-color:#b7791f; }
   .card h3 { margin:0 0 10px; font-size:12.5px; color:#9fd3ff; text-transform:uppercase; letter-spacing:.03em; }
   label { display:block; font-size:11.5px; color:#b7bcc4; margin:8px 0 3px; }
   input[type=text], select { width:100%; background:#0f1115; border:1px solid #2a2f38; color:#e6e6e6; border-radius:6px; padding:6px 8px; font-family:inherit; font-size:12.5px; }
@@ -181,6 +182,7 @@ INDEX_HTML = """<!doctype html>
   button.danger { background:#c53030; }
   button.warn { background:#b7791f; }
   button.ghost { background:#232833; }
+  button.small.ghost.active { background:#1d3a5c; color:#9fd3ff; }
   button:disabled { opacity:.4; cursor:not-allowed; }
   .go-warning { display:none; background:#3a2410; border:1px solid #b7791f; color:#f0c46a; font-size:11.5px; padding:8px; border-radius:6px; margin-top:8px; line-height:1.4; }
 
@@ -222,7 +224,7 @@ INDEX_HTML = """<!doctype html>
       <button class="ghost" onclick="checkDoctor()">Chequear instalacion (doctor)</button>
       <pre id="doctorOut"></pre>
     </div>
-    <div id="primaryForms"></div>
+    <div id="primaryForms" class="primary-grid"></div>
     <details class="secondary">
       <summary>Pruebas / diagnostico</summary>
       <div id="secondaryForms"></div>
@@ -245,8 +247,10 @@ const PRIMARY = [
       {key:"max-seconds", label:"Max segundos (con --go)", type:"text", placeholder:"300"},
       {key:"start-mission", label:"--start-mission", type:"bool"},
   ], goFlag:true },
-  { cmd: "indoor-bridge", title: "Bridge: indoor (busca cono)", fields: [
+  { cmd: "indoor-bridge", title: "Bridge: indoor (tour de checkpoints, busca conos)", fields: [
       {key:"config", label:"Config", type:"text", placeholder:"configs/indoor_cone_search.yaml"},
+      {key:"search-mode", label:"Modo de busqueda (vacio = el del config)", type:"select", options:["","wander","frontier","waypoints"]},
+      {key:"waypoints-path", label:"Ruta de waypoints (solo si el modo es waypoints)", type:"text", placeholder:"configs/waypoints_example.yaml"},
       {key:"max-seconds", label:"Max segundos (con --go)", type:"text", placeholder:"180"},
       {key:"debug-dir", label:"Carpeta debug (con --go)", type:"text", placeholder:"debug/indoor_run1"},
   ], goFlag:true },
@@ -263,6 +267,8 @@ const PRIMARY = [
       {key:"config", label:"Config", type:"text", placeholder:"configs/indoor_mapping.yaml"},
       {key:"max-seconds", label:"Max segundos (con --go)", type:"text", placeholder:"300"},
       {key:"map-out", label:"Prefijo de salida (con --go)", type:"text", placeholder:"maps/sesion1"},
+      {key:"export-every-s", label:"Exportar cada N segundos", type:"text", placeholder:"30"},
+      {key:"debug-dir", label:"Carpeta debug (con --go)", type:"text", placeholder:"debug/map_run1"},
   ], goFlag:true },
 ];
 
@@ -355,7 +361,10 @@ function buildForm(f, compact) {
     row.appendChild(el("label", {for:`${f.cmd}-go`}, "--go (modo real, mueve el rover)"));
     card.appendChild(row);
     card.appendChild(warn);
-    goCb.addEventListener("change", () => { warn.style.display = goCb.checked ? "block" : "none"; });
+    goCb.addEventListener("change", () => {
+      warn.style.display = goCb.checked ? "block" : "none";
+      card.classList.toggle("armed", goCb.checked);
+    });
   }
 
   const btn = el("button", {onclick: async () => {
@@ -394,11 +403,11 @@ async function runCmd(cmd, opts) {
 }
 
 async function stopJob(id, force) {
-  await fetch(`/api/stop?job=${id}&force=${force?1:0}`, {method:"POST"});
+  await fetch(`/api/stop?job=${encodeURIComponent(id)}&force=${force?1:0}`, {method:"POST"});
 }
 
 async function clearJob(id) {
-  await fetch(`/api/clear?job=${id}`, {method:"POST"});
+  await fetch(`/api/clear?job=${encodeURIComponent(id)}`, {method:"POST"});
   delete panelState[id];
   refreshJobs();
 }
@@ -451,6 +460,19 @@ function ensurePanel(job, container) {
   }}, "Forzar");
   const copyBtn = el("button", {class:"small ghost", onclick:(ev)=>{ev.stopPropagation(); copyLog(job.id);}}, "Copiar log");
   const clearBtn = el("button", {class:"small ghost", onclick:(ev)=>{ev.stopPropagation(); clearJob(job.id);}}, "Quitar");
+  // Auto-scroll: ON por defecto (baja sola mientras el usuario ya este cerca
+  // del final). Un click lo apaga para poder leer un error historico sin que
+  // cada linea nueva tire el scroll para abajo; otro click lo prende de
+  // vuelta y salta al final de una. Util con procesos que escupen mucho
+  // (ROS2, mapeo).
+  const autoBtn = el("button", {class:"small ghost active", onclick:(ev)=>{
+    ev.stopPropagation();
+    state.autoscroll = !state.autoscroll;
+    autoBtn.textContent = state.autoscroll ? "Auto-scroll: ON" : "Auto-scroll: OFF";
+    autoBtn.classList.toggle("active", state.autoscroll);
+    if (state.autoscroll) state.pre.scrollTop = state.pre.scrollHeight;
+  }}, "Auto-scroll: ON");
+  actions.appendChild(autoBtn);
   actions.appendChild(copyBtn);
   actions.appendChild(stopBtn);
   actions.appendChild(killBtn);
@@ -469,7 +491,7 @@ function ensurePanel(job, container) {
   panel.appendChild(body);
   container.appendChild(panel);
 
-  const state = { lines: 0, collapsed: false, el: panel, pre, statusEl, stopBtn, killBtn };
+  const state = { lines: 0, collapsed: false, autoscroll: true, el: panel, pre, statusEl, stopBtn, killBtn, autoBtn };
   panelState[job.id] = state;
   return state;
 }
@@ -498,7 +520,9 @@ async function refreshJobs() {
       const text = (st.lines > 0 ? "\\n" : "") + nuevas.join("\\n");
       st.pre.appendChild(ansiToFragment(text));
       st.lines = j.output.length;
-      if (nearBottom) st.pre.scrollTop = st.pre.scrollHeight;
+      // Con auto-scroll apagado (el usuario lo apago para leer algo mas
+      // arriba) no tocamos el scroll aunque llegue mucha salida nueva.
+      if (st.autoscroll && nearBottom) st.pre.scrollTop = st.pre.scrollHeight;
     }
 
     if (j.status === "running") {

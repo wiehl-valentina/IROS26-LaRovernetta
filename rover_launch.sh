@@ -16,11 +16,23 @@
 #   sdk-client                    Prueba de conexion SDK <-> genie (sin mover)
 #   perception --image PATH [--config PATH]
 #                                 Prueba de percepcion SAM-TP sobre una imagen
-#   mapping-ros2 [--db PATH]     Levanta rtabmap_mapping.launch.py (ROS2)
+#   mapping-ros2 [--db PATH]     Levanta rtabmap_mapping.launch.py (ROS2) --
+#                                 sesion de mapeo con correccion de pose por
+#                                 cierre de bucles visual (TF map->odom)
 #   map-session [--go] [--config PATH] [--max-seconds N] [--map-out PATH]
-#                                 Corre genie_rover.Indoor.map_session
+#               [--debug-dir PATH] [--export-every-s N]
+#                                 Corre genie_rover.Indoor.map_session (mapeo por
+#                                 frontera + export a maps/*.yaml+.pgm; usa la
+#                                 correccion de mapping-ros2 si mapping.rtabmap_correction.enabled
+#                                 esta en true en el config y mapping-ros2 esta
+#                                 corriendo en paralelo)
 #   indoor-bridge [--go] [--config PATH] [--max-seconds N] [--debug-dir PATH]
-#                                 Corre genie_rover.Indoor.indoor_bridge (busca cono)
+#                 [--search-mode wander|frontier|waypoints] [--waypoints-path PATH]
+#                                 Corre genie_rover.Indoor.indoor_bridge (tour de
+#                                 checkpoints: busca conos, saca foto y sigue
+#                                 buscando el proximo hasta agotar la ruta/
+#                                 exploracion). --search-mode pisa mission.search_mode
+#                                 del config sin tener que editarlo a mano.
 #   traversability <predict|live|drive|mission> [opciones propias]
 #                                 Corre rover_traversability.demo <nivel>
 #   ros2-check                    Test basico ROS2 (talker), Ctrl+C para cortar
@@ -207,6 +219,8 @@ cmd_map_session() {
     local go=0
     local max_seconds=""
     local map_out=""
+    local debug_dir=""
+    local export_every_s=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -214,6 +228,8 @@ cmd_map_session() {
             --go) go=1; shift ;;
             --max-seconds) max_seconds="$2"; shift 2 ;;
             --map-out) map_out="$2"; shift 2 ;;
+            --debug-dir) debug_dir="$2"; shift 2 ;;
+            --export-every-s) export_every_s="$2"; shift 2 ;;
             *) die "Opcion desconocida para map-session: $1" ;;
         esac
     done
@@ -221,11 +237,16 @@ cmd_map_session() {
     need_file "$config"
 
     local args=(--config "$config")
+    [ -n "$debug_dir" ] && args+=(--debug-dir "$debug_dir")
+    [ -n "$export_every_s" ] && args+=(--export-every-s "$export_every_s")
     if [ "$go" -eq 1 ]; then
         args+=(--go)
         [ -n "$max_seconds" ] && args+=(--max-seconds "$max_seconds")
         [ -n "$map_out" ] && args+=(--map-out "$map_out")
         c_yellow "==> map_session en MODO REAL — el rover se va a mover y explorar solo"
+        c_yellow "    (tip: si vas a usar la correccion de RTAB-Map, levanta antes"
+        c_yellow "     '$0 mapping-ros2' en otra terminal y poné mapping.rtabmap_correction.enabled: true"
+        c_yellow "     en $config)"
     else
         c_blue "==> map_session en modo simulacro (dry-run)"
     fi
@@ -243,6 +264,8 @@ cmd_indoor_bridge() {
     local go=0
     local max_seconds=""
     local debug_dir=""
+    local search_mode=""
+    local waypoints_path=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -250,11 +273,18 @@ cmd_indoor_bridge() {
             --go) go=1; shift ;;
             --max-seconds) max_seconds="$2"; shift 2 ;;
             --debug-dir) debug_dir="$2"; shift 2 ;;
+            --search-mode) search_mode="$2"; shift 2 ;;
+            --waypoints-path) waypoints_path="$2"; shift 2 ;;
             *) die "Opcion desconocida para indoor-bridge: $1" ;;
         esac
     done
 
     need_file "$config"
+
+    case "$search_mode" in
+        ""|wander|frontier|waypoints) ;;
+        *) die "--search-mode invalido: $search_mode (usar wander | frontier | waypoints)" ;;
+    esac
 
     # Nota: el modulo real vive en genie_rover/Indoor/indoor_bridge.py. El
     # docstring del propio archivo usa "genie_rover.indoor_bridge" en el
@@ -262,14 +292,17 @@ cmd_indoor_bridge() {
     # confirmamos que funciona) es genie_rover.Indoor.indoor_bridge. Si esto
     # da ModuleNotFoundError, probar el modulo sin ".Indoor" como alternativa.
     local args=(--config "$config")
+    [ -n "$search_mode" ] && args+=(--search-mode "$search_mode")
+    [ -n "$waypoints_path" ] && args+=(--waypoints-path "$waypoints_path")
     if [ "$go" -eq 1 ]; then
         args+=(--go)
         [ -n "$max_seconds" ] && args+=(--max-seconds "$max_seconds")
         [ -n "$debug_dir" ] && args+=(--debug-dir "$debug_dir")
-        c_yellow "==> indoor_bridge en MODO REAL — el rover se va a mover buscando el cono"
+        c_yellow "==> indoor_bridge en MODO REAL — el rover se va a mover buscando conos (tour de checkpoints)"
     else
         c_blue "==> indoor_bridge en modo simulacro (dry-run)"
     fi
+    [ -n "$search_mode" ] && c_blue "    modo de busqueda: $search_mode"
 
     exec python -m genie_rover.Indoor.indoor_bridge "${args[@]}"
 }
