@@ -1,0 +1,26 @@
+{
+ "sdk": {
+  "port": "8080",
+  "reload": true
+ },
+ "genie-bridge": {
+  "go": false
+ },
+ "indoor-bridge": {
+  "go": false
+ },
+ "map-session": {
+  "go": false
+ },
+ "traversability": {
+  "level": "predict"
+ },
+ "mapping-ros2": {},
+ "ros2-bridge": {},
+ "sync-ros2": {},
+ "sdk-client": {},
+ "perception": {},
+ "maps": {},
+ "ros2-check": {},
+ "doctor": {}
+}
