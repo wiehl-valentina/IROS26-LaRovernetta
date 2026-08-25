@@ -1,0 +1,1372 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Propuestas de Mejora de Ingeniería y Buenas Prácticas — La Rovernetta</title>
+  
+  <!-- Tipografía Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+  
+  <!-- Configuración de MathJax -->
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        processEscapes: true
+      }
+    };
+  </script>
+  <script type="text/javascript" id="MathJax-script" async
+    src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js">
+  </script>
+
+  <style>
+    :root {
+      --bg-base: #060911;
+      --bg-surface: #0c1220;
+      --bg-card: #121b2d;
+      --bg-card-hover: #18243b;
+      --bg-glass: rgba(12, 18, 32, 0.85);
+
+      --border-subtle: #1c2638;
+      --border-medium: #2a3852;
+      --border-bright: #3e5073;
+
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #55657e;
+
+      --cyan: #38bdf8;
+      --cyan-dim: rgba(56, 189, 248, 0.12);
+      --teal: #14b8a6;
+      --emerald: #10b981;
+      --emerald-dim: rgba(16, 185, 129, 0.12);
+      --orange: #f97316;
+      --orange-dim: rgba(249, 115, 22, 0.12);
+      --amber: #f59e0b;
+      --amber-dim: rgba(245, 158, 11, 0.12);
+      --purple: #a855f7;
+      --purple-dim: rgba(168, 85, 247, 0.12);
+      --rose: #f43f5e;
+      --rose-dim: rgba(244, 63, 94, 0.12);
+
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-title: 'Outfit', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+
+      --shadow-sm: 0 2px 8px rgba(0,0,0,0.4);
+      --shadow-md: 0 10px 30px rgba(0,0,0,0.6);
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      line-height: 1.75;
+      -webkit-font-smoothing: antialiased;
+      background-image: 
+        radial-gradient(circle at 12% 8%, rgba(56, 189, 248, 0.08), transparent 36%),
+        radial-gradient(circle at 88% 14%, rgba(168, 85, 247, 0.08), transparent 36%),
+        radial-gradient(circle at 50% 85%, rgba(16, 185, 129, 0.06), transparent 45%);
+      background-attachment: fixed;
+    }
+
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--bg-base); }
+    ::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-bright); }
+
+    .app-container {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* Barra Lateral */
+    .sidebar {
+      width: 310px;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border-subtle);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 28px 20px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .brand-icon {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, var(--purple), var(--cyan));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-family: var(--font-title);
+      font-size: 22px;
+      color: #fff;
+      box-shadow: 0 0 20px rgba(168, 85, 247, 0.35);
+    }
+
+    .brand-text h1 {
+      font-family: var(--font-title);
+      font-size: 16px;
+      font-weight: 800;
+      color: var(--text-main);
+      letter-spacing: -0.01em;
+    }
+
+    .brand-text p {
+      font-size: 11px;
+      color: var(--purple);
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 700;
+    }
+
+    .nav-group-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      font-weight: 700;
+      margin-bottom: 8px;
+      padding-left: 8px;
+    }
+
+    .nav-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .nav-item a {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 12px;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 12.5px;
+      font-weight: 500;
+      border-radius: var(--radius-sm);
+      transition: all 0.2s ease;
+      border: 1px solid transparent;
+      line-height: 1.35;
+    }
+
+    .nav-item a:hover {
+      color: var(--text-main);
+      background: var(--bg-card);
+      border-color: var(--border-subtle);
+    }
+
+    .nav-item a.active {
+      color: var(--cyan);
+      background: var(--cyan-dim);
+      border-color: rgba(56, 189, 248, 0.3);
+      font-weight: 600;
+    }
+
+    .nav-badge {
+      font-size: 9.5px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--bg-base);
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      flex-shrink: 0;
+    }
+
+    /* Contenido */
+    .main-content {
+      flex: 1;
+      padding: 36px 44px 100px;
+      max-width: 1240px;
+      overflow-x: hidden;
+    }
+
+    .hero-section {
+      background: linear-gradient(135deg, rgba(12, 18, 32, 0.95), rgba(22, 18, 42, 0.85)),
+                  radial-gradient(circle at 85% 15%, rgba(168, 85, 247, 0.15), transparent 50%);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      padding: 36px 40px;
+      margin-bottom: 24px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: var(--shadow-md);
+    }
+
+    .hero-section::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 4px;
+      height: 100%;
+      background: linear-gradient(to bottom, var(--purple), var(--cyan));
+    }
+
+    .hero-badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      letter-spacing: 0.02em;
+    }
+
+    .badge-cyan { background: var(--cyan-dim); color: var(--cyan); border-color: rgba(56, 189, 248, 0.3); }
+    .badge-purple { background: var(--purple-dim); color: var(--purple); border-color: rgba(168, 85, 247, 0.3); }
+    .badge-emerald { background: var(--emerald-dim); color: var(--emerald); border-color: rgba(16, 185, 129, 0.3); }
+    .badge-amber { background: var(--amber-dim); color: var(--amber); border-color: rgba(245, 158, 11, 0.3); }
+    .badge-rose { background: var(--rose-dim); color: var(--rose); border-color: rgba(244, 63, 94, 0.3); }
+
+    .hero-title {
+      font-family: var(--font-title);
+      font-size: 33px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+      margin-bottom: 12px;
+      background: linear-gradient(135deg, #ffffff 40%, var(--purple) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero-subtitle {
+      font-size: 15.5px;
+      color: var(--text-muted);
+      max-width: 940px;
+      line-height: 1.65;
+    }
+
+    /* Barra de Herramientas de Notas del Lector */
+    .notes-global-toolbar {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius);
+      padding: 14px 20px;
+      margin-bottom: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .notes-status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-main);
+      font-weight: 600;
+    }
+
+    .notes-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn-action {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--border-medium);
+      color: var(--text-main);
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      font-weight: 600;
+      font-family: var(--font-sans);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-action:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--cyan);
+      color: var(--cyan);
+    }
+
+    .btn-action-primary {
+      background: var(--cyan);
+      border-color: var(--cyan);
+      color: #060911;
+      font-weight: 700;
+    }
+
+    .btn-action-primary:hover {
+      background: #70d3fc;
+      color: #000;
+      box-shadow: 0 0 14px rgba(56, 189, 248, 0.4);
+    }
+
+    /* Regla del Proyecto Box */
+    .rule-notice-box {
+      background: rgba(56, 189, 248, 0.06);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-left: 4px solid var(--cyan);
+      border-radius: var(--radius-sm);
+      padding: 18px 22px;
+      margin-bottom: 30px;
+      font-size: 13.5px;
+      color: var(--text-main);
+      line-height: 1.6;
+    }
+
+    .pillar-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      padding: 32px 36px;
+      margin-bottom: 34px;
+      box-shadow: var(--shadow-sm);
+      transition: border-color 0.2s ease;
+    }
+
+    .pillar-card:hover {
+      border-color: var(--border-medium);
+    }
+
+    .pillar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .pillar-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .pillar-number {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--card-color, var(--cyan));
+      background: var(--card-dim, var(--cyan-dim));
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .pillar-title {
+      font-family: var(--font-title);
+      font-size: 21px;
+      font-weight: 800;
+      color: var(--text-main);
+      letter-spacing: -0.01em;
+    }
+
+    .problem-solution-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin: 18px 0 24px;
+    }
+
+    @media (max-width: 900px) {
+      .problem-solution-grid { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .main-content { padding: 24px 20px; }
+    }
+
+    .box-current {
+      background: rgba(244, 63, 94, 0.04);
+      border: 1px solid rgba(244, 63, 94, 0.2);
+      border-radius: var(--radius-sm);
+      padding: 20px;
+    }
+
+    .box-proposed {
+      background: rgba(16, 185, 129, 0.04);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      border-radius: var(--radius-sm);
+      padding: 20px;
+    }
+
+    .box-label {
+      font-size: 11.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .box-current .box-label { color: var(--rose); }
+    .box-proposed .box-label { color: var(--emerald); }
+
+    .box-text {
+      font-size: 13.5px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .action-steps {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 20px 24px;
+      margin: 18px 0;
+    }
+
+    .action-title {
+      font-family: var(--font-title);
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .step-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 12px;
+      font-size: 13.5px;
+      color: var(--text-muted);
+      line-height: 1.55;
+    }
+
+    .step-item:last-child { margin-bottom: 0; }
+
+    .step-badge {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--cyan);
+      background: var(--bg-surface);
+      border: 1px solid var(--border-medium);
+      padding: 2px 7px;
+      border-radius: 4px;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .code-preview {
+      background: #05080e;
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-sm);
+      padding: 16px 20px;
+      margin: 16px 0;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      color: #cbd5e1;
+      overflow-x: auto;
+      line-height: 1.65;
+    }
+
+    .code-comment { color: var(--text-dim); }
+    .code-keyword { color: var(--purple); font-weight: 600; }
+    .code-string { color: var(--emerald); }
+    .code-var { color: var(--cyan); }
+
+    /* =======================================================
+       SISTEMA DE NOTAS Y COMENTARIOS DEL LECTOR (EN EL ARCHIVO)
+       ======================================================= */
+    .side-notes-container {
+      margin-top: 24px;
+      background: rgba(14, 21, 35, 0.95);
+      border: 1px solid var(--border-medium);
+      border-left: 4px solid var(--amber);
+      border-radius: var(--radius-sm);
+      padding: 18px 20px;
+      transition: all 0.2s ease;
+    }
+
+    .side-notes-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      gap: 10px;
+    }
+
+    .side-notes-title {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--amber);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .side-notes-status {
+      font-size: 11px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+    }
+
+    .side-notes-textarea {
+      width: 100%;
+      min-height: 90px;
+      background: #060910;
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      color: #f1f5f9;
+      font-family: var(--font-sans);
+      font-size: 13px;
+      line-height: 1.5;
+      padding: 12px 14px;
+      resize: vertical;
+      outline: none;
+      transition: border-color 0.2s ease;
+    }
+
+    .side-notes-textarea:focus {
+      border-color: var(--amber);
+      box-shadow: 0 0 10px rgba(245, 158, 11, 0.2);
+    }
+
+    .side-notes-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .btn-note-clear {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-note-clear:hover {
+      color: var(--rose);
+      background: rgba(244, 63, 94, 0.1);
+    }
+
+    .roadmap-container {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+      margin: 20px 0;
+    }
+
+    @media (max-width: 980px) {
+      .roadmap-container { grid-template-columns: 1fr; }
+    }
+
+    .roadmap-phase {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 22px;
+      position: relative;
+    }
+
+    .phase-tag {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      display: inline-block;
+      margin-bottom: 8px;
+    }
+
+    .phase-title {
+      font-family: var(--font-title);
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 8px;
+    }
+
+    .phase-desc {
+      font-size: 12.5px;
+      color: var(--text-muted);
+      line-height: 1.55;
+    }
+
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--cyan);
+      color: #060911;
+      font-family: var(--font-sans);
+      font-size: 13px;
+      font-weight: 700;
+      padding: 10px 18px;
+      border-radius: 8px;
+      box-shadow: 0 10px 25px rgba(56, 189, 248, 0.4);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(10px);
+      transition: all 0.25s ease;
+      z-index: 999;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+
+    footer {
+      margin-top: 60px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--text-dim);
+      font-size: 12px;
+      font-family: var(--font-mono);
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="toast">¡Guardado con éxito!</div>
+
+<div class="app-container">
+  
+  <!-- Barra Lateral -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon">EI</div>
+      <div class="brand-text">
+        <h1>Engineering Roadmap</h1>
+        <p>Mejoras de Producción</p>
+      </div>
+    </div>
+
+    <div>
+      <div class="nav-group-title">Ejes de Mejora Técnica</div>
+      <ul class="nav-list">
+        <li class="nav-item"><a href="#async-adapter" class="active"><span>01.</span> Cliente SDK Asíncrono <span class="nav-badge">Async I/O</span></a></li>
+        <li class="nav-item"><a href="#safety-watchdog"><span>02.</span> Supervisor de Seguridad <span class="nav-badge">Watchdog</span></a></li>
+        <li class="nav-item"><a href="#docker-env"><span>03.</span> Entorno & Contenedor <span class="nav-badge">Docker</span></a></li>
+        <li class="nav-item"><a href="#declarative-config"><span>04.</span> Configuración Tipada <span class="nav-badge">Pydantic</span></a></li>
+        <li class="nav-item"><a href="#mock-testing"><span>05.</span> Mock SDK & CI/CD <span class="nav-badge">Testing</span></a></li>
+        <li class="nav-item"><a href="#tf-tree"><span>06.</span> Cinemática & Árbol TF <span class="nav-badge">Geometría</span></a></li>
+        <li class="nav-item"><a href="#observability"><span>07.</span> Logging & Diagnóstico <span class="nav-badge">Métricas</span></a></li>
+        <li class="nav-item"><a href="#roadmap"><span>08.</span> Hoja de Ruta Gradual <span class="nav-badge">Plan</span></a></li>
+      </ul>
+    </div>
+
+    <div style="margin-top: auto; padding: 14px; background: var(--bg-card); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+      <div style="font-size: 11px; font-weight: 700; color: var(--cyan); margin-bottom: 4px;">REGLA DEL PROYECTO</div>
+      <div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.45;">
+        El SDK oficial es una interfaz inalterable. Todas las mejoras se implementan dentro de nuestro stack de autonomía.
+      </div>
+    </div>
+  </aside>
+
+  <!-- Contenido Principal -->
+  <main class="main-content">
+
+    <!-- Hero Banner -->
+    <section class="hero-section">
+      <div class="hero-badge-row">
+        <span class="badge badge-purple">ARQUITECTURA DE AUTONOMÍA</span>
+        <span class="badge badge-cyan">STACK CLIENTE ROBUSTO</span>
+        <span class="badge badge-emerald">BUENAS PRÁCTICAS</span>
+      </div>
+      <h1 class="hero-title">Mejoras de Ingeniería para La Rovernetta</h1>
+      <p class="hero-subtitle">
+        Este documento detalla el plan de mejoras de ingeniería que nuestro equipo debe implementar en el <strong>código de autonomía, visión y control</strong>. Todas las propuestas respetan estrictamente la regla del desafío: <strong>el SDK oficial no se modifica</strong>; nuestro trabajo es construir un cliente inteligente, seguro y altamente modular que consuma el SDK para guiar al robot hacia sus objetivos.
+      </p>
+    </section>
+
+    <!-- Barra de Herramientas de Notas y Persistencia -->
+    <div class="notes-global-toolbar">
+      <div class="notes-status-badge">
+        <span>📝</span>
+        <span>Bloc de Notas Interactivo del Lector</span>
+        <span class="badge badge-amber" id="total-notes-badge">0 Notas Escritas</span>
+      </div>
+
+      <div class="notes-actions">
+        <button class="btn-action" onclick="expandAllNotes()">
+          <span>📖</span> Expandir Todas las Notas
+        </button>
+        <button class="btn-action btn-action-primary" onclick="exportHTMLWithNotes()">
+          <span>💾</span> Guardar HTML con Notas Embebidas
+        </button>
+      </div>
+    </div>
+
+    <!-- Caja de Regla del Proyecto -->
+    <div class="rule-notice-box">
+      <strong>📌 Principio de Diseño Fundamental:</strong> El SDK provisto (servidor FastAPI y WebRTC) actúa como una caja negra de hardware que expone puntos de enlace HTTP (<code>/api/status</code> y <code>/api/send-command</code>). El 100% de las mejoras detalladas a continuación se aplican en el <strong>lado del cliente de autonomía</strong> (procesamiento concurrente, supervisión de seguridad, gestión de memoria GPU, cinemática y pruebas automatizadas).
+    </div>
+
+    <!-- =======================================================
+         EJE 1: ADAPTADOR ASÍNCRONO DEL CLIENTE SDK
+         ======================================================= -->
+    <div class="pillar-card" id="async-adapter" style="--card-color: var(--cyan); --card-dim: var(--cyan-dim);">
+      <div class="pillar-header">
+        <div class="pillar-title-wrap">
+          <div class="pillar-number">01</div>
+          <h2 class="pillar-title">Adaptador Asíncrono de Alto Rendimiento para el SDK (Async SDK Adapter)</h2>
+        </div>
+        <span class="badge badge-cyan">Concurrencia & Desacoplamiento</span>
+      </div>
+
+      <div class="problem-solution-grid">
+        <div class="box-current">
+          <div class="box-label">⚠️ Limitación Actual en el Cliente</div>
+          <div class="box-text">
+            El script <code>sdk_client.py</code> realiza consultas HTTP síncronas bloqueantes (<code>requests.get</code>) en el mismo hilo de ejecución donde corren las redes neuronales y el planificador. Si la conexión local sufre un retardo de 35 ms, todo el lazo de visión y cálculo de trayectoria se congela.
+          </div>
+        </div>
+
+        <div class="box-proposed">
+          <div class="box-label">✅ Solución de Ingeniería en el Cliente</div>
+          <div class="box-text">
+            Diseñar un <strong>Adaptador de Cliente Asíncrono</strong> con un hilo de fondo dedicado (usando <code>httpx.AsyncClient</code> o <code>aiohttp</code>) que mantenga una cola circular de tamaño 1 (<em>latest-only ring buffer</em>). La percepción lee de inmediato el fotograma más reciente en memoria sin esperar a la red.
+          </div>
+        </div>
+      </div>
+
+      <div class="action-steps">
+        <div class="action-title">Pasos de Implementación Recomendados:</div>
+        <div class="step-item">
+          <span class="step-badge">Paso 1</span>
+          <div>Crear la clase <code>AsyncRoverClient</code> que ejecuta un bucle de eventos independiente para consultar continuamente <code>/api/status</code> a la frecuencia óptima de la cámara (15 Hz).</div>
+        </div>
+        <div class="step-item">
+          <span class="step-badge">Paso 2</span>
+          <div>Desacoplar la descodificación de imágenes JPEG/Base64 a tensores de OpenCV en un pool de subprocesos ligeros para no saturar el hilo principal de Python.</div>
+        </div>
+        <div class="step-item">
+          <span class="step-badge">Paso 3</span>
+          <div>Permitir que el planificador de trayectorias consulte instantáneamente la última pose GPS y el fotograma listo en memoria compartida con latencia cercana a 0 ms.</div>
+        </div>
+      </div>
+
+      <!-- Bloc de Notas Lateral Eje 1 -->
+      <div class="side-notes-container">
+        <div class="side-notes-header">
+          <div class="side-notes-title">
+            <span>📝</span> Notas y Decisiones del Equipo sobre este Eje
+          </div>
+          <div class="side-notes-status" id="status-note-1">🟢 Guardado automático en el navegador</div>
+        </div>
+        <textarea class="side-notes-textarea" id="note-pillar-1" placeholder="Escribe aquí notas, acuerdos del equipo o dudas técnicas sobre el adaptador asíncrono..." oninput="saveNote(1)"></textarea>
+        <div class="side-notes-footer">
+          <span id="time-note-1">Sin notas guardadas</span>
+          <button class="btn-note-clear" onclick="clearNote(1)">Borrar nota</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =======================================================
+         EJE 2: SUPERVISOR DE SEGURIDAD Y WATCHDOG EN CLIENTE
+         ======================================================= -->
+    <div class="pillar-card" id="safety-watchdog" style="--card-color: var(--rose); --card-dim: var(--rose-dim);">
+      <div class="pillar-header">
+        <div class="pillar-title-wrap">
+          <div class="pillar-number">02</div>
+          <h2 class="pillar-title">Supervisor de Seguridad y Temporizador Watchdog del Lado Cliente</h2>
+        </div>
+        <span class="badge badge-rose">Tolerancia a Fallos</span>
+      </div>
+
+      <div class="problem-solution-grid">
+        <div class="box-current">
+          <div class="box-label">⚠️ Riesgo Actual en el Software</div>
+          <div class="box-text">
+            Si la inferencia del modelo SAM-TP o YOLO sufre una excepción no capturada, una fuga de memoria VRAM o un cuelgue de CUDA, el cliente deja de emitir órdenes. Dado que el SDK simplemente ejecuta la última orden recibida, el robot continuará desplazándose sin control.
+          </div>
+        </div>
+
+        <div class="box-proposed">
+          <div class="box-label">✅ Solución de Ingeniería en el Cliente</div>
+          <div class="box-text">
+            Implementar un <strong>Supervisor Guardián de Seguridad (Safety Watchdog)</strong> en un hilo de máxima prioridad. Si el lazo de percepción o navegación no produce un comando válido en menos de 250 ms, el guardián despacha de inmediato <code>{"linear": 0.0, "angular": 0.0}</code> al SDK para frenar el vehículo.
+          </div>
+        </div>
+      </div>
+
+      <div class="action-steps">
+        <div class="action-title">Mecanismos de Protección a Incorporar:</div>
+        <div class="step-item">
+          <span class="step-badge">1</span>
+          <div><strong>Interruptor de Hombre Muerto (*Deadman Switch*):</strong> Hilo temporizado que anula la velocidad en el SDK si expira el tiempo de latido (*heartbeat*) del pipeline de visión.</div>
+        </div>
+        <div class="step-item">
+          <span class="step-badge">2</span>
+          <div><strong>Detección de Atascamiento por Odometría:</strong> Si el controlador envía velocidad de avance ($v > 0.2$ m/s) pero la odometría visual VIO reporta velocidad nula durante más de 1.5 segundos, se interrumpe la navegación y se activa una rutina de desatasco en reversa.</div>
+        </div>
+        <div class="step-item">
+          <span class="step-badge">3</span>
+          <div><strong>Filtro de Aceleración (*Slew-Rate Limiter*):</strong> Suaviza los comandos enviados al SDK para proteger la tracción y evitar patinamiento en curvas bruscas.</div>
+        </div>
+      </div>
+
+      <!-- Bloc de Notas Lateral Eje 2 -->
+      <div class="side-notes-container">
+        <div class="side-notes-header">
+          <div class="side-notes-title">
+            <span>📝</span> Notas y Decisiones del Equipo sobre este Eje
+          </div>
+          <div class="side-notes-status" id="status-note-2">🟢 Guardado automático en el navegador</div>
+        </div>
+        <textarea class="side-notes-textarea" id="note-pillar-2" placeholder="Escribe aquí observaciones sobre los límites de aceleración o el watchdog de seguridad..." oninput="saveNote(2)"></textarea>
+        <div class="side-notes-footer">
+          <span id="time-note-2">Sin notas guardadas</span>
+          <button class="btn-note-clear" onclick="clearNote(2)">Borrar nota</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =======================================================
+         EJE 3: CONTENERIZACIÓN DEL STACK DE AUTONOMÍA
+         ======================================================= -->
+    <div class="pillar-card" id="docker-env" style="--card-color: var(--purple); --card-dim: var(--purple-dim);">
+      <div class="pillar-header">
+        <div class="pillar-title-wrap">
+          <div class="pillar-number">03</div>
+          <h2 class="pillar-title">Contenerización y Entorno de Desarrollo Determinista para la Autonomía</h2>
+        </div>
+        <span class="badge badge-purple">Reproducibilidad</span>
+      </div>
+
+      <div class="problem-solution-grid">
+        <div class="box-current">
+          <div class="box-label">⚠️ Dificultad Actual de Instalación</div>
+          <div class="box-text">
+            Los modelos de visión y planificación requieren librerías complejas (PyTorch con CUDA 12.6, Torchvision, SAM-2, Ultralytics) que generan conflictos de compilación en Windows y obligan a mantener dos entornos virtuales manuales y frágiles.
+          </div>
+        </div>
+
+        <div class="box-proposed">
+          <div class="box-label">✅ Solución de Ingeniería en el Cliente</div>
+          <div class="box-text">
+            Empaquetar todo el stack de autonomía en una imagen de <strong>Docker con soporte NVIDIA Container Toolkit</strong> gestionada mediante <strong>uv</strong> y un archivo <code>uv.lock</code> determinista. El contenedor de autonomía interactúa con el servidor SDK a través de la red local HTTP estándar.
+          </div>
+        </div>
+      </div>
+
+      <div class="code-preview">
+<span class="code-comment"># Estructura del entorno de autonomía reproducible</span>
+<span class="code-keyword">FROM</span> nvidia/cuda:12.6.0-runtime-ubuntu22.04 <span class="code-keyword">AS</span> autonomy_engine
+<span class="code-keyword">WORKDIR</span> /app
+<span class="code-keyword">RUN</span> apt-get update && apt-get install -y python3-pip libgl1-mesa-glx ffmpeg git
+<span class="code-keyword">COPY</span> pyproject.toml uv.lock ./
+<span class="code-keyword">RUN</span> pip install --no-cache-dir uv && uv sync --frozen
+<span class="code-keyword">COPY</span> genie/ ./genie/
+<span class="code-keyword">COPY</span> traversability/ ./traversability/
+<span class="code-keyword">CMD</span> ["uv", "run", "python", "-m", "genie_rover.bridge", "--config", "configs/rover.yaml"]
+      </div>
+
+      <!-- Bloc de Notas Lateral Eje 3 -->
+      <div class="side-notes-container">
+        <div class="side-notes-header">
+          <div class="side-notes-title">
+            <span>📝</span> Notas y Decisiones del Equipo sobre este Eje
+          </div>
+          <div class="side-notes-status" id="status-note-3">🟢 Guardado automático en el navegador</div>
+        </div>
+        <textarea class="side-notes-textarea" id="note-pillar-3" placeholder="Escribe aquí notas sobre versiones de PyTorch, CUDA o requerimientos de Docker..." oninput="saveNote(3)"></textarea>
+        <div class="side-notes-footer">
+          <span id="time-note-3">Sin notas guardadas</span>
+          <button class="btn-note-clear" onclick="clearNote(3)">Borrar nota</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =======================================================
+         EJE 4: CONFIGURACIÓN DECLARATIVA Y TIPADA
+         ======================================================= -->
+    <div class="pillar-card" id="declarative-config" style="--card-color: var(--amber); --card-dim: var(--amber-dim);">
+      <div class="pillar-header">
+        <div class="pillar-title-wrap">
+          <div class="pillar-number">04</div>
+          <h2 class="pillar-title">Configuración Declarativa, Centralizada y Validada con Tipos</h2>
+        </div>
+        <span class="badge badge-amber">Cero Hardcoding</span>
+      </div>
+
+      <div class="problem-solution-grid">
+        <div class="box-current">
+          <div class="box-label">⚠️ Desorden de Parámetros en el Código</div>
+          <div class="box-text">
+            Los parámetros críticos del robot (límites de velocidad, pesos de costes en el planificador polinomial, resolución de la cuadrícula BEV y umbrales de confianza de YOLO) están dispersos en archivos YAML, variables de entorno y constantes numéricas fijas en el código.
+          </div>
+        </div>
+
+        <div class="box-proposed">
+          <div class="box-label">✅ Solución de Ingeniería en el Cliente</div>
+          <div class="box-text">
+            Implementar un modelo de configuración unificado con <strong>Pydantic Settings</strong>. Todos los parámetros se validan al arrancar la aplicación: si un valor viola las restricciones físicas (ej. velocidad lineal negativa o mayor a 0.5 m/s), el sistema alerta de inmediato y evita iniciar la marcha.
+          </div>
+        </div>
+      </div>
+
+      <div class="code-preview">
+<span class="code-comment"># Modelo de configuración robusto con validaciones físicas en Pydantic</span>
+<span class="code-keyword">from</span> pydantic <span class="code-keyword">import</span> BaseModel, Field
+
+<span class="code-keyword">class</span> <span class="code-var">AutonomyConfig</span>(BaseModel):
+    sdk_base_url: str = Field(default=<span class="code-string">"http://localhost:8000"</span>, description=<span class="code-string">"URL del servidor SDK"</span>)
+    max_linear_speed: float = Field(default=0.40, ge=0.0, le=0.60, description=<span class="code-string">"Velocidad máxima (m/s)"</span>)
+    max_angular_speed: float = Field(default=1.10, ge=0.0, le=2.00, description=<span class="code-string">"Velocidad de giro (rad/s)"</span>)
+    yolo_confidence_threshold: float = Field(default=0.65, ge=0.1, le=1.0, description=<span class="code-string">"Filtro de confianza para el cono"</span>)
+    bev_grid_resolution_meters: float = Field(default=0.05, gt=0.0, description=<span class="code-string">"Tamaño de celda BEV"</span>)
+      </div>
+
+      <!-- Bloc de Notas Lateral Eje 4 -->
+      <div class="side-notes-container">
+        <div class="side-notes-header">
+          <div class="side-notes-title">
+            <span>📝</span> Notas y Decisiones del Equipo sobre este Eje
+          </div>
+          <div class="side-notes-status" id="status-note-4">🟢 Guardado automático en el navegador</div>
+        </div>
+        <textarea class="side-notes-textarea" id="note-pillar-4" placeholder="Escribe aquí sugerencias de nuevos campos de configuración o tolerancias de navegación..." oninput="saveNote(4)"></textarea>
+        <div class="side-notes-footer">
+          <span id="time-note-4">Sin notas guardadas</span>
+          <button class="btn-note-clear" onclick="clearNote(4)">Borrar nota</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =======================================================
+         EJE 5: MOCK DEL SDK Y PRUEBAS CONTINUAS CI/CD
+         ======================================================= -->
+    <div class="pillar-card" id="mock-testing" style="--card-color: var(--emerald); --card-dim: var(--emerald-dim);">
+      <div class="pillar-header">
+        <div class="pillar-title-wrap">
+          <div class="pillar-number">05</div>
+          <h2 class="pillar-title">Simulación Mediante Mock del SDK y Pruebas Automatizadas (CI/CD)</h2>
+        </div>
+        <span class="badge badge-emerald">Calidad de Software</span>
+      </div>
+
+      <div class="problem-solution-grid">
+        <div class="box-current">
+          <div class="box-label">⚠️ Dependencia Exclusiva del Robot Real</div>
+          <div class="box-text">
+            Cualquier cambio en el planificador o en los pesos del modelo de percepción requiere encender el robot físico o conectarse al rover remoto. No existen pruebas de integración automáticas en el repositorio que certifiquen la estabilidad del código.
+          </div>
+        </div>
+
+        <div class="box-proposed">
+          <div class="box-label">✅ Solución de Ingeniería en el Cliente</div>
+          <div class="box-text">
+            Construir un <strong>Mock Server del SDK</strong> que simula con fidelidad las respuestas de <code>/api/status</code> y acepta <code>/api/send-command</code>, inyectando secuencias de video pregrabadas y trayectorias GPS sintéticas. Esto permite ejecutar pruebas de regresión automáticas en GitHub Actions en cada <em>Pull Request</em>.
+          </div>
+        </div>
+      </div>
+
+      <div class="action-steps">
+        <div class="action-title">Estructura de Pruebas Automatizadas:</div>
+        <div class="step-item">
+          <span class="step-badge">Nivel 1</span>
+          <div><strong>Pruebas Unitarias de Algoritmos Puros:</strong> Verificación matemática del planificador polinomial, proyección de coordenadas ENU y transformaciones de perspectiva sin requerir GPU.</div>
+        </div>
+        <div class="step-item">
+          <span class="step-badge">Nivel 2</span>
+          <div><strong>Pruebas de Regresión de Visión con Datasets Grabados:</strong> Evaluación automática de SAM-TP y YOLO contra 40 imágenes de prueba etiquetadas, verificando que la precisión y la velocidad de inferencia se mantengan estables.</div>
+        </div>
+        <div class="step-item">
+          <span class="step-badge">Nivel 3</span>
+          <div><strong>Prueba de Integración End-to-End con Mock SDK:</strong> Simula una misión completa de 3 minutos validando que la máquina de estados transicione correctamente de navegación GPS a detección de cono.</div>
+        </div>
+      </div>
+
+      <!-- Bloc de Notas Lateral Eje 5 -->
+      <div class="side-notes-container">
+        <div class="side-notes-header">
+          <div class="side-notes-title">
+            <span>📝</span> Notas y Decisiones del Equipo sobre este Eje
+          </div>
+          <div class="side-notes-status" id="status-note-5">🟢 Guardado automático en el navegador</div>
+        </div>
+        <textarea class="side-notes-textarea" id="note-pillar-5" placeholder="Escribe aquí ideas de escenarios sintéticos o datasets de prueba a incorporar..." oninput="saveNote(5)"></textarea>
+        <div class="side-notes-footer">
+          <span id="time-note-5">Sin notas guardadas</span>
+          <button class="btn-note-clear" onclick="clearNote(5)">Borrar nota</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =======================================================
+         EJE 6: ÁRBOL CINEMÁTICO DE TRANSFORMADAS (TF TREE)
+         ======================================================= -->
+    <div class="pillar-card" id="tf-tree" style="--card-color: var(--teal); --card-dim: var(--cyan-dim);">
+      <div class="pillar-header">
+        <div class="pillar-title-wrap">
+          <div class="pillar-number">06</div>
+          <h2 class="pillar-title">Gestión Geométrica Mediante Árbol de Transformadas Cinemáticas (TF)</h2>
+        </div>
+        <span class="badge badge-cyan">Geometría Espacial</span>
+      </div>
+
+      <div class="problem-solution-grid">
+        <div class="box-current">
+          <div class="box-label">⚠️ Cálculos Espaciales Manuales y Rígidos</div>
+          <div class="box-text">
+            Las proyecciones hacia la vista cenital (BEV) asumen alturas y ángulos de inclinación fijos codificados en scripts aislados. Si la cámara se recoloca físicamente en el chasis, se deben recalcular matrices manualmente en varios archivos.
+          </div>
+        </div>
+
+        <div class="box-proposed">
+          <div class="box-label">✅ Solución de Ingeniería en el Cliente</div>
+          <div class="box-text">
+            Implementar un módulo cinemático formal en el cliente que mantenga el árbol de transformaciones continuas:
+            $$\text{mapa (ENU)} \longrightarrow \text{odometría (VIO)} \longrightarrow \text{chasis (base\_link)} \longrightarrow \text{lente (camera\_link)}$$
+            Cualquier ajuste en la posición de la cámara se actualiza como una traslación tridimensional en un único archivo de configuración.
+          </div>
+        </div>
+      </div>
+
+      <!-- Bloc de Notas Lateral Eje 6 -->
+      <div class="side-notes-container">
+        <div class="side-notes-header">
+          <div class="side-notes-title">
+            <span>📝</span> Notas y Decisiones del Equipo sobre este Eje
+          </div>
+          <div class="side-notes-status" id="status-note-6">🟢 Guardado automático en el navegador</div>
+        </div>
+        <textarea class="side-notes-textarea" id="note-pillar-6" placeholder="Escribe aquí observaciones sobre la geometría del chasis o calibración de cámara..." oninput="saveNote(6)"></textarea>
+        <div class="side-notes-footer">
+          <span id="time-note-6">Sin notas guardadas</span>
+          <button class="btn-note-clear" onclick="clearNote(6)">Borrar nota</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =======================================================
+         EJE 7: OBSERVABILIDAD Y LOGS ESTRUCTURADOS
+         ======================================================= -->
+    <div class="pillar-card" id="observability" style="--card-color: var(--purple); --card-dim: var(--purple-dim);">
+      <div class="pillar-header">
+        <div class="pillar-title-wrap">
+          <div class="pillar-number">07</div>
+          <h2 class="pillar-title">Observabilidad, Logging Estructurado y Diagnóstico en Tiempo Real</h2>
+        </div>
+        <span class="badge badge-purple">Monitoreo de Misión</span>
+      </div>
+
+      <div class="problem-solution-grid">
+        <div class="box-current">
+          <div class="box-label">⚠️ Dificultad para Diagnosticar Fallos en Campo</div>
+          <div class="box-text">
+            El código utiliza instrucciones <code>print()</code> dispersas en consola sin marcas de tiempo estándar, niveles de advertencia ni guardado estructurado, dificultando reconstruir la causa raíz de un fallo o una desviación de ruta tras una prueba.
+          </div>
+        </div>
+
+        <div class="box-proposed">
+          <div class="box-label">✅ Solución de Ingeniería en el Cliente</div>
+          <div class="box-text">
+            Adoptar <strong>Logging Estructurado en JSON</strong> (usando <em>loguru</em> o <em>structlog</em>) con rotación automática de archivos por sesión de prueba. Registrar métricas clave en cada ciclo: tiempo de inferencia GPU en ms, tasa de cuadros por segundo (FPS), latencia de red con el SDK y covarianza de la odometría.
+          </div>
+        </div>
+      </div>
+
+      <!-- Bloc de Notas Lateral Eje 7 -->
+      <div class="side-notes-container">
+        <div class="side-notes-header">
+          <div class="side-notes-title">
+            <span>📝</span> Notas y Decisiones del Equipo sobre este Eje
+          </div>
+          <div class="side-notes-status" id="status-note-7">🟢 Guardado automático en el navegador</div>
+        </div>
+        <textarea class="side-notes-textarea" id="note-pillar-7" placeholder="Escribe aquí notas sobre campos de logging o métricas de diagnóstico a registrar..." oninput="saveNote(7)"></textarea>
+        <div class="side-notes-footer">
+          <span id="time-note-7">Sin notas guardadas</span>
+          <button class="btn-note-clear" onclick="clearNote(7)">Borrar nota</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =======================================================
+         EJE 8: HOJA DE RUTA GRADUAL (ROADMAP)
+         ======================================================= -->
+    <div class="pillar-card" id="roadmap" style="--card-color: var(--emerald); --card-dim: var(--emerald-dim);">
+      <div class="pillar-header">
+        <div class="pillar-title-wrap">
+          <div class="pillar-number">08</div>
+          <h2 class="pillar-title">Hoja de Ruta de Implementación Práctica (Roadmap)</h2>
+        </div>
+        <span class="badge badge-emerald">Plan Secuencial</span>
+      </div>
+
+      <p style="color: var(--text-muted); margin-bottom: 20px; font-size: 14px;">
+        Para no interrumpir los ensayos de navegación activa, estas mejoras se dividen en 3 etapas secuenciales de desarrollo:
+      </p>
+
+      <div class="roadmap-container">
+        
+        <div class="roadmap-phase">
+          <span class="phase-tag" style="background: var(--cyan-dim); color: var(--cyan);">Fase 1 • Inmediata</span>
+          <div class="phase-title">Seguridad y Configuración</div>
+          <div class="phase-desc">
+            • Watchdog en cliente con corte de motor por timeout.<br>
+            • Esquema de configuración tipado con Pydantic.<br>
+            • Logging estructurado en JSON con timestamps.<br>
+            • Filtro de suavizado de aceleración (slew-rate).
+          </div>
+        </div>
+
+        <div class="roadmap-phase">
+          <span class="phase-tag" style="background: var(--purple-dim); color: var(--purple);">Fase 2 • Corto Plazo</span>
+          <div class="phase-title">Contenedores y Mock SDK</div>
+          <div class="phase-desc">
+            • Contenedor Docker para el stack de autonomía con CUDA.<br>
+            • Servidor Mock del SDK para pruebas unitarias sin rover.<br>
+            • Pipeline de CI/CD automatizado en GitHub Actions.<br>
+            • Módulo de cinemática y árbol de transformadas TF.
+          </div>
+        </div>
+
+        <div class="roadmap-phase">
+          <span class="phase-tag" style="background: var(--emerald-dim); color: var(--emerald);">Fase 3 • Mediano Plazo</span>
+          <div class="phase-title">Concurrencia y Optimización</div>
+          <div class="phase-desc">
+            • Adaptador de cliente HTTP asíncrono con buffer circular.<br>
+            • Optimización de inferencia de modelos con TensorRT / ONNX.<br>
+            • Grabación determinista de telemetría de misiones.<br>
+            • Panel web de telemetría y diagnósticos en tiempo real.
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Bloc de Notas Lateral Eje 8 -->
+      <div class="side-notes-container">
+        <div class="side-notes-header">
+          <div class="side-notes-title">
+            <span>📝</span> Notas y Decisiones del Equipo sobre este Eje
+          </div>
+          <div class="side-notes-status" id="status-note-8">🟢 Guardado automático en el navegador</div>
+        </div>
+        <textarea class="side-notes-textarea" id="note-pillar-8" placeholder="Escribe aquí notas sobre priorización de tareas o asignación de responsables..." oninput="saveNote(8)"></textarea>
+        <div class="side-notes-footer">
+          <span id="time-note-8">Sin notas guardadas</span>
+          <button class="btn-note-clear" onclick="clearNote(8)">Borrar nota</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pie de página -->
+    <footer>
+      <div>IROS Earth Rover Challenge 2026 — La Rovernetta</div>
+      <div>Documento de Mejoras de Ingeniería para el Stack de Autonomía v2.5</div>
+    </footer>
+
+  </main>
+</div>
+
+<!-- =======================================================
+     JAVASCRIPT: SISTEMA DE NOTAS Y PERSISTENCIA EMBEBIDA
+     ======================================================= -->
+<script>
+const STORAGE_KEY = 'rovernetta_engineering_notes_v1';
+
+// Cargar notas desde localStorage o desde el DOM embebido en el archivo
+function loadNotes() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const localData = raw ? JSON.parse(raw) : {};
+
+    let totalCount = 0;
+    for (let i = 1; i <= 8; i++) {
+      const textarea = document.getElementById(`note-pillar-${i}`);
+      const timeSpan = document.getElementById(`time-note-${i}`);
+      
+      // Prioridad 1: Si hay datos locales en este navegador, cargarlos
+      if (localData[i] && localData[i].text) {
+        textarea.value = localData[i].text;
+        timeSpan.textContent = `Última edición: ${localData[i].updatedAt}`;
+        totalCount++;
+      } 
+      // Prioridad 2: Si el archivo vino de Git con notas embebidas en el HTML
+      else if (textarea.value.trim().length > 0) {
+        const embeddedTime = textarea.getAttribute('data-updated-at') || 'Nota sincronizada desde Git';
+        timeSpan.textContent = embeddedTime;
+        totalCount++;
+      }
+    }
+    updateBadgeCount(totalCount);
+  } catch (err) {
+    console.error("Error cargando notas", err);
+  }
+}
+
+// Guardar nota individual en localStorage
+function saveNote(pillarId) {
+  try {
+    const textarea = document.getElementById(`note-pillar-${pillarId}`);
+    const timeSpan = document.getElementById(`time-note-${pillarId}`);
+    const statusDiv = document.getElementById(`status-note-${pillarId}`);
+    
+    const text = textarea.value;
+    const now = new Date();
+    const timeStr = now.toLocaleDateString() + ' ' + now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const data = raw ? JSON.parse(raw) : {};
+
+    if (text.trim().length > 0) {
+      data[pillarId] = {
+        text: text,
+        updatedAt: timeStr
+      };
+      textarea.setAttribute('data-updated-at', `Última edición: ${timeStr}`);
+      timeSpan.textContent = `Última edición: ${timeStr}`;
+    } else {
+      delete data[pillarId];
+      textarea.removeAttribute('data-updated-at');
+      timeSpan.textContent = 'Sin notas guardadas';
+    }
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    
+    statusDiv.style.color = 'var(--emerald)';
+    statusDiv.textContent = '🟢 Guardado en navegador local';
+
+    let totalCount = 0;
+    for (let i = 1; i <= 8; i++) {
+      const t = document.getElementById(`note-pillar-${i}`).value;
+      if (t.trim().length > 0) totalCount++;
+    }
+    updateBadgeCount(totalCount);
+
+  } catch (err) {
+    console.error("Error guardando nota", err);
+  }
+}
+
+// Borrar nota
+function clearNote(pillarId) {
+  const textarea = document.getElementById(`note-pillar-${pillarId}`);
+  textarea.value = '';
+  textarea.textContent = '';
+  saveNote(pillarId);
+  showToast('Nota eliminada');
+}
+
+// Actualizar badge de conteo total
+function updateBadgeCount(count) {
+  const badge = document.getElementById('total-notes-badge');
+  badge.textContent = `${count} ${count === 1 ? 'Nota Escrita' : 'Notas Escritas'}`;
+  badge.className = count > 0 ? 'badge badge-emerald' : 'badge badge-amber';
+}
+
+// Mostrar Toast
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2500);
+}
+
+// Expandir todas las notas
+function expandAllNotes() {
+  document.querySelectorAll('.side-notes-textarea').forEach(el => {
+    el.style.minHeight = '140px';
+  });
+  showToast('Blocs de notas expandidos');
+}
+
+// Guardar y Exportar el archivo HTML completo con las notas embebidas permanentemente para Git
+function exportHTMLWithNotes() {
+  // Asegurar que el contenido actual de los textareas quede físicamente en el markup del HTML
+  for (let i = 1; i <= 8; i++) {
+    const textarea = document.getElementById(`note-pillar-${i}`);
+    const timeSpan = document.getElementById(`time-note-${i}`);
+    
+    textarea.textContent = textarea.value; // Incrusta el texto entre <textarea>...</textarea>
+    if (textarea.value.trim().length > 0) {
+      textarea.setAttribute('data-updated-at', timeSpan.textContent);
+    } else {
+      textarea.removeAttribute('data-updated-at');
+    }
+  }
+
+  // Serializar el documento completo
+  const htmlContent = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
+  
+  const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'Engineering Improvements.html';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  showToast('¡Archivo descargado listo para reemplazar y hacer git push!');
+}
+
+// Inicializar al cargar
+document.addEventListener('DOMContentLoaded', () => {
+  loadNotes();
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,2113 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Entendiendo el Repositorio de La Rovernetta Desde Cero</title>
+  
+  <!-- Tipografía Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+  
+  <!-- Configuración de MathJax para renderizado matemático nítido -->
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        processEscapes: true
+      },
+      options: {
+        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+      }
+    };
+  </script>
+  <script type="text/javascript" id="MathJax-script" async
+    src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js">
+  </script>
+
+  <style>
+    :root {
+      --bg-base: #060911;
+      --bg-surface: #0c1220;
+      --bg-card: #121b2d;
+      --bg-card-hover: #18243b;
+      --bg-card-active: #1e2c47;
+      --bg-glass: rgba(12, 18, 32, 0.85);
+
+      --border-subtle: #1c2638;
+      --border-medium: #2a3852;
+      --border-bright: #3e5073;
+      --border-glow: rgba(56, 189, 248, 0.4);
+
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #55657e;
+
+      --cyan: #38bdf8;
+      --cyan-dim: rgba(56, 189, 248, 0.12);
+      --teal: #14b8a6;
+      --emerald: #10b981;
+      --emerald-dim: rgba(16, 185, 129, 0.12);
+      --orange: #f97316;
+      --orange-dim: rgba(249, 115, 22, 0.12);
+      --amber: #f59e0b;
+      --amber-dim: rgba(245, 158, 11, 0.12);
+      --purple: #a855f7;
+      --purple-dim: rgba(168, 85, 247, 0.12);
+      --rose: #f43f5e;
+      --rose-dim: rgba(244, 63, 94, 0.12);
+      --blue: #3b82f6;
+
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-title: 'Outfit', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+
+      --shadow-sm: 0 2px 8px rgba(0,0,0,0.4);
+      --shadow-md: 0 10px 30px rgba(0,0,0,0.6);
+      --shadow-glow: 0 0 30px rgba(56, 189, 248, 0.18);
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+      background-image: 
+        radial-gradient(circle at 10% 8%, rgba(56, 189, 248, 0.09), transparent 38%),
+        radial-gradient(circle at 90% 12%, rgba(249, 115, 22, 0.08), transparent 38%),
+        radial-gradient(circle at 50% 80%, rgba(16, 185, 129, 0.06), transparent 45%);
+      background-attachment: fixed;
+    }
+
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--bg-base); }
+    ::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-bright); }
+
+    .app-container {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      width: 300px;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border-subtle);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 28px 18px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .brand-icon {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, var(--cyan), var(--orange));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-family: var(--font-title);
+      font-size: 22px;
+      color: #fff;
+      box-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
+    }
+
+    .brand-text h1 {
+      font-family: var(--font-title);
+      font-size: 16px;
+      font-weight: 800;
+      color: var(--text-main);
+      letter-spacing: -0.01em;
+    }
+
+    .brand-text p {
+      font-size: 11px;
+      color: var(--cyan);
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 600;
+    }
+
+    .nav-group-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      font-weight: 700;
+      margin-bottom: 10px;
+      padding-left: 8px;
+    }
+
+    .nav-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .nav-item a {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 12px;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      border-radius: var(--radius-sm);
+      transition: all 0.2s ease;
+      border: 1px solid transparent;
+    }
+
+    .nav-item a:hover {
+      color: var(--text-main);
+      background: var(--bg-card);
+      border-color: var(--border-subtle);
+    }
+
+    .nav-item a.active {
+      color: var(--cyan);
+      background: var(--cyan-dim);
+      border-color: rgba(56, 189, 248, 0.3);
+      font-weight: 600;
+    }
+
+    .nav-badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--bg-base);
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+    }
+
+    .main-content {
+      flex: 1;
+      padding: 36px 44px 100px;
+      max-width: 1280px;
+      overflow-x: hidden;
+    }
+
+    .hero-section {
+      background: linear-gradient(135deg, rgba(12, 18, 32, 0.95), rgba(18, 27, 45, 0.8)),
+                  radial-gradient(circle at 90% 10%, rgba(56, 189, 248, 0.15), transparent 50%);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      padding: 36px 40px;
+      margin-bottom: 36px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: var(--shadow-md);
+    }
+
+    .hero-section::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 4px;
+      height: 100%;
+      background: linear-gradient(to bottom, var(--cyan), var(--orange));
+    }
+
+    .hero-badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      letter-spacing: 0.02em;
+    }
+
+    .badge-cyan { background: var(--cyan-dim); color: var(--cyan); border-color: rgba(56, 189, 248, 0.3); }
+    .badge-orange { background: var(--orange-dim); color: var(--orange); border-color: rgba(249, 115, 22, 0.3); }
+    .badge-emerald { background: var(--emerald-dim); color: var(--emerald); border-color: rgba(16, 185, 129, 0.3); }
+    .badge-purple { background: var(--purple-dim); color: var(--purple); border-color: rgba(168, 85, 247, 0.3); }
+    .badge-amber { background: var(--amber-dim); color: var(--amber); border-color: rgba(245, 158, 11, 0.3); }
+    .badge-rose { background: var(--rose-dim); color: var(--rose); border-color: rgba(244, 63, 94, 0.3); }
+
+    .hero-title {
+      font-family: var(--font-title);
+      font-size: 34px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+      margin-bottom: 12px;
+      background: linear-gradient(135deg, #ffffff 40%, var(--cyan) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero-subtitle {
+      font-size: 15.5px;
+      color: var(--text-muted);
+      max-width: 960px;
+      line-height: 1.65;
+    }
+
+    .section-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      padding: 32px 36px;
+      margin-bottom: 36px;
+      box-shadow: var(--shadow-sm);
+      transition: border-color 0.2s ease;
+    }
+
+    .section-card:hover {
+      border-color: var(--border-medium);
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 22px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .section-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .section-number {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--cyan);
+      background: var(--cyan-dim);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .section-title {
+      font-family: var(--font-title);
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--text-main);
+      letter-spacing: -0.01em;
+    }
+
+    .arch-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      margin: 20px 0 24px;
+    }
+
+    .arch-metric-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 22px;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .arch-metric-card:hover {
+      transform: translateY(-3px);
+      border-color: var(--border-bright);
+    }
+
+    .arch-metric-card::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 60px;
+      height: 60px;
+      background: radial-gradient(circle, var(--accent-glow, rgba(56, 189, 248, 0.15)), transparent 70%);
+    }
+
+    .arch-metric-title {
+      font-size: 11.5px;
+      font-weight: 700;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .arch-metric-value {
+      font-family: var(--font-title);
+      font-size: 19px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin-bottom: 8px;
+    }
+
+    .arch-metric-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.55;
+    }
+
+    /* Explorador */
+    .repo-explorer-container {
+      background: var(--bg-card);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow-md);
+      margin: 24px 0 30px;
+    }
+
+    .explorer-toolbar {
+      background: #090e18;
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 12px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .view-switcher {
+      display: flex;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 3px;
+      gap: 4px;
+    }
+
+    .view-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-family: var(--font-sans);
+      font-size: 12.5px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .view-btn:hover {
+      color: var(--text-main);
+      background: rgba(255,255,255,0.04);
+    }
+
+    .view-btn.active {
+      background: var(--cyan);
+      color: #060911;
+      font-weight: 700;
+      box-shadow: 0 2px 8px rgba(56, 189, 248, 0.35);
+    }
+
+    .explorer-search-box {
+      display: flex;
+      align-items: center;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 6px 12px;
+      gap: 8px;
+      flex: 1;
+      max-width: 340px;
+    }
+
+    .explorer-search-box input {
+      background: transparent;
+      border: none;
+      color: var(--text-main);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      outline: none;
+      width: 100%;
+    }
+
+    .explorer-search-box input::placeholder {
+      color: var(--text-dim);
+    }
+
+    .explorer-workspace {
+      display: grid;
+      grid-template-columns: 460px 1fr;
+      min-height: 520px;
+      background: #090e18;
+    }
+
+    @media (max-width: 980px) {
+      .explorer-workspace { grid-template-columns: 1fr; }
+    }
+
+    .tree-pane {
+      border-right: 1px solid var(--border-subtle);
+      padding: 16px;
+      overflow-y: auto;
+      max-height: 580px;
+      background: #080d16;
+    }
+
+    .tree-group {
+      margin-bottom: 8px;
+    }
+
+    .tree-folder-node {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--cyan);
+      transition: all 0.15s ease;
+      user-select: none;
+    }
+
+    .tree-folder-node:hover {
+      background: rgba(56, 189, 248, 0.08);
+    }
+
+    .tree-folder-node .chevron {
+      font-size: 10px;
+      transition: transform 0.2s ease;
+      color: var(--text-dim);
+      width: 12px;
+      text-align: center;
+    }
+
+    .tree-folder-node.open .chevron {
+      transform: rotate(90deg);
+      color: var(--cyan);
+    }
+
+    .tree-folder-node .layer-badge {
+      margin-left: auto;
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .tree-children {
+      margin-left: 20px;
+      padding-left: 10px;
+      border-left: 1px dashed var(--border-subtle);
+      display: none;
+      flex-direction: column;
+      gap: 2px;
+      margin-top: 2px;
+    }
+
+    .tree-children.expanded {
+      display: flex;
+    }
+
+    .tree-file-node {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: #cbd5e1;
+      transition: all 0.15s ease;
+    }
+
+    .tree-file-node:hover {
+      background: var(--bg-card-hover);
+      color: var(--text-main);
+    }
+
+    .tree-file-node.selected {
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: var(--cyan);
+      font-weight: 600;
+    }
+
+    .tree-file-node .file-meta-tag {
+      margin-left: auto;
+      font-size: 9.5px;
+      color: var(--text-dim);
+    }
+
+    .inspector-pane {
+      padding: 24px 28px;
+      background: var(--bg-card);
+      overflow-y: auto;
+      max-height: 580px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .inspector-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--border-subtle);
+      margin-bottom: 18px;
+    }
+
+    .inspector-title-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .inspector-filename {
+      font-family: var(--font-mono);
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .inspector-path {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: var(--cyan);
+    }
+
+    .inspector-role-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 16px 18px;
+      margin-bottom: 18px;
+    }
+
+    .inspector-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .inspector-text {
+      font-size: 13.5px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .inspector-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .inspector-mini-box {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+    }
+
+    .inspector-tag-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-top: 6px;
+    }
+
+    .inspector-tag {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.4;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .inspector-tag::before {
+      content: "•";
+      color: var(--cyan);
+      font-weight: bold;
+    }
+
+    .inspector-cmd-box {
+      background: #060910;
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--cyan);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .copy-btn {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      padding: 5px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11.5px;
+      font-family: var(--font-sans);
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }
+
+    .copy-btn:hover {
+      background: var(--cyan);
+      color: #000;
+    }
+
+    /* Tabla */
+    .table-container {
+      overflow-x: auto;
+      margin: 20px 0;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      background: var(--bg-card);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13.5px;
+    }
+
+    th {
+      background: #0a101b;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    td {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      vertical-align: top;
+      line-height: 1.55;
+    }
+
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255, 255, 255, 0.02); }
+
+    .code-pill {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: #060910;
+      color: var(--cyan);
+      border: 1px solid var(--border-subtle);
+      font-weight: 500;
+      display: inline-block;
+      margin-bottom: 3px;
+    }
+
+    /* Pipeline 5 Pasos */
+    .pipeline-container {
+      background: #090e18;
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius);
+      padding: 26px 28px;
+      margin: 24px 0 30px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .pipeline-title {
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      color: var(--cyan);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pipeline-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 14px;
+      position: relative;
+    }
+
+    @media (max-width: 1100px) {
+      .pipeline-grid { grid-template-columns: 1fr; }
+    }
+
+    .pipeline-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 18px 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: all 0.25s ease;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .pipeline-card:hover, .pipeline-card.active {
+      transform: translateY(-4px);
+      border-color: var(--p-color, var(--cyan));
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+
+    .pipeline-card.active::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: var(--p-color, var(--cyan));
+      border-radius: 4px 4px 0 0;
+    }
+
+    .p-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .p-idx {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 800;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.06);
+      color: var(--p-color, var(--cyan));
+    }
+
+    .p-title {
+      font-family: var(--font-title);
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 6px;
+    }
+
+    .p-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin-bottom: 14px;
+    }
+
+    .p-payload {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 6px 8px;
+      border-radius: 4px;
+      background: #060910;
+      color: var(--p-color, var(--cyan));
+      border: 1px dashed var(--border-subtle);
+    }
+
+    .flow-step-block {
+      background: var(--bg-card);
+      border-left: 4px solid var(--flow-accent, var(--cyan));
+      border-top: 1px solid var(--border-subtle);
+      border-right: 1px solid var(--border-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 26px 30px;
+      margin-bottom: 24px;
+    }
+
+    .flow-step-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .flow-step-title {
+      font-family: var(--font-title);
+      font-size: 19px;
+      font-weight: 800;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .flow-math {
+      background: #060910;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 16px 20px;
+      margin: 16px 0;
+      line-height: 1.8;
+      font-size: 13.5px;
+      color: var(--text-main);
+    }
+
+    .math-label {
+      color: var(--amber);
+      font-weight: 600;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      display: block;
+    }
+
+    .terminal-box {
+      background: #05080e;
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin: 16px 0 24px;
+      font-family: var(--font-mono);
+    }
+
+    .terminal-topbar {
+      background: #0c1320;
+      padding: 9px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .terminal-dots { display: flex; gap: 6px; }
+    .terminal-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dot-red { background: #ef4444; }
+    .dot-yellow { background: #f59e0b; }
+    .dot-green { background: #10b981; }
+
+    .terminal-title { font-size: 11px; color: var(--text-dim); }
+
+    .terminal-body {
+      padding: 16px 20px;
+      font-size: 13px;
+      line-height: 1.65;
+      color: #e2e8f0;
+      overflow-x: auto;
+    }
+
+    .term-prompt { color: var(--cyan); font-weight: 700; }
+    .term-comment { color: var(--text-dim); }
+    .term-cmd { color: #f8fafc; font-weight: 600; }
+    .term-flag { color: var(--amber); }
+
+    .alert-box {
+      display: flex;
+      gap: 14px;
+      padding: 18px 22px;
+      border-radius: var(--radius-sm);
+      margin: 18px 0;
+      font-size: 13.5px;
+      line-height: 1.6;
+    }
+
+    .alert-info {
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      color: #bae6fd;
+    }
+
+    .alert-icon { font-size: 20px; flex-shrink: 0; }
+
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--cyan);
+      color: #060911;
+      font-family: var(--font-sans);
+      font-size: 13px;
+      font-weight: 700;
+      padding: 10px 18px;
+      border-radius: 8px;
+      box-shadow: 0 10px 25px rgba(56, 189, 248, 0.4);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(10px);
+      transition: all 0.25s ease;
+      z-index: 999;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+
+    footer {
+      margin-top: 60px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--text-dim);
+      font-size: 12px;
+      font-family: var(--font-mono);
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="toast">¡Comando copiado al portapapeles!</div>
+
+<div class="app-container">
+  
+  <!-- Barra Lateral -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon">LR</div>
+      <div class="brand-text">
+        <h1>La Rovernetta</h1>
+        <p>IROS Challenge 2026</p>
+      </div>
+    </div>
+
+    <div>
+      <div class="nav-group-title">Secciones de la Guía</div>
+      <ul class="nav-list">
+        <li class="nav-item"><a href="#overview" class="active"><span>01.</span> Misión del Sistema <span class="nav-badge">Core</span></a></li>
+        <li class="nav-item"><a href="#repo-explorer"><span>02.</span> Explorador del Repo <span class="nav-badge" style="color:var(--cyan); background:rgba(56,189,248,0.15)">Live UI</span></a></li>
+        <li class="nav-item"><a href="#mapping-table"><span>03.</span> Mapeo de Capas <span class="nav-badge">Matriz</span></a></li>
+        <li class="nav-item"><a href="#data-flow"><span>04.</span> Pipeline en 5 Pasos <span class="nav-badge">Flujo</span></a></li>
+        <li class="nav-item"><a href="#developer-quickstart"><span>05.</span> Guía de Inicio Rápido <span class="nav-badge">Ejecución</span></a></li>
+        <li class="nav-item"><a href="#conventions"><span>06.</span> Marcos Espaciales <span class="nav-badge">REP-103</span></a></li>
+      </ul>
+    </div>
+
+    <div style="margin-top: auto; padding: 14px; background: var(--bg-card); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+      <div style="font-size: 11px; font-weight: 700; color: var(--orange); margin-bottom: 6px;">MODOS DE OBJETIVO</div>
+      <div style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+        🎯 <strong>Ruta GPS:</strong> Navegación por waypoints<br>
+        🔶 <strong>Cono Naranja:</strong> Homing visual con YOLO
+      </div>
+    </div>
+  </aside>
+
+  <!-- Contenido Principal -->
+  <main class="main-content">
+
+    <!-- Sección Hero -->
+    <section class="hero-section">
+      <div class="hero-badge-row">
+        <span class="badge badge-cyan">ROBÓTICA MÓVIL AUTÓNOMA</span>
+        <span class="badge badge-orange">IROS EARTH ROVER CHALLENGE 2026</span>
+        <span class="badge badge-emerald">ARQUITECTURA MODULAR</span>
+        <span class="badge badge-purple">SAM-TP / BEV / VIO</span>
+      </div>
+      <h1 class="hero-title">Entendiendo el Repositorio de La Rovernetta Desde Cero</h1>
+      <p class="hero-subtitle">
+        Esta guía técnica proporciona a los desarrolladores una explicación clara y estructurada de la arquitectura del rover autónomo <strong>La Rovernetta (plataforma Earth Rover / Frodobots)</strong>. Aprende cómo interactúan los módulos de telemetría de hardware, los modelos de visión por computadora, los algoritmos de estimación de posición y los controladores cinemáticos en el código fuente.
+      </p>
+    </section>
+
+    <!-- =======================================================
+         SECCIÓN 01: MISIÓN DEL SISTEMA Y ARQUITECTURA GENERAL
+         ======================================================= -->
+    <div class="section-card" id="overview">
+      <div class="section-header">
+        <div class="section-title-wrap">
+          <div class="section-number">01</div>
+          <h2 class="section-title">Misión del Sistema y Arquitectura de Alto Nivel</h2>
+        </div>
+        <span class="badge badge-cyan">Autonomía Integral</span>
+      </div>
+
+      <p style="color: var(--text-muted); margin-bottom: 20px; font-size: 14.5px;">
+        El objetivo central del vehículo es desplazarse en entornos urbanos y de campo traviesa de manera <strong>100% autónoma y sin intervención humana</strong>, alcanzando metas designadas a través de dos modalidades operativas complementarias:
+      </p>
+
+      <!-- 4 Pilares Principales -->
+      <div class="arch-summary-grid">
+        <div class="arch-metric-card" style="--accent-glow: rgba(56, 189, 248, 0.25);">
+          <div class="arch-metric-title">
+            <span>🎯</span> Objetivo Principal A
+          </div>
+          <div class="arch-metric-value" style="color: var(--cyan);">Waypoints GPS</div>
+          <div class="arch-metric-desc">
+            El rover realiza travesías de larga distancia recorriendo de manera secuencial coordenadas geográficas (WGS84) provistas por el mapa de la misión.
+          </div>
+        </div>
+
+        <div class="arch-metric-card" style="--accent-glow: rgba(249, 115, 22, 0.25);">
+          <div class="arch-metric-title">
+            <span>🔶</span> Objetivo Principal B
+          </div>
+          <div class="arch-metric-value" style="color: var(--orange);">Cono Naranja</div>
+          <div class="arch-metric-desc">
+            Al aproximarse al área de búsqueda, el rover utiliza redes neuronales para detectar el cono y realiza un guiado visual preciso hasta quedar a menos de 30 cm.
+          </div>
+        </div>
+
+        <div class="arch-metric-card" style="--accent-glow: rgba(16, 185, 129, 0.25);">
+          <div class="arch-metric-title">
+            <span>🛡️</span> Subsistema de Seguridad
+          </div>
+          <div class="arch-metric-value" style="color: var(--emerald);">Transitabilidad SAM-TP</div>
+          <div class="arch-metric-desc">
+            Segmenta en tiempo real aceras, obstáculos y desniveles, proyectándolos a una vista cenital (Bird's-Eye-View) para evitar cualquier colisión.
+          </div>
+        </div>
+
+        <div class="arch-metric-card" style="--accent-glow: rgba(168, 85, 247, 0.25);">
+          <div class="arch-metric-title">
+            <span>🔌</span> Modelo de Interfaz
+          </div>
+          <div class="arch-metric-value" style="color: var(--purple);">Backend Desacoplado</div>
+          <div class="arch-metric-desc">
+            Un servidor FastAPI gestiona la telemetría WebRTC del hardware físico, separando los controladores del motor de inferencia con aceleración GPU.
+          </div>
+        </div>
+      </div>
+
+      <!-- División Arquitectural -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 24px;">
+        <div style="background: var(--bg-card); padding: 22px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+          <div style="font-size: 14px; font-weight: 700; color: var(--cyan); margin-bottom: 10px; font-family: var(--font-title);">
+            1. Capa de Backend y Puente de Hardware (Driver)
+          </div>
+          <p style="font-size: 13px; color: var(--text-muted); line-height: 1.6;">
+            Esta capa corre sobre un servidor FastAPI que orquesta una instancia headless de Chromium mediante WebRTC. Su función principal es recibir la telemetría directa del rover físico (fotogramas de la cámara monocular, lecturas de la IMU y coordenadas GPS) y exponer puntos de acceso HTTP (<code>/api/status</code> y <code>/api/send-command</code>) para recibir órdenes de velocidad.
+          </p>
+        </div>
+
+        <div style="background: var(--bg-card); padding: 22px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+          <div style="font-size: 14px; font-weight: 700; color: var(--emerald); margin-bottom: 10px; font-family: var(--font-title);">
+            2. Motor de Autonomía y Navegación (Cognición)
+          </div>
+          <p style="font-size: 13px; color: var(--text-muted); line-height: 1.6;">
+            Es el núcleo de inteligencia que se ejecuta en un entorno virtual aislado con soporte PyTorch CUDA. Consume las lecturas de los sensores, ejecuta los modelos de visión artificial (SAM-TP y YOLO), calcula la posición relativa y absoluta del robot, planifica trayectorias libres de obstáculos y envía comandos de velocidad cinemática $(v, \omega)$ al backend.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- =======================================================
+         SECCIÓN 02: EXPLORADOR INTERACTIVO DEL REPOSITORIO
+         ======================================================= -->
+    <div class="section-card" id="repo-explorer">
+      <div class="section-header">
+        <div class="section-title-wrap">
+          <div class="section-number">02</div>
+          <h2 class="section-title">Explorador Interactivo del Repositorio</h2>
+        </div>
+        <span class="badge badge-cyan">Haz clic en cualquier archivo o carpeta</span>
+      </div>
+
+      <p style="color: var(--text-muted); margin-bottom: 18px; font-size: 14px;">
+        Utiliza este visor interactivo para inspeccionar todos los paquetes, scripts y herramientas del repositorio. Al hacer clic en cualquier elemento en el árbol de directorios de la izquierda, se actualizará el panel de inspección con su propósito técnico, entradas/salidas de datos y comandos de prueba.
+      </p>
+
+      <!-- Componente Explorador -->
+      <div class="repo-explorer-container">
+        <div class="explorer-toolbar">
+          <div class="view-switcher">
+            <button class="view-btn active" id="btn-view-actual" onclick="switchView('actual')">
+              <span>📂</span> Módulos del Repositorio
+            </button>
+            <button class="view-btn" id="btn-view-pipeline" onclick="switchView('pipeline')">
+              <span>🔄</span> Organización por Capas Funcionales
+            </button>
+          </div>
+
+          <div class="explorer-search-box">
+            <span style="color: var(--text-dim); font-size: 13px;">🔍</span>
+            <input type="text" id="explorer-filter" placeholder="Filtrar archivos (ej. bridge, yolo, calib)..." oninput="filterTree()">
+          </div>
+        </div>
+
+        <div class="explorer-workspace">
+          <!-- Panel Izquierdo: Árbol de Carpetas -->
+          <div class="tree-pane" id="tree-container">
+            <!-- Renderizado dinámicamente mediante JavaScript -->
+          </div>
+
+          <!-- Panel Derecho: Inspector de Detalles -->
+          <div class="inspector-pane" id="inspector-container">
+            <!-- Renderizado dinámicamente al hacer clic -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- =======================================================
+         SECCIÓN 03: MATRIZ DE MAPEO DE CAPAS DEL PROYECTO
+         ======================================================= -->
+    <div class="section-card" id="mapping-table">
+      <div class="section-header">
+        <div class="section-title-wrap">
+          <div class="section-number">03</div>
+          <h2 class="section-title">Matriz de Mapeo: Componentes Funcionales vs. Directorios del Código</h2>
+        </div>
+        <span class="badge badge-purple">Estructura del Proyecto</span>
+      </div>
+
+      <p style="color: var(--text-muted); margin-bottom: 18px; font-size: 14px;">
+        Esta tabla describe con exactitud cómo se distribuyen las responsabilidades del sistema entre los diferentes paquetes y carpetas existentes en este repositorio:
+      </p>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Capa del Sistema</th>
+              <th>Ubicación en el Repositorio</th>
+              <th>Archivos Clave de Ejecución</th>
+              <th>Responsabilidad Técnica y Salidas Generadas</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge badge-cyan">Backend / Driver</span></td>
+              <td><code>earth-rovers-sdk/</code> y Raíz</td>
+              <td><span class="code-pill">main.py</span><br><span class="code-pill">setup_earth_rover.ps1</span></td>
+              <td>Servidor web en FastAPI que orquesta Chromium sin interfaz gráfica, gestiona el streaming de video mediante WebRTC y despacha órdenes de movimiento enviadas por la API.</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-cyan">1. Sensores</span></td>
+              <td><code>genie/genie_rover/</code></td>
+              <td><span class="code-pill">sdk_client.py</span></td>
+              <td>Consulta periódicamente el punto final <code>/api/status</code>, extrae los fotogramas RGB codificados en base64 y desempaqueta los datos de orientación de la IMU y posición GPS.</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-purple">2. Percepción</span></td>
+              <td><code>genie/sam2/</code> y <code>ML_model/</code></td>
+              <td><span class="code-pill">perception.py</span><br><span class="code-pill">scripts/</span></td>
+              <td>Aplica el modelo SAM-TP para segmentar la superficie transitable y modelos YOLO entrenados para localizar conos naranjas con cálculo de ángulo azimutal.</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-emerald">3. Localización</span></td>
+              <td><code>genie/genie_rover/</code></td>
+              <td><span class="code-pill">valida_odo.py</span><br><span class="code-pill">diag_pose.py</span></td>
+              <td>Realiza odometría visual-inercial (VIO) para calcular desplazamientos locales y convierte las coordenadas GPS globales a un plano métrico local Este-Norte-Arriba (ENU).</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-amber">4. Navegación</span></td>
+              <td><code>genie/genie_path_planner/</code> y <code>traversability/</code></td>
+              <td><span class="code-pill">bridge.py</span><br><span class="code-pill">policy.py</span><br><span class="code-pill">strategy.py</span></td>
+              <td><strong>Dispone de dos planificadores:</strong> el planificador GeNIE con evaluación de arcos polinomiales en vista cenital (BEV) y la política reactiva ligera de 9 corredores verticales.</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-rose">5. Control</span></td>
+              <td><code>genie/genie_rover/</code> y <code>traversability/</code></td>
+              <td><span class="code-pill">bridge.py</span><br><span class="code-pill">demo.py</span></td>
+              <td>Traduce la curvatura y velocidad deseadas en el payload JSON <code>/api/send-command</code>, verificando banderas de seguridad y límites de aceleración del chasis diferencial.</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-cyan">Frontend</span></td>
+              <td>Servidor FastAPI en puerto local</td>
+              <td><span class="code-pill">http://localhost:8000</span></td>
+              <td>Interfaz web de monitoreo para el operador que muestra el video en vivo, el estado de los checkpoints alcanzados y mandos manuales de teleoperación de emergencia.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- =======================================================
+         SECCIÓN 04: FLUJO DE DATOS SECUENCIAL EN 5 PASOS
+         ======================================================= -->
+    <div class="section-card" id="data-flow">
+      <div class="section-header">
+        <div class="section-title-wrap">
+          <div class="section-number">04</div>
+          <h2 class="section-title">Flujo de Datos Secuencial del Pipeline en 5 Pasos</h2>
+        </div>
+        <span class="badge badge-emerald">Lazo de Control en Tiempo Real</span>
+      </div>
+
+      <p style="color: var(--text-muted); margin-bottom: 20px; font-size: 14px;">
+        En este rover, la información viaja en un ciclo continuo de retroalimentación (*Sense-Plan-Act*) que se repite entre <strong>2 y 10 veces por segundo (2 a 10 Hz)</strong>. Haz clic en cualquiera de las 5 etapas para ver su formulación matemática y presupuesto de latencia:
+      </p>
+
+      <!-- Tarjetas de Navegación del Pipeline -->
+      <div class="pipeline-container">
+        <div class="pipeline-title">Ciclo Cerrado de Decisión y Control (2 Hz - 10 Hz)</div>
+        <div class="pipeline-grid">
+          <!-- Paso 1 -->
+          <div class="pipeline-card active" style="--p-color: var(--cyan);" onclick="highlightStep(1)">
+            <div class="p-header">
+              <span class="p-idx">01</span>
+              <span>📡</span>
+            </div>
+            <div class="p-title">Sensores</div>
+            <div class="p-desc">Captura y sincroniza el video de la cámara, las aceleraciones de la IMU y las lecturas GPS.</div>
+            <div class="p-payload">Frame RGB + IMU + GPS</div>
+          </div>
+
+          <!-- Paso 2 -->
+          <div class="pipeline-card" style="--p-color: var(--purple);" onclick="highlightStep(2)">
+            <div class="p-header">
+              <span class="p-idx">02</span>
+              <span>👁️</span>
+            </div>
+            <div class="p-title">Percepción</div>
+            <div class="p-desc">Genera la máscara de transitabilidad con SAM-TP, detecta el cono con YOLO y proyecta a vista cenital (BEV).</div>
+            <div class="p-payload">Costmap BEV + BBox Cono</div>
+          </div>
+
+          <!-- Paso 3 -->
+          <div class="pipeline-card" style="--p-color: var(--emerald);" onclick="highlightStep(3)">
+            <div class="p-header">
+              <span class="p-idx">03</span>
+              <span>📍</span>
+            </div>
+            <div class="p-title">Localización</div>
+            <div class="p-desc">Estima la posición y orientación continua del robot fusionando VIO de alta frecuencia con GPS.</div>
+            <div class="p-payload">Pose [x, y, θ] + Covarianza</div>
+          </div>
+
+          <!-- Paso 4 -->
+          <div class="pipeline-card" style="--p-color: var(--amber);" onclick="highlightStep(4)">
+            <div class="p-header">
+              <span class="p-idx">04</span>
+              <span>🧭</span>
+            </div>
+            <div class="p-title">Navegación</div>
+            <div class="p-desc">La máquina de estados supervisa la misión y el planificador genera arcos libres de colisión.</div>
+            <div class="p-payload">Objetivo (v_des, ω_des)</div>
+          </div>
+
+          <!-- Paso 5 -->
+          <div class="pipeline-card" style="--p-color: var(--rose);" onclick="highlightStep(5)">
+            <div class="p-header">
+              <span class="p-idx">05</span>
+              <span>⚙️</span>
+            </div>
+            <div class="p-title">Control</div>
+            <div class="p-desc">Aplica las ecuaciones diferenciales de movimiento, limitando aceleraciones y enviando la orden al motor.</div>
+            <div class="p-payload">Cmd: {"linear":0.4, "angular":-0.2}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Contenedor Detallado de Cada Paso -->
+      <div id="step-details-container">
+        
+        <!-- Detalle Paso 1 -->
+        <div class="flow-step-block" id="step-block-1" style="--flow-accent: var(--cyan);">
+          <div class="flow-step-header">
+            <div class="flow-step-title">
+              <span class="badge badge-cyan">PASO 1</span>
+              Adquisición Sensorial y Puente de Hardware
+            </div>
+            <span style="font-family: var(--font-mono); font-size: 12px; color: var(--cyan);">Latencia: ~15 a 30 ms | Frecuencia: 10 a 15 Hz</span>
+          </div>
+          <p style="color: var(--text-muted); font-size: 14px;">
+            El módulo cliente del SDK consulta la interfaz REST del rover o recibe el flujo WebRTC en tiempo real. En cada ciclo, este proceso extrae y valida la integridad de los siguientes datos sensoriales:
+          </p>
+          <div class="flow-math">
+            <span class="math-label">Estructura del Paquete de Telemetría:</span>
+            <ul style="list-style: none; padding-left: 0; line-height: 1.8;">
+              <li>• <strong>Fotograma Monocular RGB:</strong> Matriz de imagen $I_{raw} \in \mathbb{R}^{H \times W \times 3}$ con resolución nativa de 640×480 píxeles a 15 fps.</li>
+              <li>• <strong>Unidad de Medición Inercial (IMU):</strong> Vector de velocidad angular $\vec{\omega} = (\omega_x, \omega_y, \omega_z)$ y aceleración lineal $\vec{a} = (a_x, a_y, a_z)$.</li>
+              <li>• <strong>Receptor Satelital GPS:</strong> Coordenadas geográficas $p_{GPS} = (\text{latitud}, \text{longitud}, \text{altitud}, \text{hdop})$ con indicador de precisión satelital.</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Detalle Paso 2 -->
+        <div class="flow-step-block" id="step-block-2" style="--flow-accent: var(--purple); display: none;">
+          <div class="flow-step-header">
+            <div class="flow-step-title">
+              <span class="badge badge-purple">PASO 2</span>
+              Percepción: Segmentación de Terreno y Detección de Objetivos
+            </div>
+            <span style="font-family: var(--font-mono); font-size: 12px; color: var(--purple);">Latencia: ~60 a 120 ms (Inferencia en GPU CUDA)</span>
+          </div>
+          <p style="color: var(--text-muted); font-size: 14px;">
+            La imagen capturada se procesa a través de dos ramas neuronales independientes para entender el entorno y buscar la meta:
+          </p>
+          <div class="flow-math">
+            <span class="math-label">1. Segmentación de Transitabilidad con SAM-TP:</span>
+            El modelo produce una máscara binaria $M(u, v) \in \{0, 1\}$ para cada píxel $(u, v)$, donde $1$ representa superficie segura para rodar (acera, asfalto plano) y $0$ denota obstáculos, pasto alto o desniveles.
+            <br><br>
+            <span class="math-label">2. Detección de Cono Naranja con YOLO:</span>
+            Devuelve el cuadro delimitador $[x_1, y_1, x_2, y_2]$ junto con el ángulo de desviación horizontal $\alpha_{cono}$ respecto al centro óptico de la cámara.
+            <br><br>
+            <span class="math-label">3. Mapeo en Perspectiva Inversa (IPM) a Vista Cenital (BEV):</span>
+            Utilizando la matriz intrínseca de calibración $K$ y los ángulos de montaje de la cámara (altura $h$ e inclinación $\phi$), se proyecta la máscara 2D de la imagen al plano del suelo métrico:
+            $$\begin{bmatrix} X_r \\ Y_r \\ 1 \end{bmatrix} \sim H_{IPM} \cdot \begin{bmatrix} u \\ v \\ 1 \end{bmatrix} = K \cdot [R_{cam} \mid t_{cam}]^{-1} \cdot \begin{bmatrix} u \\ v \\ 1 \end{bmatrix}$$
+            Esto genera una cuadrícula de costos métrica (*Costmap*) $C(x, y)$ donde cada celda representa un área física de $0.05 \times 0.05$ metros.
+          </div>
+        </div>
+
+        <!-- Detalle Paso 3 -->
+        <div class="flow-step-block" id="step-block-3" style="--flow-accent: var(--emerald); display: none;">
+          <div class="flow-step-header">
+            <div class="flow-step-title">
+              <span class="badge badge-emerald">PASO 3</span>
+              Localización y Estimación de Estado del Robot (VIO + SLAM)
+            </div>
+            <span style="font-family: var(--font-mono); font-size: 12px; color: var(--emerald);">Latencia: ~5 a 10 ms</span>
+          </div>
+          <p style="color: var(--text-muted); font-size: 14px;">
+            Para saber dónde está el robot en todo momento sin sufrir acumulación de error por deslizamiento de ruedas, se combinan dos fuentes de posición:
+          </p>
+          <div class="flow-math">
+            <span class="math-label">Fusión Sensorial Mediante Filtro de Kalman Extendido (EKF):</span>
+            <ul style="list-style: none; padding-left: 0; line-height: 1.8;">
+              <li>• <strong>Odometría Relativa de Alta Frecuencia:</strong> El seguimiento visual entre fotogramas consecutivos combinado con la integración del giroscopio calcula desplazamientos instantáneos $(\Delta x, \Delta y, \Delta \theta)$.</li>
+              <li>• <strong>Referencia Absoluta Global:</strong> Las coordenadas GPS en formato WGS84 se proyectan al plano métrico local Este-Norte-Arriba (ENU), generando coordenadas globales $(X_{enu}, Y_{enu})$.</li>
+              <li>• <strong>Vector de Estado del Robot:</strong> Se mantiene estimada la pose continua $\mathbf{x}_t = [x, y, \theta, v_x, \omega_z]^T$ junto con su matriz de covarianza de error $\mathbf{P}_t$.</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Detalle Paso 4 -->
+        <div class="flow-step-block" id="step-block-4" style="--flow-accent: var(--amber); display: none;">
+          <div class="flow-step-header">
+            <div class="flow-step-title">
+              <span class="badge badge-amber">PASO 4</span>
+              Navegación: Planificación de Búsqueda y Rutas Locales
+            </div>
+            <span style="font-family: var(--font-mono); font-size: 12px; color: var(--amber);">Latencia: ~10 a 25 ms</span>
+          </div>
+          <p style="color: var(--text-muted); font-size: 14px;">
+            El sistema de navegación opera en dos niveles jerárquicos de toma de decisiones:
+          </p>
+          <div class="flow-math">
+            <span class="math-label">1. Planificador de Búsqueda Global (Máquina de Estados de la Misión):</span>
+            Supervisa el estado operativo: <code>NAVEGACION_GPS</code> &rarr; <code>BUSQUEDA_CONO</code> &rarr; <code>HOMING_VISUAL</code> &rarr; <code>OBJETIVO_ALCANZADO</code>.
+            <br><br>
+            <span class="math-label">2. Planificador de Rutas Locales (Evaluación de Trayectorias Polinomiales en BEV):</span>
+            Genera un banco de trayectorias candidatas $T_i = \{(x_k, y_k)\}_{k=1}^N$ hacia el frente del rover. Cada trayectoria se puntúa según una función de coste:
+            $$\text{Coste}(T_i) = w_{obs} \cdot \int_{0}^L C(T_i(s))\,ds + w_{meta} \cdot |\theta_{traj} - \theta_{meta}| + w_{suavidad} \cdot \kappa_i^2$$
+            Donde $C(T_i(s))$ es la penalización por cercanía a obstáculos en la vista BEV, $|\theta_{traj} - \theta_{meta}|$ es la alineación con el objetivo y $\kappa_i$ es la curvatura geométrica. La trayectoria con menor coste selecciona la velocidad lineal y angular deseadas $(v_{des}, \omega_{des})$.
+          </div>
+        </div>
+
+        <!-- Detalle Paso 5 -->
+        <div class="flow-step-block" id="step-block-5" style="--flow-accent: var(--rose); display: none;">
+          <div class="flow-step-header">
+            <div class="flow-step-title">
+              <span class="badge badge-rose">PASO 5</span>
+              Control Cinemático y Despacho de Comandos de Movimiento
+            </div>
+            <span style="font-family: var(--font-mono); font-size: 12px; color: var(--rose);">Latencia: ~5 a 10 ms</span>
+          </div>
+          <p style="color: var(--text-muted); font-size: 14px;">
+            El controlador traduce los objetivos de curvatura en comandos físicos para los motores de tracción diferencial, aplicando filtros de seguridad:
+          </p>
+          <div class="flow-math">
+            <span class="math-label">Mecanismos de Control y Protección:</span>
+            <ul style="list-style: none; padding-left: 0; line-height: 1.8;">
+              <li>• <strong>Limitador de Tasa de Aceleración (*Slew-Rate*):</strong> Limita variaciones bruscas de velocidad para evitar derrapes: $|v_t - v_{t-1}| \le a_{max} \cdot \Delta t$.</li>
+              <li>• <strong>Freno de Proximidad por Emergencia:</strong> Si la densidad de obstáculos frontales supera el 50% a menos de 0.5 metros, la velocidad lineal se anula de inmediato ($v = 0.0$) y el robot ejecuta un giro en el propio eje.</li>
+              <li>• <strong>Despacho de Comando HTTP:</strong> Se envía la carga útil a la API: <code>POST /api/send-command {"linear": 0.35, "angular": -0.15}</code>.</li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- =======================================================
+         SECCIÓN 05: GUÍA DE INICIO RÁPIDO PARA DESARROLLADORES
+         ======================================================= -->
+    <div class="section-card" id="developer-quickstart">
+      <div class="section-header">
+        <div class="section-title-wrap">
+          <div class="section-number">05</div>
+          <h2 class="section-title">Guía de Inicio Rápido y Flujo de Trabajo</h2>
+        </div>
+        <span class="badge badge-emerald">Listo para Ejecutar</span>
+      </div>
+
+      <div class="alert-box alert-info">
+        <div class="alert-icon">💡</div>
+        <div>
+          <strong>Regla de los Dos Entornos Virtuales:</strong> Este proyecto opera con dos entornos de Python independientes para evitar colisiones entre librerías (especialmente entre versiones de OpenCV y PyTorch CUDA):
+          el entorno <strong><code>.venv</code> en la raíz</strong> para el servidor FastAPI y Playwright Chromium, y el entorno <strong><code>genie/.venv</code></strong> con PyTorch CUDA 12.6 para los modelos de percepción y planificación.
+        </div>
+      </div>
+
+      <h3 style="font-size: 15px; margin: 20px 0 8px; color: var(--cyan); font-family: var(--font-mono);">1. Instalación Automática (Script de PowerShell)</h3>
+      <p style="font-size: 13.5px; color: var(--text-muted); margin-bottom: 10px;">
+        Ejecuta el script de configuración inicial que detectará la tarjeta gráfica NVIDIA, creará ambos entornos virtuales e instalará las dependencias necesarias:
+      </p>
+      <div class="terminal-box">
+        <div class="terminal-topbar">
+          <div class="terminal-dots">
+            <div class="terminal-dot dot-red"></div>
+            <div class="terminal-dot dot-yellow"></div>
+            <div class="terminal-dot dot-green"></div>
+          </div>
+          <div class="terminal-title">PowerShell — Instalación Inicial</div>
+        </div>
+        <div class="terminal-body">
+<span class="term-comment"># Parado en la raíz del repositorio, ejecuta con permisos de ejecución:</span>
+<span class="term-prompt">PS ></span> <span class="term-cmd">powershell -ExecutionPolicy Bypass -File .\setup_earth_rover.ps1</span>
+        </div>
+      </div>
+
+      <h3 style="font-size: 15px; margin: 20px 0 8px; color: var(--cyan); font-family: var(--font-mono);">2. Ejecución del Sistema en Dos Terminales</h3>
+      <p style="font-size: 13.5px; color: var(--text-muted); margin-bottom: 10px;">
+        Para operar el rover se deben abrir dos terminales independientes:
+      </p>
+
+      <!-- Terminal 1 -->
+      <div class="terminal-box">
+        <div class="terminal-topbar">
+          <div class="terminal-dots">
+            <div class="terminal-dot dot-red"></div>
+            <div class="terminal-dot dot-yellow"></div>
+            <div class="terminal-dot dot-green"></div>
+          </div>
+          <div class="terminal-title">Terminal 1 — Servidor Backend del SDK</div>
+        </div>
+        <div class="terminal-body">
+<span class="term-comment"># Activa el entorno raíz e inicia el servidor ASGI con recarga automática:</span>
+<span class="term-prompt">PS ></span> <span class="term-cmd">.\.venv\Scripts\Activate.ps1</span>
+<span class="term-prompt">PS ></span> <span class="term-cmd">hypercorn main:app</span> <span class="term-flag">--reload</span>
+<span class="term-comment"># El panel de telemetría y video estará accesible en http://localhost:8000</span>
+        </div>
+      </div>
+
+      <!-- Terminal 2 -->
+      <div class="terminal-box">
+        <div class="terminal-topbar">
+          <div class="terminal-dots">
+            <div class="terminal-dot dot-red"></div>
+            <div class="terminal-dot dot-yellow"></div>
+            <div class="terminal-dot dot-green"></div>
+          </div>
+          <div class="terminal-title">Terminal 2 — Motor de Autonomía (Modo Simulado o Real)</div>
+        </div>
+        <div class="terminal-body">
+<span class="term-comment"># Ingresa a la carpeta de autonomía y activa el entorno de PyTorch CUDA:</span>
+<span class="term-prompt">PS ></span> <span class="term-cmd">cd genie</span>
+<span class="term-prompt">PS ></span> <span class="term-cmd">.\.venv\Scripts\Activate.ps1</span>
+
+<span class="term-comment"># OPCIÓN A (Modo Seguro DRY-RUN): Procesa visión y planifica sin mover los motores físicos</span>
+<span class="term-prompt">PS ></span> <span class="term-cmd">python -m genie_rover.bridge</span> <span class="term-flag">--config configs/frodobot_rover.yaml</span>
+
+<span class="term-comment"># OPCIÓN B (Misión Real con Movimiento): Envía comandos físicos al chasis del rover</span>
+<span class="term-prompt">PS ></span> <span class="term-cmd">python -m genie_rover.bridge</span> <span class="term-flag">--config configs/frodobot_rover.yaml --go --start-mission</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- =======================================================
+         SECCIÓN 06: MARCOS ESPACIALES Y CONVENCIONES
+         ======================================================= -->
+    <div class="section-card" id="conventions">
+      <div class="section-header">
+        <div class="section-title-wrap">
+          <div class="section-number">06</div>
+          <h2 class="section-title">Estándares de Coordenadas y Marcos Espaciales</h2>
+        </div>
+        <span class="badge badge-purple">Matemática Espacial</span>
+      </div>
+
+      <p style="color: var(--text-muted); margin-bottom: 20px; font-size: 14px;">
+        Para evitar errores de inversión de signos al desarrollar nuevos módulos de percepción o control en el código, el proyecto utiliza las siguientes convenciones espaciales estandarizadas:
+      </p>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 18px 0;">
+        
+        <div style="background: var(--bg-card); padding: 20px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+          <div style="font-size: 12px; font-weight: 700; color: var(--cyan); text-transform: uppercase; margin-bottom: 8px; font-family: var(--font-mono);">
+            Marco del Robot (base_link)
+          </div>
+          <p style="font-size: 13px; color: var(--text-muted); line-height: 1.6;">
+            Centrado en el centro geométrico del chasis del rover:
+            <br>• <strong>Eje +X:</strong> Apunta hacia el frente del vehículo.
+            <br>• <strong>Eje +Y:</strong> Apunta hacia el costado izquierdo.
+            <br>• <strong>Eje +Z:</strong> Apunta perpendicularmente hacia arriba.
+            <br>• <strong>Giro +Yaw:</strong> Rotación antihoraria (hacia la izquierda).
+          </p>
+        </div>
+
+        <div style="background: var(--bg-card); padding: 20px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+          <div style="font-size: 12px; font-weight: 700; color: var(--orange); text-transform: uppercase; margin-bottom: 8px; font-family: var(--font-mono);">
+            Marco Óptico de la Cámara (camera_link)
+          </div>
+          <p style="font-size: 13px; color: var(--text-muted); line-height: 1.6;">
+            Centrado en el punto focal de la lente de la cámara:
+            <br>• <strong>Eje +Z:</strong> Coincide con el eje óptico hacia adelante.
+            <br>• <strong>Eje +X:</strong> Hacia la derecha en el plano de la imagen.
+            <br>• <strong>Eje +Y:</strong> Hacia abajo en el plano de la imagen.
+            <br>• Origen en el centro de proyección óptica.
+          </p>
+        </div>
+
+        <div style="background: var(--bg-card); padding: 20px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+          <div style="font-size: 12px; font-weight: 700; color: var(--emerald); text-transform: uppercase; margin-bottom: 8px; font-family: var(--font-mono);">
+            Marco de Costos Cenital (BEV Costmap)
+          </div>
+          <p style="font-size: 13px; color: var(--text-muted); line-height: 1.6;">
+            Proyección ortogonal en el plano del suelo:
+            <br>• <strong>Filas de la matriz:</strong> Distancia longitudinal hacia adelante (metros de avance).
+            <br>• <strong>Columnas:</strong> Desplazamiento lateral (izquierda/derecha).
+            <br>• Resolución métrica: 0.05 metros por celda.
+          </p>
+        </div>
+
+        <div style="background: var(--bg-card); padding: 20px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+          <div style="font-size: 12px; font-weight: 700; color: var(--purple); text-transform: uppercase; margin-bottom: 8px; font-family: var(--font-mono);">
+            Marco Geográfico Global (Mapa ENU)
+          </div>
+          <p style="font-size: 13px; color: var(--text-muted); line-height: 1.6;">
+            Plano tangente local Este-Norte-Arriba:
+            <br>• <strong>Eje +X:</strong> Dirección geodésica hacia el Este.
+            <br>• <strong>Eje +Y:</strong> Dirección geodésica hacia el Norte.
+            <br>• <strong>Eje +Z:</strong> Altitud sobre el elipsoide WGS84.
+            <br>• Rumbo 0° correspondiente al Este.
+          </p>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Pie de página -->
+    <footer>
+      <div>IROS Earth Rover Challenge 2026 — Documentación de La Rovernetta</div>
+      <div>Arquitectura de Software y Guía de Onboarding v4.0</div>
+    </footer>
+
+  </main>
+</div>
+
+<!-- =======================================================
+     SCRIPTS: LÓGICA DEL EXPLORADOR INTERACTIVO Y PIPELINE
+     ======================================================= -->
+<script>
+const repoData = {
+  actual: [
+    {
+      id: 'act_genie',
+      name: 'genie/',
+      type: 'folder',
+      layer: 'Autonomía Principal',
+      badgeClass: 'badge-cyan',
+      desc: 'Subsistema de autonomía principal del proyecto. Contiene el planificador GeNIE, el modelo de segmentación SAM-TP, herramientas de calibración y el orquestador bridge.',
+      inputs: ['Telemetría recibida del SDK', 'Archivos de configuración YAML'],
+      outputs: ['Comandos de movimiento enviados al rover', 'Visualizaciones BEV de depuración'],
+      cmd: 'cd genie && python -m genie_rover.bridge --config configs/frodobot_rover.yaml',
+      children: [
+        { 
+          id: 'act_bridge', 
+          name: 'genie_rover/bridge.py', 
+          icon: '🚀', 
+          type: 'file', 
+          layer: 'Orquestador', 
+          desc: 'Bucle principal de control del sistema. Conecta sdk_client -> percepción -> planificador de rutas -> envío de comandos. Requiere el flag --go para mover físicamente el rover.', 
+          inputs: ['Respuesta JSON de /api/status'], 
+          outputs: ['Petición POST a /api/send-command'], 
+          cmd: 'python -m genie_rover.bridge --config configs/frodobot_rover.yaml --go' 
+        },
+        { 
+          id: 'act_sdk_cli', 
+          name: 'genie_rover/sdk_client.py', 
+          icon: '📡', 
+          type: 'file', 
+          layer: 'Sensores', 
+          desc: 'Cliente HTTP que se comunica con el servidor FastAPI del SDK para obtener fotogramas, coordenadas GPS y checkpoints activos.', 
+          inputs: ['Petición HTTP GET a /api/status'], 
+          outputs: ['Diccionario con los datos de telemetría del rover'], 
+          cmd: 'python -m genie_rover.sdk_client' 
+        },
+        { 
+          id: 'act_percep', 
+          name: 'genie_rover/perception.py', 
+          icon: '👁️', 
+          type: 'file', 
+          layer: 'Percepción', 
+          desc: 'Wrapper de inferencia para SAM-TP (Segment Anything Model adaptado a transitabilidad). Procesa la imagen y genera la máscara de terreno seguro.', 
+          inputs: ['Fotograma de imagen en formato numpy o archivo JPG'], 
+          outputs: ['Máscara binaria de superficie transitable'], 
+          cmd: 'python -m genie_rover.perception --image test.jpg' 
+        },
+        { 
+          id: 'act_path_pln', 
+          name: 'genie_path_planner/', 
+          icon: '🧭', 
+          type: 'file', 
+          layer: 'Navegación', 
+          desc: 'Librería de trayectorias polinomiales que evalúa el banco de curvas posibles sobre el mapa cenital BEV.', 
+          inputs: ['Cuadrícula de costes en vista cenital (BEV)'], 
+          outputs: ['Arco de trayectoria con menor coste'], 
+          cmd: 'python run_path_planner.py' 
+        },
+        { 
+          id: 'act_configs', 
+          name: 'configs/frodobot_rover.yaml', 
+          icon: '⚙️', 
+          type: 'file', 
+          layer: 'Configuración', 
+          desc: 'Archivo de configuración activa con las dimensiones de la cuadrícula BEV, límites de velocidad y parámetros del planificador.', 
+          inputs: ['Parámetros de configuración en YAML'], 
+          outputs: ['Diccionario de configuración en tiempo de ejecución'], 
+          cmd: 'cat configs/frodobot_rover.yaml' 
+        },
+        { 
+          id: 'act_tools', 
+          name: 'tools/calibrate_camera.py', 
+          icon: '🛠️', 
+          type: 'file', 
+          layer: 'Herramientas', 
+          desc: 'Herramienta para capturar fotos con patrón de ajedrez y resolver la matriz de cámara K y los coeficientes de distorsión D.', 
+          inputs: ['Fotogramas guardados en calib_frames/'], 
+          outputs: ['Archivo calib.yaml con los parámetros resueltos'], 
+          cmd: 'python tools/calibrate_camera.py solve --frames calib_frames/' 
+        }
+      ]
+    },
+    {
+      id: 'act_trav',
+      name: 'traversability/',
+      type: 'folder',
+      layer: 'Navegación Reactiva',
+      badgeClass: 'badge-emerald',
+      desc: 'Orquestador alternativo más liviano. Decide la dirección directamente sobre la máscara de visión en espacio de imagen dividiéndola en 9 corredores verticales, sin necesidad de calibración de cámara.',
+      inputs: ['Fotograma RGB de la cámara', 'Rumbo al checkpoint GPS'],
+      outputs: ['Comando de dirección y velocidad (v, ω)'],
+      cmd: 'python -m rover_traversability.demo live --save-dir trav_out',
+      children: [
+        { 
+          id: 'act_trav_demo', 
+          name: 'rover_traversability/demo.py', 
+          icon: '⚡', 
+          type: 'file', 
+          layer: 'Navegación', 
+          desc: 'Punto de entrada por consola con 4 niveles de prueba progresivos: predicción en foto estática, visualización en vivo, conducción reactiva y misión completa autónoma.', 
+          inputs: ['Argumentos y banderas por línea de comando'], 
+          outputs: ['Comandos de manejo directo o imágenes con overlay guardadas'], 
+          cmd: 'python -m rover_traversability.demo drive --yes-i-want-the-rover-to-move' 
+        },
+        { 
+          id: 'act_trav_policy', 
+          name: 'rover_traversability/policy.py', 
+          icon: '📊', 
+          type: 'file', 
+          layer: 'Navegación', 
+          desc: 'Calcula la densidad de obstáculos en cada uno de los 9 corredores verticales y selecciona el corredor óptimo sesgado hacia el rumbo GPS.', 
+          inputs: ['Máscara de SAM-TP', 'Ángulo hacia el objetivo'], 
+          outputs: ['Índice de corredor elegido (0 a 8) y velocidades deseadas'], 
+          cmd: 'pytest traversability/tests' 
+        },
+        { 
+          id: 'act_trav_strat', 
+          name: 'rover_traversability/strategy.py', 
+          icon: '🔌', 
+          type: 'file', 
+          layer: 'Arquitectura', 
+          desc: 'Implementación del patrón estrategia para intercambiar políticas de navegación dentro de bucles de control personalizados sin modificar el resto del código.', 
+          inputs: ['Instancia de PolicyConfig'], 
+          outputs: ['Objeto de estrategia listo para acoplar al RoverLoop'], 
+          cmd: 'python -m rover_traversability.demo mission' 
+        }
+      ]
+    },
+    {
+      id: 'act_ml',
+      name: 'ML_model/',
+      type: 'folder',
+      layer: 'Entrenamiento e IA',
+      badgeClass: 'badge-purple',
+      desc: 'Pipelines de entrenamiento de modelos, curación de datasets y experimentos de fine-tuning para la detección del cono naranja y adaptación de dominio de SAM-TP.',
+      inputs: ['Imágenes etiquetadas con cuadros delimitadores', 'Pesos pre-entrenados'],
+      outputs: ['Modelos entrenados en formato .pt y ONNX'],
+      cmd: 'python ML_model/scripts/eval.py',
+      children: [
+        { 
+          id: 'act_ml_doc', 
+          name: '0_ReadmeML.md', 
+          icon: '📖', 
+          type: 'file', 
+          layer: 'Documentación', 
+          desc: 'Documento detallado que explica la recolección de datos, el procedimiento de entrenamiento y las métricas de precisión de los modelos.', 
+          inputs: ['Archivos de documentación en Markdown'], 
+          outputs: ['Guía completa de entrenamiento y métricas'], 
+          cmd: 'cat ML_model/0_ReadmeML.md' 
+        },
+        { 
+          id: 'act_ml_cfg', 
+          name: 'config_paths.py', 
+          icon: '⚙️', 
+          type: 'file', 
+          layer: 'Configuración', 
+          desc: 'Resuelve dinámicamente las rutas locales a los pesos guardados en caché, descargas de HuggingFace y carpetas de datasets.', 
+          inputs: ['Variables de entorno del sistema'], 
+          outputs: ['Rutas absolutas válidas a los checkpoints de los modelos'], 
+          cmd: 'python ML_model/config_paths.py' 
+        }
+      ]
+    },
+    {
+      id: 'act_sdk',
+      name: 'earth-rovers-sdk/ y Raíz',
+      type: 'folder',
+      layer: 'Servidor Backend',
+      badgeClass: 'badge-amber',
+      desc: 'Servidor FastAPI que gestiona la sesión de Chromium sin interfaz gráfica, sirviendo como puente de comunicación WebRTC entre el robot y los algoritmos.',
+      inputs: ['Flujo de datos WebRTC del rover físico', 'Peticiones HTTP de control'],
+      outputs: ['Punto final /api/status y panel web en puerto 8000'],
+      cmd: 'hypercorn main:app --reload',
+      children: [
+        { 
+          id: 'act_main', 
+          name: 'main.py', 
+          icon: '🌐', 
+          type: 'file', 
+          layer: 'Backend', 
+          desc: 'Aplicación FastAPI principal que expone los endpoints /api/status y /api/send-command y gestiona la conexión con el navegador.', 
+          inputs: ['Peticiones HTTP entrantes'], 
+          outputs: ['Respuestas estructuradas en formato JSON'], 
+          cmd: 'hypercorn main:app' 
+        },
+        { 
+          id: 'act_setup', 
+          name: 'setup_earth_rover.ps1', 
+          icon: '⚙️', 
+          type: 'file', 
+          layer: 'DevOps', 
+          desc: 'Script automatizado de PowerShell para Windows que verifica la GPU, crea ambos entornos virtuales e instala PyTorch CUDA 12.6 y Playwright.', 
+          inputs: ['Script de automatización en PowerShell'], 
+          outputs: ['Entornos virtuales .venv y genie/.venv configurados'], 
+          cmd: 'powershell -File .\\setup_earth_rover.ps1' 
+        }
+      ]
+    }
+  ],
+  pipeline: [
+    {
+      id: 'pipe_sensors',
+      name: '1. Ingesta de Sensores',
+      type: 'folder',
+      layer: 'Sensores',
+      badgeClass: 'badge-cyan',
+      desc: 'Captura el fotograma de video monocular, la orientación del giroscopio de la IMU y las coordenadas GPS mediante consultas al servidor FastAPI.',
+      inputs: ['HTTP GET /api/status', 'Flujo WebRTC'],
+      outputs: ['Frame de imagen RGB (640x480)', 'Datos GPS (lat, lon)', 'Velocidad angular IMU'],
+      cmd: 'python -m genie_rover.sdk_client',
+      children: [
+        { id: 'p_sdk', name: 'genie_rover/sdk_client.py', icon: '📡', type: 'file', layer: 'Sensores', desc: 'Cliente HTTP de polling de telemetría y descodificación de imágenes.', inputs: ['/api/status'], outputs: ['Diccionario con telemetría'], cmd: 'python -m genie_rover.sdk_client' }
+      ]
+    },
+    {
+      id: 'pipe_percep',
+      name: '2. Percepción Visual',
+      type: 'folder',
+      layer: 'Percepción',
+      badgeClass: 'badge-purple',
+      desc: 'Segmentación del terreno transitable con SAM-TP, detección de conos con YOLO y proyección a vista cenital (Bird\'s-Eye-View).',
+      inputs: ['Fotograma RGB', 'Matriz de cámara K'],
+      outputs: ['Máscara binaria de transitabilidad', 'Costmap BEV métrico', 'BBox de cono naranja'],
+      cmd: 'python -m genie_rover.perception --image test.jpg',
+      children: [
+        { id: 'p_sam', name: 'genie_rover/perception.py', icon: '👁️', type: 'file', layer: 'Percepción', desc: 'Wrapper de SAM-TP para generar máscaras de terreno transitable.', inputs: ['Imagen RGB'], outputs: ['Máscara binaria'], cmd: 'python -m genie_rover.perception --image test.jpg' },
+        { id: 'p_yolo', name: 'ML_model/scripts/eval_yolo.py', icon: '🔶', type: 'file', layer: 'Percepción', desc: 'Detección y seguimiento visual de conos naranjas.', inputs: ['Imagen RGB'], outputs: ['Caja [x1, y1, x2, y2]'], cmd: 'python ML_model/scripts/eval_yolo.py' }
+      ]
+    },
+    {
+      id: 'pipe_loc',
+      name: '3. Localización y Estado',
+      type: 'folder',
+      layer: 'Localización',
+      badgeClass: 'badge-emerald',
+      desc: 'Seguimiento de posición relativa mediante odometría visual (VIO) y conversión de coordenadas GPS a plano métrico local ENU.',
+      inputs: ['Fotogramas continuos', 'Lecturas GPS', 'Giroscopio'],
+      outputs: ['Pose continua [x, y, θ]', 'Velocidad [vx, vy, ωz]'],
+      cmd: 'python genie/valida_odo.py',
+      children: [
+        { id: 'p_odo', name: 'genie/valida_odo.py', icon: '📍', type: 'file', layer: 'Localización', desc: 'Validación y cálculo de odometría visual entre cuadros consecutivos.', inputs: ['Fotogramas'], outputs: ['Δx, Δy, Δθ'], cmd: 'python genie/valida_odo.py' },
+        { id: 'p_pose', name: 'genie/diag_pose.py', icon: '🔄', type: 'file', layer: 'Localización', desc: 'Diagnóstico de posición y conversión GPS geodésico a métrico.', inputs: ['GPS fix'], outputs: ['Coordenadas métricas locales'], cmd: 'python genie/diag_pose.py' }
+      ]
+    },
+    {
+      id: 'pipe_nav',
+      name: '4. Planificación de Rutas',
+      type: 'folder',
+      layer: 'Navegación',
+      badgeClass: 'badge-amber',
+      desc: 'Generación y selección de trayectorias libres de obstáculos hacia el checkpoint o cono meta.',
+      inputs: ['Costmap BEV', 'Rumbo al objetivo'],
+      outputs: ['Curvatura óptima y velocidades deseadas (v, ω)'],
+      cmd: 'python -m genie_rover.bridge',
+      children: [
+        { id: 'p_bridge', name: 'genie_rover/bridge.py', icon: '🧭', type: 'file', layer: 'Navegación', desc: 'Orquestador de planificación polinomial en BEV.', inputs: ['Costmap BEV'], outputs: ['Velocidad lineal y angular'], cmd: 'python -m genie_rover.bridge' },
+        { id: 'p_trav_pol', name: 'rover_traversability/policy.py', icon: '⚡', type: 'file', layer: 'Navegación', desc: 'Política reactiva de 9 corredores en espacio de imagen.', inputs: ['Máscara SAM-TP'], outputs: ['Corredor elegido (0-8)'], cmd: 'pytest traversability/tests' }
+      ]
+    },
+    {
+      id: 'pipe_ctrl',
+      name: '5. Control y Actuación',
+      type: 'folder',
+      layer: 'Control',
+      badgeClass: 'badge-rose',
+      desc: 'Transforma las velocidades deseadas en peticiones HTTP al servidor con límites de aceleración y frenos de seguridad.',
+      inputs: ['Velocidades (v, ω)', 'Distancia a obstáculos'],
+      outputs: ['POST /api/send-command'],
+      cmd: 'python -m genie_rover.bridge --go',
+      children: [
+        { id: 'p_send', name: 'genie_rover/bridge.py', icon: '⚙️', type: 'file', layer: 'Control', desc: 'Despacho de comandos y control cinemático diferencial.', inputs: ['Comandos v, w'], outputs: ['Petición HTTP JSON'], cmd: 'python -m genie_rover.bridge --go' }
+      ]
+    }
+  ]
+};
+
+let currentView = 'actual';
+let selectedNodeId = 'act_bridge';
+
+function renderTree() {
+  const container = document.getElementById('tree-container');
+  container.innerHTML = '';
+  const data = repoData[currentView];
+
+  data.forEach((group, gIdx) => {
+    const groupDiv = document.createElement('div');
+    groupDiv.className = 'tree-group';
+
+    const folderNode = document.createElement('div');
+    folderNode.className = `tree-folder-node ${gIdx === 0 || gIdx === 1 ? 'open' : ''}`;
+    folderNode.innerHTML = `
+      <span class="chevron">▶</span>
+      <span class="folder-icon">📁</span>
+      <span class="node-name">${group.name}</span>
+      <span class="layer-badge ${group.badgeClass}">${group.layer}</span>
+    `;
+    folderNode.onclick = (e) => {
+      e.stopPropagation();
+      folderNode.classList.toggle('open');
+      const childrenDiv = groupDiv.querySelector('.tree-children');
+      if (childrenDiv) childrenDiv.classList.toggle('expanded');
+      selectNode(group);
+    };
+
+    const childrenDiv = document.createElement('div');
+    childrenDiv.className = `tree-children ${gIdx === 0 || gIdx === 1 ? 'expanded' : ''}`;
+
+    if (group.children) {
+      group.children.forEach(child => {
+        const fileNode = document.createElement('div');
+        fileNode.className = `tree-file-node ${child.id === selectedNodeId ? 'selected' : ''}`;
+        fileNode.id = `node-${child.id}`;
+        fileNode.innerHTML = `
+          <span class="file-icon">${child.icon || '📄'}</span>
+          <span class="file-title">${child.name}</span>
+          <span class="file-meta-tag">${child.layer}</span>
+        `;
+        fileNode.onclick = (e) => {
+          e.stopPropagation();
+          selectNode(child);
+        };
+        childrenDiv.appendChild(fileNode);
+      });
+    }
+
+    groupDiv.appendChild(folderNode);
+    groupDiv.appendChild(childrenDiv);
+    container.appendChild(groupDiv);
+  });
+}
+
+function selectNode(node) {
+  selectedNodeId = node.id;
+  document.querySelectorAll('.tree-file-node').forEach(el => el.classList.remove('selected'));
+  const activeEl = document.getElementById(`node-${node.id}`);
+  if (activeEl) activeEl.classList.add('selected');
+
+  const inspector = document.getElementById('inspector-container');
+  inspector.innerHTML = `
+    <div>
+      <div class="inspector-header">
+        <div class="inspector-title-wrap">
+          <div class="inspector-filename">
+            <span>${node.icon || '📁'}</span>
+            <span>${node.name}</span>
+          </div>
+          <div class="inspector-path">${currentView === 'actual' ? 'Ruta en el Código Fuente' : 'Pipeline Funcional'} • ${node.layer}</div>
+        </div>
+        <span class="badge badge-cyan">${node.type === 'folder' ? 'DIRECTORIO' : 'MÓDULO'}</span>
+      </div>
+
+      <div class="inspector-role-card">
+        <div class="inspector-label">
+          <span>🎯</span> Responsabilidad en el Sistema
+        </div>
+        <div class="inspector-text">${node.desc}</div>
+      </div>
+
+      <div class="inspector-grid">
+        <div class="inspector-mini-box">
+          <div class="inspector-label">Entradas / Dependencias</div>
+          <div class="inspector-tag-list">
+            ${(node.inputs || ['Ninguna']).map(inp => `<div class="inspector-tag">${inp}</div>`).join('')}
+          </div>
+        </div>
+
+        <div class="inspector-mini-box">
+          <div class="inspector-label">Salidas / Estructuras Generadas</div>
+          <div class="inspector-tag-list">
+            ${(node.outputs || ['Ninguna']).map(out => `<div class="inspector-tag">${out}</div>`).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="inspector-label">Comando de Ejecución o Verificación</div>
+      <div class="inspector-cmd-box">
+        <span>$ ${node.cmd || 'python -m pytest'}</span>
+        <button class="copy-btn" onclick="copyText('${node.cmd || ''}')">Copiar</button>
+      </div>
+    </div>
+  `;
+}
+
+function switchView(view) {
+  currentView = view;
+  document.getElementById('btn-view-actual').classList.toggle('active', view === 'actual');
+  document.getElementById('btn-view-pipeline').classList.toggle('active', view === 'pipeline');
+  
+  if (view === 'actual') {
+    selectedNodeId = 'act_bridge';
+  } else {
+    selectedNodeId = 'p_bridge';
+  }
+  
+  renderTree();
+  const data = repoData[currentView];
+  const initial = (data[0].children && data[0].children[0]) || data[0];
+  selectNode(initial);
+}
+
+function filterTree() {
+  const query = document.getElementById('explorer-filter').value.toLowerCase().trim();
+  const fileNodes = document.querySelectorAll('.tree-file-node');
+  
+  fileNodes.forEach(node => {
+    const text = node.textContent.toLowerCase();
+    if (!query || text.includes(query)) {
+      node.style.display = 'flex';
+    } else {
+      node.style.display = 'none';
+    }
+  });
+
+  const groupNodes = document.querySelectorAll('.tree-group');
+  groupNodes.forEach(group => {
+    const children = group.querySelectorAll('.tree-file-node');
+    let anyVisible = false;
+    children.forEach(c => {
+      if (c.style.display !== 'none') anyVisible = true;
+    });
+    if (query && anyVisible) {
+      group.querySelector('.tree-children').classList.add('expanded');
+      group.querySelector('.tree-folder-node').classList.add('open');
+    }
+  });
+}
+
+function copyText(text) {
+  if (!text) return;
+  navigator.clipboard.writeText(text);
+  const toast = document.getElementById('toast');
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2000);
+}
+
+function highlightStep(stepNum) {
+  document.querySelectorAll('.pipeline-card').forEach((card, idx) => {
+    card.classList.toggle('active', idx === stepNum - 1);
+  });
+  
+  for (let i = 1; i <= 5; i++) {
+    const block = document.getElementById(`step-block-${i}`);
+    if (block) {
+      block.style.display = i === stepNum ? 'block' : 'none';
+    }
+  }
+
+  if (window.MathJax && window.MathJax.typesetPromise) {
+    window.MathJax.typesetPromise();
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  renderTree();
+  const initialNode = repoData.actual[0].children[0]; // bridge.py
+  selectNode(initialNode);
+});
+</script>
+
+</body>
+</html>
