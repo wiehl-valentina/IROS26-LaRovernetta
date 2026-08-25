@@ -58,7 +58,7 @@ from genie_path_planner.planner import plan_on_bev
 
 from ..bridge import Bridge, _check_placeholders
 from .cone_detector import ConeDetectorConfig, ConeDetectorPipeline, ground_point_from_bbox
-from .console_report import MissionConsoleReporter
+from ..console_report import MissionConsoleReporter
 from .external_map import load_ros_occupancy_map
 from .mission import ConeMissionFSM, MissionConfig
 from .rtabmap_pose_bridge import RtabmapPoseBridge
@@ -116,8 +116,9 @@ class IndoorBridge(Bridge):
         # = forzar. Se lee del dict crudo en vez de sumarlo a MissionConfig para
         # no tocar mission.py por una opcion puramente de presentacion.
         self._reporter = MissionConsoleReporter(
-            enable_color=(cfg.get("mission", {}) or {}).get("console_color"))
-
+            target_label="cono",
+            color=(cfg.get("mission", {}) or {}).get("console_color"))
+        
     # ------------------------------------------------------ mapa importado
 
     def _maybe_load_external_map(self, mem_cfg: dict) -> None:

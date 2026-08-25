@@ -37,7 +37,7 @@ from .odometry import Odometry, OdometryConfig, Pose
 from .perception import PerceptionPipeline
 from .persistent_map import MapConfig, PersistentMap
 from .sdk_client import Checkpoint, RoverClient, RoverError
-
+from .console_report import MissionConsoleReporter
 
 @dataclass
 class LoopStats:
@@ -156,6 +156,17 @@ class Bridge:
         self.commit_min_deg = float(nav.get("commit_min_deg", 8.0))
         self.commit_override_deg = float(nav.get("commit_override_deg", 30.0))
 
+        # Consola en tabla: una fila prolija por iteracion en vez de las 2+
+        # lineas sueltas que imprimia antes cada paso del loop, mas los
+        # cambios de estado / checkpoints / eventos raros en su propia linea
+        # bien marcada (ver genie_rover/console_report.py). mission.console_color
+        # en el config permite forzar sin color (por ejemplo grabando la
+        # salida con script/tee) incluso en una terminal interactiva.
+        mission_cfg = cfg.get("mission", {}) or {}
+        self._reporter = MissionConsoleReporter(
+            target_label="checkpoint",
+            enable_color=mission_cfg.get("console_color"))
+
     # ------------------------------------------------------------------ ciclo
 
     def request_stop(self, *_a) -> None:
@@ -166,12 +177,11 @@ class Bridge:
         """Envia el comando (o lo simula, en dry-run).
 
         quiet=True suprime la linea "[ENVIADO]/[DRY-RUN] ..." de siempre --
-        la usa IndoorBridge en su camino rutinario, donde MissionConsoleReporter
-        ya muestra la accion como parte de la fila de tabla (ver indoor_bridge.py
-        _step()), asi que imprimirla de nuevo aca duplicaba la misma info en dos
-        lineas por iteracion. Bridge (mision GPS) y los eventos raros de
-        IndoorBridge (_recover/_unstick, foto, mision cumplida, obstaculo) siguen
-        llamando con el default quiet=False, sin cambios.
+        MissionConsoleReporter ya muestra la accion como parte de la fila de
+        tabla (ver _step() mas abajo), asi que imprimirla de nuevo aca
+        duplicaba la misma info en dos lineas por iteracion. Los eventos
+        raros (_recover/_unstick, freno por error) siguen llamando con el
+        default quiet=False, para que queden bien visibles fuera de la tabla.
         """
         if not quiet:
             tag = "DRY-RUN" if self.dry_run else "ENVIADO"
@@ -269,11 +279,12 @@ class Bridge:
             if goal.distance_m < self.claim_radius_m:
                 ok, msg = self.client.claim_checkpoint()
                 if ok:
-                    print(f"[bridge] ✓ checkpoint #{target.sequence} conseguido: {msg}")
+                    self._reporter.checkpoint(target.sequence, msg)
                     self.refresh_checkpoints()
                 else:
-                    print(f"[bridge] cerca del checkpoint ({goal.distance_m:.1f} m) "
-                          f"pero rechazado: {msg}")
+                    self._reporter.event(
+                        "CERCA DEL CHECKPOINT",
+                        f"{goal.distance_m:.1f} m, rechazado: {msg}", "yellow")
             goal_desc = (f"cp#{target.sequence} a {goal.distance_m:.0f} m, "
                          f"rel {goal.relative_bearing_deg:+.0f} grados")
         else:
@@ -285,7 +296,8 @@ class Bridge:
         # Integrar en el mapa persistente y planificar sobre el acumulado.
         plan_bev, plan_obs = res.traversability, res.observed
         fwd, side = self.forward_range, self.side_range
-        nota_mapa = ""
+        pose = None
+        map_cells = None
         if self.use_map and self.odometry is not None and self.pmap is not None:
             pose = self.odometry.update(telem.raw)
             self.pmap.integrate(res.traversability, res.observed, pose,
@@ -294,20 +306,27 @@ class Bridge:
             plan_bev, plan_obs = self.pmap.extract_bev(
                 pose, self.plan_forward_m, self.plan_side_m, h, w)
             fwd, side = self.plan_forward_m, self.plan_side_m
-            st = self.pmap.stats()
-            nota_mapa = (f"  mapa: {st['celdas_vistas']} celdas  "
-                         f"pose=({pose.x:+.2f},{pose.y:+.2f},"
-                         f"{math.degrees(pose.theta):+.0f}gr)")
+            map_cells = self.pmap.stats()["celdas_vistas"]
 
-        print(f"[{self.stats.iterations:04d}] rumbo={heading if heading is None else round(heading)} "
-              f"({self.heading_est.source})  meta: {goal_desc}  "
-              f"celdas BEV={res.stats['bev_observed_cells']:.0f}{nota_mapa}")
+        # Estado de la mision derivado del contexto de esta iteracion (Bridge
+        # no tiene una FSM formal como ConeMissionFSM, pero igual conviene
+        # avisar en su propia linea cuando cambia de fase) -- se afina mas
+        # abajo segun el resultado del chequeo de obstaculo / del planner.
+        bridge_state = "SIN_META" if target is None else (
+            "CERCA_CHECKPOINT" if goal.distance_m < self.claim_radius_m * 1.5 else "NAVEGANDO")
+        self._reporter.state_change(bridge_state, goal_desc)
+
+        def _row(action: str, state: str = bridge_state) -> None:
+            self._reporter.row(iteration=self.stats.iterations, state=state,
+                               pose=pose, target_desc=goal_desc, map_cells=map_cells,
+                               trav=res.traversability, action=action)
 
         # El chequeo de colision usa SIEMPRE la observacion fresca: si algo se
         # cruzo recien, no queremos que el promedio del mapa lo diluya.
         if front_is_blocked(res.traversability, self.resolution):
             self.stats.blocked += 1
-            self.send(DriveCommand(0.0, 0.0, "OBSTACULO al frente"))
+            self.send(DriveCommand(0.0, 0.0, "OBSTACULO al frente"), quiet=True)
+            _row("frenado: obstaculo al frente", state="OBSTACULO")
             return
 
         plan = plan_on_bev(
@@ -324,9 +343,13 @@ class Bridge:
             self.stats.plans_empty += 1
             self._consecutive_empty += 1
             if self._consecutive_empty >= self.recovery_after_empty:
+                _row(f"RECUPERACION ({self._consecutive_empty} planes vacios seguidos)",
+                     state="RECUPERANDO")
                 self._recover()
             else:
-                self.send(DriveCommand(0.0, 0.0, "el planner no encontro camino"))
+                self.send(DriveCommand(0.0, 0.0, "el planner no encontro camino"), quiet=True)
+                _row(f"sin camino ({self._consecutive_empty}/{self.recovery_after_empty})",
+                     state="SIN_CAMINO")
             return
 
         self._consecutive_empty = 0
@@ -342,13 +365,16 @@ class Bridge:
             self._consecutive_turns += 1
             self._turn_sign_history.append(1.0 if cmd.angular > 0 else -1.0)
             if self._consecutive_turns >= self.max_consecutive_turns:
+                _row(f"DESATASCO ({self._consecutive_turns} giros seguidos)",
+                     state="DESATASCO")
                 self._unstick()
                 return
         else:
             self._consecutive_turns = 0
             self._turn_sign_history.clear()
 
-        self.send(cmd)
+        self.send(cmd, quiet=True)
+        _row(f"{cmd.linear:+.2f}m/s {cmd.angular:+.2f}rad/s  {cmd.reason}")
         self._maybe_dump_debug(rgb, res, plan)
 
     # --------------------------------------------------------- odometria ciega
@@ -391,9 +417,11 @@ class Bridge:
         self.stats.unstucks += 1
         giros = self._consecutive_turns
         sentido = sum(self._turn_sign_history)
-        print(f"[bridge] ATASCADO: {giros} giros seguidos sin avanzar "
-              f"(sentido dominante {'izq' if sentido > 0 else 'der'}). "
-              f"Fuerzo un avance de {self.unstick_forward_s:.1f} s.")
+        self._reporter.event(
+            "ATASCADO",
+            f"{giros} giros seguidos sin avanzar (sentido dominante "
+            f"{'izq' if sentido > 0 else 'der'}). Fuerzo un avance de "
+            f"{self.unstick_forward_s:.1f} s.", "magenta")
 
         self.send(DriveCommand(self.follower.max_linear, 0.0, "avance forzado"))
         t0 = time.time()
@@ -404,7 +432,7 @@ class Bridge:
                 rgb, _ = self.client.front_frame()
                 res = self.perception.process(rgb)
                 if front_is_blocked(res.traversability, self.resolution):
-                    print("[bridge] obstaculo durante el avance forzado, corto")
+                    self._reporter.event("DESATASCO", "obstaculo durante el avance forzado, corto")
                     break
             except Exception:
                 break
@@ -472,7 +500,7 @@ class Bridge:
         version sin VLM: gira a ciegas. Si te importa el puntaje del ERC, aca es
         donde conviene meter el modulo del paper.
         """
-        print("[bridge] RECUPERACION: girando para buscar terreno transitable")
+        self._reporter.event("RECUPERACION", "girando para buscar terreno transitable", "magenta")
         # Clampeado a max_angular: nada obligaba antes a que turn_speed fuera
         # <= max_angular, asi que un turn_speed mal configurado se saltaba el
         # tope de seguridad que si respeta PathFollower.command().
