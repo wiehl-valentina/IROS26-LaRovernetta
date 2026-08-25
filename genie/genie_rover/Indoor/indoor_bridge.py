@@ -58,6 +58,7 @@ from genie_path_planner.planner import plan_on_bev
 
 from ..bridge import Bridge, _check_placeholders
 from .cone_detector import ConeDetectorConfig, ConeDetectorPipeline, ground_point_from_bbox
+from .console_report import MissionConsoleReporter
 from .external_map import load_ros_occupancy_map
 from .mission import ConeMissionFSM, MissionConfig
 from .rtabmap_pose_bridge import RtabmapPoseBridge
@@ -106,6 +107,16 @@ class IndoorBridge(Bridge):
         if mission_cfg.take_photo:
             self.photo_dir.mkdir(parents=True, exist_ok=True)
         self.cone_photos_saved = 0
+
+        # Consola en tabla (ver console_report.py): reemplaza el par de lineas
+        # sueltas por iteracion ("estado=..." + "[ENVIADO]/[DRY-RUN]...") por
+        # una fila compacta, con los cambios de estado/checkpoint/eventos en su
+        # propia linea aparte para que no se pierdan en el medio de la tabla.
+        # mission.console_color: null/ausente = autodetectar (isatty), true/false
+        # = forzar. Se lee del dict crudo en vez de sumarlo a MissionConfig para
+        # no tocar mission.py por una opcion puramente de presentacion.
+        self._reporter = MissionConsoleReporter(
+            enable_color=(cfg.get("mission", {}) or {}).get("console_color"))
 
     # ------------------------------------------------------ mapa importado
 
@@ -281,22 +292,33 @@ class IndoorBridge(Bridge):
         self.mission_final_distance_m = (cone_ground.distance_m if cone_ground is not None
                                          else self.mission_final_distance_m)
 
-        cono_desc = (f"cono conf={cone.confidence:.2f}" if cone is not None else "sin cono")
-        print(f"[{self.stats.iterations:04d}] estado={mission_goal.state:<9} "
-              f"meta=(x_right={mission_goal.x_right_m:+.2f} "
-              f"y_forward={mission_goal.y_forward_m:+.2f})  {cono_desc}  "
-              f"pose=({pose.x:+.2f},{pose.y:+.2f},{math.degrees(pose.theta):+.0f}gr)  "
-              f"mapa: {st['celdas_vistas']} celdas  -- {mission_goal.reason}")
+        # Cambios de estado/checkpoint van a su propia linea, bien marcada --
+        # antes quedaban enterrados como una palabra mas en cada fila y era
+        # facil perderselos en una corrida larga. La tabla (self._reporter.row,
+        # mas abajo, uno por rama de salida) reemplaza la vieja linea
+        # "estado=... meta=... pose=..." de un print suelto por iteracion.
+        self._reporter.state_change(mission_goal.state, mission_goal.reason)
+        self._reporter.checkpoint(self.mission.checkpoints_done, mission_goal.reason)
+
+        cono_desc = (f"cono {cone.confidence:.2f}" if cone is not None else "sin cono")
+
+        def _row(action: str) -> None:
+            self._reporter.row(
+                iteration=self.stats.iterations, state=mission_goal.state, pose=pose,
+                cone_desc=cono_desc, map_cells=st["celdas_vistas"],
+                trav=res.traversability, action=action)
 
         if mission_goal.request_photo:
-            self.send(DriveCommand(0.0, 0.0, mission_goal.reason))
+            self.send(DriveCommand(0.0, 0.0, mission_goal.reason), quiet=True)
+            _row(f"foto: {mission_goal.reason}")
             self._save_cone_photo(rgb, cone)
             self.mission.mark_photo_taken()
             return
 
         if mission_goal.mission_done:
-            self.send(DriveCommand(0.0, 0.0, mission_goal.reason))
-            print("[indoor_bridge] mision cumplida, frenando y terminando la corrida")
+            self.send(DriveCommand(0.0, 0.0, mission_goal.reason), quiet=True)
+            _row(f"listo: {mission_goal.reason}")
+            self._reporter.event("MISION CUMPLIDA", "frenando y terminando la corrida", "green")
             self.request_stop()
             return
 
@@ -305,7 +327,8 @@ class IndoorBridge(Bridge):
         # diluya algo que se cruzo recien.
         if front_is_blocked(res.traversability, self.resolution):
             self.stats.blocked += 1
-            self.send(DriveCommand(0.0, 0.0, "OBSTACULO al frente"))
+            self.send(DriveCommand(0.0, 0.0, "OBSTACULO al frente"), quiet=True)
+            _row("frenado: obstaculo al frente")
             return
 
         plan = plan_on_bev(
@@ -322,9 +345,11 @@ class IndoorBridge(Bridge):
             self.stats.plans_empty += 1
             self._consecutive_empty += 1
             if self._consecutive_empty >= self.recovery_after_empty:
+                _row(f"RECUPERACION ({self._consecutive_empty} planes vacios seguidos)")
                 self._recover()
             else:
-                self.send(DriveCommand(0.0, 0.0, "el planner no encontro camino"))
+                self.send(DriveCommand(0.0, 0.0, "el planner no encontro camino"), quiet=True)
+                _row(f"sin camino ({self._consecutive_empty}/{self.recovery_after_empty})")
             return
 
         self._consecutive_empty = 0
@@ -340,13 +365,15 @@ class IndoorBridge(Bridge):
             self._consecutive_turns += 1
             self._turn_sign_history.append(1.0 if cmd.angular > 0 else -1.0)
             if self._consecutive_turns >= self.max_consecutive_turns:
+                _row(f"DESATASCO ({self._consecutive_turns} giros seguidos)")
                 self._unstick()
                 return
         else:
             self._consecutive_turns = 0
             self._turn_sign_history.clear()
 
-        self.send(cmd)
+        self.send(cmd, quiet=True)
+        _row(f"{cmd.linear:+.2f}m/s {cmd.angular:+.2f}rad/s  {cmd.reason}")
         self._maybe_dump_debug_indoor(rgb, res, plan, cone)
 
     # ------------------------------------------------------------------ ciclo

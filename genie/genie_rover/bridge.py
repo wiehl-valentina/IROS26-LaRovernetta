@@ -162,9 +162,20 @@ class Bridge:
         print("\n[bridge] parada solicitada, frenando ...")
         self._stop_requested = True
 
-    def send(self, cmd: DriveCommand) -> None:
-        tag = "DRY-RUN" if self.dry_run else "ENVIADO"
-        print(f"  [{tag}] linear={cmd.linear:+.2f} angular={cmd.angular:+.2f}  {cmd.reason}")
+    def send(self, cmd: DriveCommand, quiet: bool = False) -> None:
+        """Envia el comando (o lo simula, en dry-run).
+
+        quiet=True suprime la linea "[ENVIADO]/[DRY-RUN] ..." de siempre --
+        la usa IndoorBridge en su camino rutinario, donde MissionConsoleReporter
+        ya muestra la accion como parte de la fila de tabla (ver indoor_bridge.py
+        _step()), asi que imprimirla de nuevo aca duplicaba la misma info en dos
+        lineas por iteracion. Bridge (mision GPS) y los eventos raros de
+        IndoorBridge (_recover/_unstick, foto, mision cumplida, obstaculo) siguen
+        llamando con el default quiet=False, sin cambios.
+        """
+        if not quiet:
+            tag = "DRY-RUN" if self.dry_run else "ENVIADO"
+            print(f"  [{tag}] linear={cmd.linear:+.2f} angular={cmd.angular:+.2f}  {cmd.reason}")
         if not self.dry_run:
             self.client.control(cmd.linear, cmd.angular)
 
