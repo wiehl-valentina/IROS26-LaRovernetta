@@ -5,7 +5,7 @@ Usada por AMBAS misiones:
   - Bridge (mision GPS, "bridge padre" / outdoor): checkpoints por
     lat/lon, `python -m genie_rover.bridge`.
   - IndoorBridge / MapSessionBridge (mision de cono indoor, sin GPS):
-    `python -m genie_rover.indoor.indoor_bridge`.
+    `python -m genie_rover.Indoor.indoor_bridge`.
 
 Antes cada iteracion imprimia DOS lineas sueltas (el "estado=..." /
 "rumbo=..." de turno segun el bridge, y el "[ENVIADO]/[DRY-RUN]..." de

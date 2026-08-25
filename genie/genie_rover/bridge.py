@@ -129,6 +129,28 @@ class Bridge:
         self.recovery_turn_s = float(safety.get("recovery_turn_s", 1.5))
         self.loop_period_s = float(safety.get("loop_period_s", 0.0))
 
+        # --- recuperacion informada (antes: config declarada y nunca leida) ---
+        # frodobot_rover.yaml ya traia use_vlm_recovery / vlm_recovery_* /
+        # recovery_headings_deg / recovery_min_cobertura_pct, pero _recover()
+        # no los miraba: giraba siempre el mismo tiempo hacia el mismo lado.
+        # Ahora _recover() elige el rumbo con la memoria espacial y, si esta
+        # habilitado y hay credenciales, lo contrasta con el VLM.
+        self.use_vlm_recovery = bool(safety.get("use_vlm_recovery", False))
+        self.vlm_recovery_timeout_s = float(safety.get("vlm_recovery_timeout_s", 4.0))
+        self.vlm_recovery_min_confidence = float(
+            safety.get("vlm_recovery_min_confidence", 0.35))
+        # Rumbos candidatos, en grados relativos al rumbo actual. 0 = adelante
+        # (por si el bloqueo ya se disolvio), 180 = atras. Se evaluan contra el
+        # PersistentMap; si no hay memoria, queda el barrido de siempre.
+        self.recovery_headings_deg = [
+            float(v) for v in safety.get("recovery_headings_deg", [0.0, 90.0, -90.0, 180.0])
+        ] or [90.0]
+        # Cobertura minima (%) que tiene que tener un rumbo en la memoria para
+        # que su puntaje se tome en serio. Por debajo, "no se sabe" != "libre".
+        self.recovery_min_cobertura_pct = float(
+            safety.get("recovery_min_cobertura_pct", 25.0))
+        self._vlm_recovery_failed = False   # avisar una sola vez si no se puede usar
+
         self.stats = LoopStats()
         self._stop_requested = False
         self._checkpoints: list[Checkpoint] = []
@@ -345,7 +367,7 @@ class Bridge:
             if self._consecutive_empty >= self.recovery_after_empty:
                 _row(f"RECUPERACION ({self._consecutive_empty} planes vacios seguidos)",
                      state="RECUPERANDO")
-                self._recover()
+                self._recover(rgb)
             else:
                 self.send(DriveCommand(0.0, 0.0, "el planner no encontro camino"), quiet=True)
                 _row(f"sin camino ({self._consecutive_empty}/{self.recovery_after_empty})",
@@ -493,14 +515,189 @@ class Bridge:
         return DriveCommand(cmd.linear, 0.0,
                             f"mantengo el rumbo (evito titubeo, {error_deg:+.0f} grados)")
 
-    def _recover(self) -> None:
-        """Recuperacion minima: girar en el lugar para buscar salida.
+    # ------------------------------------------------- recuperacion informada
 
-        GeNIE usa un VLM para esto (mirar en 4 direcciones y elegir). Esta es la
-        version sin VLM: gira a ciegas. Si te importa el puntaje del ERC, aca es
-        donde conviene meter el modulo del paper.
+    def _score_heading_from_memory(self, heading_rad: float) -> tuple[float, float]:
+        """(fraccion_libre, cobertura) de la ventana de memoria en ese rumbo.
+
+        Mira el PersistentMap como si el robot ya estuviera girado hacia
+        `heading_rad` y pregunta cuanto de lo que hay adelante esta visto y es
+        transitable. Devuelve (0.0, 0.0) si no hay memoria disponible.
         """
-        self._reporter.event("RECUPERACION", "girando para buscar terreno transitable", "magenta")
+        if self.pmap is None or self.odometry is None:
+            return 0.0, 0.0
+        here = self.odometry.pose
+        probe = Pose(here.x, here.y, heading_rad)
+        try:
+            bev, observed = self.pmap.extract_bev(
+                probe,
+                forward_range_m=self.plan_forward_m,
+                side_range_m=self.plan_side_m,
+                out_h=64, out_w=64,
+            )
+        except Exception:
+            return 0.0, 0.0
+        vistas = observed.astype(bool)
+        cobertura = float(vistas.mean())
+        if not vistas.any():
+            return 0.0, 0.0
+        libre = float((bev[vistas] > 0.5).mean())
+        return libre, cobertura
+
+    def _pick_recovery_heading(self, rgb=None) -> tuple[float | None, str]:
+        """Elige cuantos grados girar (relativos al rumbo actual) y por que.
+
+        Orden de preferencia:
+          1. memoria espacial (PersistentMap): el rumbo con mas terreno visto
+             y transitable, entre self.recovery_headings_deg;
+          2. el VLM (si use_vlm_recovery y hay un frame), que puede pisar a la
+             memoria cuando la memoria no vio casi nada;
+          3. barrido ciego de siempre (el lado que ya usaba PathFollower).
+
+        Devuelve (None, motivo) para pedir el barrido ciego.
+
+        Sesgo deliberado contra "adelante" (~0 grados): a _recover() se llega
+        JUSTAMENTE porque el planner no encontro camino varias veces seguidas
+        con el rumbo actual, y ese planner ya planifica sobre el mapa. Asi que
+        "la memoria dice que adelante esta libre" no es informacion nueva:
+        elegirlo seria no hacer nada y volver a entrar en recuperacion en la
+        proxima iteracion. Solo gana si es CLARAMENTE mejor que la mejor
+        alternativa, y aun asi se resuelve con un barrido en vez de con un
+        no-op.
+        """
+        MARGEN_ADELANTE = 0.15   # cuanto mejor tiene que ser "adelante" para ganar
+
+        mejor_giro, mejor_giro_libre, mejor_giro_cob = None, -1.0, 0.0
+        mejor_recto_libre = -1.0
+        theta = self.odometry.pose.theta if self.odometry is not None else 0.0
+
+        for deg in self.recovery_headings_deg:
+            libre, cob = self._score_heading_from_memory(theta + math.radians(deg))
+            if cob * 100.0 < self.recovery_min_cobertura_pct:
+                continue    # "no se sabe" no es "libre"
+            if abs(deg) < 15.0:
+                mejor_recto_libre = max(mejor_recto_libre, libre)
+                continue
+            if libre > mejor_giro_libre:
+                mejor_giro, mejor_giro_libre, mejor_giro_cob = deg, libre, cob
+
+        memoria_util = mejor_giro is not None and mejor_giro_libre > 0.5
+
+        vlm_deg = None
+        if self.use_vlm_recovery and rgb is not None and not self._vlm_recovery_failed:
+            vlm_deg = self._ask_vlm_heading(rgb)
+
+        if memoria_util and mejor_recto_libre > mejor_giro_libre + MARGEN_ADELANTE:
+            # Raro: el mapa insiste en que adelante esta mucho mejor que
+            # cualquier giro. No nos quedamos quietos (eso vuelve a fallar):
+            # barrido ciego corto y que el planner reintente con datos frescos.
+            return None, (f"la memoria prefiere seguir derecho "
+                          f"({mejor_recto_libre * 100:.0f}% libre), hago un barrido corto")
+
+        if memoria_util:
+            extra = "" if vlm_deg is None else f", VLM sugeria {vlm_deg:+.0f}"
+            return (mejor_giro,
+                    f"memoria: {mejor_giro:+.0f} grados, {mejor_giro_libre * 100:.0f}% libre "
+                    f"({mejor_giro_cob * 100:.0f}% visto{extra})")
+
+        if vlm_deg is not None and abs(vlm_deg) >= 15.0:
+            return vlm_deg, f"VLM sugiere {vlm_deg:+.0f} grados (memoria sin cobertura util)"
+        if vlm_deg is not None:
+            return None, "el VLM dice que adelante esta bien; barrido corto igual"
+
+        return None, "barrido ciego (sin memoria ni VLM utiles)"
+
+    def _ask_vlm_heading(self, rgb) -> float | None:
+        """Grados relativos sugeridos por el VLM, o None. Nunca levanta."""
+        try:
+            from .vlm_recovery import ask_recovery_heading
+        except Exception as exc:
+            self._vlm_recovery_failed = True
+            self._reporter.event(
+                "RECUPERACION",
+                f"use_vlm_recovery esta en true pero no pude importar vlm_recovery "
+                f"({exc}); sigo sin VLM el resto de la corrida", "amarillo")
+            return None
+        try:
+            decision = ask_recovery_heading(
+                rgb,
+                min_confidence=self.vlm_recovery_min_confidence,
+                timeout_s=self.vlm_recovery_timeout_s,
+            )
+        except Exception as exc:   # ask_recovery_heading ya no deberia levantar
+            self._reporter.event("RECUPERACION", f"VLM fallo ({exc}), sigo sin el", "amarillo")
+            return None
+        if decision is None:
+            return None
+        grados = {
+            "adelante": 0.0, "forward": 0.0,
+            "izquierda": 90.0, "left": 90.0,
+            "derecha": -90.0, "right": -90.0,
+            "atras": 180.0, "back": 180.0, "backward": 180.0,
+        }.get(str(decision.heading).lower())
+        if grados is None:
+            return None
+        self._reporter.event(
+            "RECUPERACION",
+            f"VLM: {decision.heading} (conf {decision.confidence:.2f}) — {decision.reason}",
+            "magenta")
+        return grados
+
+    def _turn_towards(self, delta_deg: float) -> None:
+        """Gira en el lugar `delta_deg` grados usando la odometria como
+        realimentacion, con el tiempo de barrido como tope duro.
+
+        Sin odometria cae al giro por tiempo de siempre.
+        """
+        ang = float(np.clip(self.follower.angular_sign * self.follower.turn_speed,
+                            -self.follower.max_angular, self.follower.max_angular))
+        if delta_deg < 0:
+            ang = -ang
+
+        objetivo = abs(math.radians(delta_deg))
+        theta0 = self.odometry.pose.theta if self.odometry else None
+        # Tope de tiempo generoso pero acotado: un giro de 180 grados no puede
+        # durar lo mismo que uno de 90, pero tampoco puede durar para siempre
+        # si la odometria no avanza (rueda patinando, telemetria caida).
+        tope_s = self.recovery_turn_s * max(1.0, abs(delta_deg) / 90.0) * 2.0
+
+        self.send(DriveCommand(0.0, ang, "barrido de recuperacion"))
+        t0 = time.time()
+        while time.time() - t0 < tope_s and not self._stop_requested:
+            time.sleep(0.15)
+            self._track_pose_during_maneuver()
+            if theta0 is not None and self.odometry is not None:
+                girado = abs(math.atan2(math.sin(self.odometry.pose.theta - theta0),
+                                        math.cos(self.odometry.pose.theta - theta0)))
+                if girado >= objetivo:
+                    break
+        self.send(DriveCommand(0.0, 0.0, "fin del barrido"))
+        self._track_pose_during_maneuver()
+
+    def _recover(self, rgb=None) -> None:
+        """Recuperacion: girar en el lugar hacia el rumbo con mejor pinta.
+
+        Antes giraba a ciegas siempre el mismo tiempo y hacia el mismo lado,
+        ignorando `use_vlm_recovery` / `recovery_headings_deg` / 
+        `recovery_min_cobertura_pct` — que ya estaban en el config. Ahora:
+        consulta la memoria espacial, opcionalmente el VLM, y gira lo que haga
+        falta con realimentacion de odometria. Si no hay ni memoria ni VLM el
+        comportamiento es exactamente el de antes.
+        """
+        delta_deg, motivo = self._pick_recovery_heading(rgb)
+        self._reporter.event("RECUPERACION", f"girando para buscar salida — {motivo}", "magenta")
+
+        if delta_deg is None:
+            self._recover_blind()
+        else:
+            self._turn_towards(delta_deg)
+
+        self.heading_est.reset_track()  # el track GPS previo ya no dice el rumbo
+        self._consecutive_empty = 0
+
+    def _recover_blind(self) -> None:
+        """El barrido de siempre: girar un tiempo fijo hacia el lado del follower."""
+        # (el evento ya lo emitio _recover)
         # Clampeado a max_angular: nada obligaba antes a que turn_speed fuera
         # <= max_angular, asi que un turn_speed mal configurado se saltaba el
         # tope de seguridad que si respeta PathFollower.command().
@@ -519,8 +716,6 @@ class Bridge:
 
         self.send(DriveCommand(0.0, 0.0, "fin del barrido"))
         self._track_pose_during_maneuver()
-        self.heading_est.reset_track()  # el track GPS previo ya no dice el rumbo
-        self._consecutive_empty = 0
 
     def _maybe_dump_debug(self, rgb, res, plan) -> None:
         if not self.debug_dir:

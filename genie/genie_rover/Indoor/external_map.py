@@ -52,7 +52,7 @@ sola en vez de quedar pegada para siempre.
 
 Autoprueba (arma un mapa ROS sintetico en un directorio temporal, no
 necesita ningun archivo real ni robot):
-    python -m genie_rover.indoor.external_map
+    python -m genie_rover.Indoor.external_map
 """
 
 from __future__ import annotations

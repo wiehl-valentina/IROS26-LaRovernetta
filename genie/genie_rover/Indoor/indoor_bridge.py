@@ -36,10 +36,10 @@ sabe hacer porque no conoce ese atributo.
 Uso (mismo patron que bridge.py: dry-run por defecto, --go para moverse):
 
     # simulacro
-    python -m genie_rover.indoor.indoor_bridge --config configs/indoor_cone_search.yaml
+    python -m genie_rover.Indoor.indoor_bridge --config configs/indoor_cone_search.yaml
 
     # de verdad
-    python -m genie_rover.indoor.indoor_bridge --config configs/indoor_cone_search.yaml \
+    python -m genie_rover.Indoor.indoor_bridge --config configs/indoor_cone_search.yaml \
         --go --max-seconds 180 --debug-dir debug/indoor_run1
 """
 
@@ -347,7 +347,7 @@ class IndoorBridge(Bridge):
             self._consecutive_empty += 1
             if self._consecutive_empty >= self.recovery_after_empty:
                 _row(f"RECUPERACION ({self._consecutive_empty} planes vacios seguidos)")
-                self._recover()
+                self._recover(rgb)
             else:
                 self.send(DriveCommand(0.0, 0.0, "el planner no encontro camino"), quiet=True)
                 _row(f"sin camino ({self._consecutive_empty}/{self.recovery_after_empty})")

@@ -121,6 +121,9 @@ safety:
   loop_period_s: 0.2
   max_consecutive_turns: 4
   unstick_forward_s: 2.5
+  # Confirmacion con VLM del rumbo de recuperacion. Requiere GEMINI_API_KEY.
+  # Si falla / timeout / poca confianza, _recover() cae a la memoria espacial
+  # y despues al barrido ciego: nunca bloquea el bucle de control.
   use_vlm_recovery: true
   vlm_recovery_timeout_s: 4.0
   vlm_recovery_min_confidence: 0.35
@@ -139,11 +142,23 @@ safety:
   # tools/ equivalente a check_angular_sign.py para esto) — confirmalo a
   # mano la primera vez, con espacio de sobra detras del robot.
   retroceso_linear: -0.18
+  # AVISO: obstacle_persist_frames y retroceso_* siguen SIN implementarse en
+  # bridge.py (a diferencia de use_vlm_recovery / recovery_headings_deg /
+  # recovery_min_cobertura_pct, que desde esta version si se leen). Manejar en
+  # reversa sin ningun sensor trasero se dejo deliberadamente afuera: la unica
+  # evidencia de que atras hay lugar seria la memoria, y la memoria de atras
+  # es siempre la mas vieja y la mas deteriorada por decay_per_s.
 
   # Recuperacion informada por memoria: rumbos candidatos (grados relativos
-  # al actual) que _recover() evalua con el mapa antes de girar. 0=adelante
-  # (por si el bloqueo ya se disolvio), 180=atras.
-  recovery_headings_deg: [0.0, 90.0, -90.0, 180.0]
+  # al actual) que _recover() evalua con el mapa antes de girar. 180 = atras,
+  # positivo = izquierda.
+  #
+  # 0.0 (adelante) se saco de la lista a proposito: a _recover() se llega
+  # porque el planner —que YA planifica sobre este mismo mapa— no encontro
+  # camino varias veces seguidas con el rumbo actual. Elegir "adelante" seria
+  # no hacer nada y volver a entrar en recuperacion en la iteracion siguiente.
+  # bridge.py lo filtra igual aunque este en la lista.
+  recovery_headings_deg: [90.0, -90.0, 180.0]
   recovery_min_cobertura_pct: 25.0
 
 

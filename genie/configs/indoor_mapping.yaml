@@ -88,7 +88,7 @@ mapping:
 
   rtabmap_correction:
     # true: reemplaza la pose de dead-reckoning por la corregida via TF
-    # map->base_link que publica examples/ros2/mapping/rtabmap_mapping.launch.py
+    # map->base_link que publica Indoor_Instalacion_SDK_SLAM/ros2/mapping/rtabmap_mapping.launch.py (o examples/ros2/... dentro del SDK)
     # (tiene que estar corriendo en paralelo). false: usa solo rueda+giro+GPS,
     # como indoor_bridge.py normal -- podes correr map_session.py sin ROS2
     # para nada si dejas esto en false.

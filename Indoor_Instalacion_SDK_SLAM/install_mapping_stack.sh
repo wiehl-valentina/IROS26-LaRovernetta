@@ -150,11 +150,28 @@ python3 -c "import cv2, requests, websocket, yaml, PIL, numpy; print('deps pytho
     || warn "faltan deps python del bridge"
 
 echo
+# ------------------------------------------- 8. stack ROS2 dentro del SDK
+# Antes esto se pedia "a mano" en los pasos finales y era la fuente numero uno
+# de "me falta rtabmap_mapping.launch.py". El launcher lo hace solo.
+if [[ -x "$REPO_PATH/rover_launch.sh" ]]; then
+    log "8/8 Copiando el stack ROS2 del repo dentro del SDK"
+    "$REPO_PATH/rover_launch.sh" sync-ros2 || warn "sync-ros2 no termino bien, revisalo a mano"
+else
+    warn "No encontre $REPO_PATH/rover_launch.sh: copia el stack ROS2 a mano"
+    warn "  cp -r $REPO_PATH/Indoor_Instalacion_SDK_SLAM/ros2/* $REPO_PATH/earth-rovers-sdk/examples/ros2/"
+fi
+
 log "Listo. Pasos siguientes:"
 echo "  1) Abri una terminal nueva (o: source ~/.bashrc) para que quede el PATH de ROS2."
-echo "  2) Copia/confirma que los archivos nuevos esten en:"
-echo "       $REPO_PATH/earth-rovers-sdk/examples/ros2/{earth_rover_bridge.py,differential_odometry.py,mapping/}"
-echo "       $REPO_PATH/genie/genie_rover/Indoor/{map_session.py,rtabmap_pose_bridge.py}"
-echo "       $REPO_PATH/genie/configs/indoor_mapping.yaml"
-echo "  3) Aplica el parche de persistent_map_export_addon.py a persistent_map.py (si no lo hiciste)."
-echo "  4) Segui la guia de $REPO_PATH/earth-rovers-sdk/examples/ros2/mapping/README.md"
+echo "  2) Chequeo general (rutas resueltas, venvs, ROS2, rtabmap, checkpoint):"
+echo "       cd $REPO_PATH && ./rover_launch.sh doctor"
+echo "  3) Sesion de mapeo (deriva intrinsecos/odometria del yaml de genie):"
+echo "       ./rover_launch.sh sdk                                  # terminal 1"
+echo "       ./rover_launch.sh mapping-ros2 --db ~/maps/sesion1.db  # terminal 2"
+echo "       ./rover_launch.sh map-session --go --map-out maps/sesion1  # terminal 3"
+echo "     ...o todo junto:  ./rover_launch.sh all-indoor"
+echo "  4) Guia detallada: $REPO_PATH/Indoor_Instalacion_SDK_SLAM/2_Funcionamiento_Mapeo.md"
+echo
+echo "  NOTA: el parche de persistent_map_export_addon.py YA esta aplicado en"
+echo "        genie/genie_rover/persistent_map.py (metodo export_ros_map). Ese"
+echo "        archivo queda solo como referencia historica."

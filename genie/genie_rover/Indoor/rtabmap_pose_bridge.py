@@ -11,7 +11,8 @@ cuadro a cuadro, por la que resulta de componer:
 `map -> base_link` directamente devuelve el resultado ya compuesto.
 
 Requiere que, EN PARALELO, este corriendo la sesion ROS2 de mapeo
-(`examples/ros2/mapping/rtabmap_mapping.launch.py`), que es quien publica
+(`Indoor_Instalacion_SDK_SLAM/ros2/mapping/rtabmap_mapping.launch.py`
+(instalado como `earth-rovers-sdk/examples/ros2/mapping/`; ver `./rover_launch.sh sync-ros2`)), que es quien publica
 esas TF. Si no esta corriendo (o rclpy/tf2_ros no estan instalados en este
 entorno), este modulo lo dice explicitamente al construirse -- quien lo usa
 (`map_session.py`) atrapa esa excepcion y sigue con dead-reckoning solo,

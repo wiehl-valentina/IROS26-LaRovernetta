@@ -100,10 +100,16 @@ base de datos automáticamente:
 rtabmap: Saving database/long-term memory...done! (located at /home/<user>/.ros/rtabmap_mapping.db, NN MB)
 ```
 
-⚠️ **Ojo**: el `--db ~/maps/sesion1.db` que le pasás al launcher puede no
-respetarse (bug conocido de este flujo) — el archivo real puede terminar en
-`~/.ros/rtabmap_mapping.db` en vez de donde le pediste. Después de cortar,
-siempre confirmá dónde quedó:
+✅ **Corregido**: antes, si la carpeta de `--db` no existía o el path traía
+`~` sin expandir, RTAB-Map caía en silencio a `~/.ros/rtabmap_mapping.db` y la
+sesión "se perdía". Ahora `rtabmap_mapping.launch.py` expande el path y crea
+la carpeta padre antes de arrancar, e imprime a dónde va a escribir:
+
+```
+[rtabmap_mapping.launch.py] database_path -> /home/vos/maps/sesion1.db (se borra al arrancar)
+```
+
+Si igual querés confirmarlo
 
 ```bash
 ls -la ~/.ros/*.db ~/maps/*.db 2>/dev/null

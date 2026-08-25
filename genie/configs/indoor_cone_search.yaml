@@ -214,12 +214,12 @@ planner:
 # ============================================================================
 # SAFETY: parametros del bucle principal y de las salvaguardas (frenado por
 # video congelado, recuperacion ante planes vacios, anti-loop de giro).
-# Nota: este bloque NO incluye use_vlm_recovery / vlm_recovery_* / retroceso_*
-# / recovery_headings_deg / obstacle_persist_frames que si aparecen en
-# frodobot_rover.yaml — revisando bridge.py, esos campos hoy no se leen en
-# ningun lado del codigo (son config para un recovery mas sofisticado con
-# VLM, documentado como pendiente: "aca es donde conviene meter el modulo
-# del paper"), asi que no faltan funcionalmente ni aca ni alla.
+# ACTUALIZADO: bridge.py ahora SI lee use_vlm_recovery / vlm_recovery_* /
+# recovery_headings_deg / recovery_min_cobertura_pct (ver Bridge._recover()).
+# Antes eran config muerta. Los que siguen SIN leerse son los de retroceso
+# (retroceso_*, obstacle_persist_frames): esa maniobra implica manejar en
+# reversa sin ningun sensor trasero, asi que queda deliberadamente sin
+# implementar — no los agregamos aca para no dar a entender que hacen algo.
 # ============================================================================
 safety:
   stale_frame_s: 2.0
@@ -249,6 +249,29 @@ safety:
 
   unstick_forward_s: 1.5
   # cuanto avanza derecho _unstick() al desatascar (afuera: 2.5 s).
+
+  # --- recuperacion informada (Bridge._recover) -----------------------------
+  # Rumbos candidatos, en GRADOS relativos al rumbo actual, que _recover()
+  # evalua contra el PersistentMap antes de girar: elige el que tenga mas
+  # terreno visto Y transitable. 0 = adelante, 180 = atras, positivo =
+  # izquierda (misma convencion que la odometria).
+  #
+  # OJO adentro: 180 significa girar en el lugar media vuelta. En un pasillo
+  # angosto eso es seguro (gira sobre su eje), pero si tenes gente cerca
+  # conviene sacarlo de la lista y dejar solo +-90.
+  recovery_headings_deg: [90.0, -90.0, 180.0]
+
+  # Cobertura minima (%) de la ventana de memoria en ese rumbo para que su
+  # puntaje cuente. Por debajo, "no lo vi nunca" NO se toma como "esta libre".
+  recovery_min_cobertura_pct: 25.0
+
+  # Confirmacion con VLM (Gemini) del rumbo de recuperacion. Requiere
+  # GEMINI_API_KEY; si falla, da timeout o reporta poca confianza, _recover()
+  # cae solo a la memoria y despues al barrido ciego — nunca se cuelga.
+  # Adentro suele aportar poco (paredes lisas, poca textura): por eso false.
+  use_vlm_recovery: false
+  vlm_recovery_timeout_s: 4.0
+  vlm_recovery_min_confidence: 0.35
 
 
 # ============================================================================

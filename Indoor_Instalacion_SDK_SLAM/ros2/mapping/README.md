@@ -18,9 +18,9 @@ que la odometría cruda.
 
 ## 1. Aplicar el parche a `persistent_map.py`
 
-Una sola vez: seguí las instrucciones en
-`genie/genie_rover/persistent_map_export_addon.py` para agregar el método
-`export_ros_map()` a la clase `PersistentMap`.
+**Ya está hecho**: `PersistentMap.export_ros_map()` está en
+`genie/genie_rover/persistent_map.py`. `persistent_map_export_addon.py` quedó
+sólo como referencia histórica — no hay que volver a pegar nada.
 
 ## 2. (Opcional) Calibrar/confirmar odometría y cámara
 
@@ -36,15 +36,46 @@ Una sola vez: seguí las instrucciones en
 
 ## 3. Levantar la sesión ROS2 (RTAB-Map + bridge)
 
+**Forma recomendada** — un solo comando que saca TODOS los números del mismo
+yaml de genie que va a usar `map_session.py`, así los dos lados no divergen:
+
 ```bash
-# SDK corriendo aparte (hypercorn main:app)
-ros2 launch rtabmap_mapping.launch.py \
-    sdk_url:=http://localhost:8000 \
-    wheel_radius_m:=0.0527 track_width_m:=0.15 \
-    camera_width:=1280 camera_height:=720 \
-    camera_fx:=900.0 camera_fy:=900.0 camera_cx:=640.0 camera_cy:=360.0 \
-    database_path:=$HOME/maps/sesion1.db
+# SDK corriendo aparte:  ./rover_launch.sh sdk
+./rover_launch.sh mapping-ros2 --db ~/maps/sesion1.db \
+    --config genie/configs/indoor_mapping.yaml
 ```
+
+Deriva y pasa: intrínsecos (`fx/fy/cx/cy`, tamaño), **coeficientes de
+distorsión**, radio de rueda, ancho de trocha, signo de rotación, índices de
+rpm, uso de giróscopo, corrección GPS y los extrínsecos de cámara
+(altura/pitch/offset, calculados de la matriz `camera.pose` 4x4 si está).
+Para ver qué va a mandar, sin lanzar nada:
+
+```bash
+python3 Indoor_Instalacion_SDK_SLAM/ros2/config_to_ros_params.py \
+    --style pretty genie/configs/indoor_mapping.yaml
+```
+
+**Forma manual** (equivalente, si preferís `ros2 launch` a mano):
+
+```bash
+cd Indoor_Instalacion_SDK_SLAM/ros2/mapping
+ros2 launch rtabmap_mapping.launch.py \
+    database_path:=~/maps/sesion1.db \
+    $(python3 ../config_to_ros_params.py ../../../genie/configs/indoor_mapping.yaml)
+```
+
+Argumentos útiles del launch:
+
+| Argumento | Default | Para qué |
+|---|---|---|
+| `database_path` | `~/maps/rtabmap_mapping.db` | se expande `~` y se crea la carpeta padre antes de arrancar |
+| `delete_db_on_start` | `true` | ponelo en `false` para **continuar** una base existente en vez de borrarla |
+| `camera_d` | distorsión del Mini | `[k1,k2,p1,p2,k3]`; `[]` = lente perfecta |
+| `feed_fps` | `15` | FPS que le pide al `/feed` del SDK |
+
+El launch imprime al arrancar a qué archivo va a escribir, así que si el `.db`
+no aparece donde esperabas te enterás en el momento y no al final.
 
 Dejalo corriendo. Vas a ver en el log de `rtabmap` cuántos *loop closures*
 va encontrando a medida que el rover recorre el lugar dos veces por el mismo

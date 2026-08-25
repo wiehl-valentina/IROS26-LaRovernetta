@@ -12,7 +12,8 @@ Opcionalmente (`mapping.rtabmap_correction.enabled: true` en el config),
 reemplaza la pose de dead-reckoning (rueda+giro+GPS) por la pose corregida
 que publica RTAB-Map (TF `map -> base_link`, cierre de bucles visual) --
 para eso tiene que estar corriendo, EN PARALELO, la sesion ROS2 de
-`examples/ros2/mapping/rtabmap_mapping.launch.py`. Si no esta corriendo, o
+`Indoor_Instalacion_SDK_SLAM/ros2/mapping/rtabmap_mapping.launch.py`
+(instalado como `earth-rovers-sdk/examples/ros2/mapping/`; ver `./rover_launch.sh sync-ros2`). Si no esta corriendo, o
 si rclpy/ROS2 no estan disponibles en este entorno, cae automaticamente a
 usar solo rueda+giro (el comportamiento de siempre) e imprime un aviso una
 sola vez -- nunca falla en silencio ni se cuelga esperando ROS2.
@@ -34,11 +35,11 @@ mision de IndoorBridge, solo agrega el export periodico a formato ROS.
 Uso (mismo patron que bridge.py/indoor_bridge.py: dry-run por defecto):
 
     # simulacro, no mueve al robot
-    python -m genie_rover.Indoor.Indoor.map_session --config configs/indoor_mapping.yaml
+    python -m genie_rover.Indoor.map_session --config configs/indoor_mapping.yaml
 
     # de verdad, con correccion de RTAB-Map (rtabmap_mapping.launch.py ya
     # corriendo en otra terminal)
-    python -m genie_rover.Indoor.Indoor.map_session --config configs/indoor_mapping.yaml \\
+    python -m genie_rover.Indoor.map_session --config configs/indoor_mapping.yaml \\
         --go --max-seconds 300 --map-out maps/sesion1
 
 Al terminar (tiempo agotado, Ctrl+C, o error) SIEMPRE intenta un export
