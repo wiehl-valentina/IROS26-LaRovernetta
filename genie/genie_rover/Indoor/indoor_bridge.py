@@ -19,7 +19,7 @@ nada de esto):
     plan_on_bev(...)                        (genie_path_planner.planner)
     front_is_blocked(...)                   (navigation.py)
     self._recover() / self._unstick() / self._apply_commit()  (bridge.py)
-    self.send() / self.request_stop() / self.run() / self._maybe_dump_debug()
+    self.send() / self.request_stop() / self._maybe_dump_debug()
 
 Lo unico que NO se reutiliza de Bridge es _step(): el `_step` original arma
 la meta local a partir de un checkpoint GPS (goal_from_gps/HeadingEstimator).
@@ -27,9 +27,11 @@ Ese es justamente el pedazo que no tiene sentido offline/indoor, asi que
 IndoorBridge._step() lo reemplaza por completo (percepcion, mapa, chequeo de
 obstaculo y seguimiento de camino siguen siendo las mismas llamadas que
 Bridge._step, solo cambia DE DONDE sale la meta: ahora de
-genie_rover.mission.ConeMissionFSM en vez de un checkpoint GPS). No se tocó
-bridge.py para no arriesgar el comportamiento ya validado en el robot real
-para el modo ERC/outdoor.
+genie_rover.mission.ConeMissionFSM en vez de un checkpoint GPS).
+
+run() SI tiene un override chico (ver mas abajo): necesita cerrar el
+hilo/nodo ROS2 de RtabmapPoseBridge al terminar, algo que Bridge.run() no
+sabe hacer porque no conoce ese atributo.
 
 Uso (mismo patron que bridge.py: dry-run por defecto, --go para moverse):
 
@@ -58,12 +60,23 @@ from ..bridge import Bridge, _check_placeholders
 from .cone_detector import ConeDetectorConfig, ConeDetectorPipeline, ground_point_from_bbox
 from .external_map import load_ros_occupancy_map
 from .mission import ConeMissionFSM, MissionConfig
+from .rtabmap_pose_bridge import RtabmapPoseBridge
 from ..navigation import DriveCommand, front_is_blocked
 from ..odometry import Pose
 from ..sdk_client import RoverError
 
 
 class IndoorBridge(Bridge):
+    # La mision de cono no usa checkpoints GPS en absoluto -- pisa el default
+    # de Bridge (True) para que Bridge.run() no los lea ni los anuncie.
+    uses_gps_checkpoints = False
+
+    # Atributo de CLASE (no solo de instancia): asi un IndoorBridge armado
+    # con __new__(IndoorBridge) saltando __init__ (como hace
+    # test_indoor_mission_offline.py) sigue teniendo self._rtab is None en
+    # vez de romper con AttributeError.
+    _rtab = None
+
     def __init__(self, cfg: dict, dry_run: bool = True, debug_dir: str | None = None):
         super().__init__(cfg, dry_run=dry_run, debug_dir=debug_dir)
 
@@ -75,6 +88,7 @@ class IndoorBridge(Bridge):
             )
 
         self._maybe_load_external_map(cfg.get("memory", {}))
+        self._maybe_enable_rtabmap_correction(cfg)
 
         cone_cfg = ConeDetectorConfig.from_dict(cfg.get("cone", {}))
         self.cone_detector = ConeDetectorPipeline(cone_cfg)
@@ -104,6 +118,12 @@ class IndoorBridge(Bridge):
         (comportamiento de siempre); CON esto, el mapa arranca poblado pero
         SOLO queda bien alineado con la realidad si `start_pose_map` refleja
         de verdad donde esta parado el robot en el instante de arrancar.
+
+        Esto es el "caso A" (pose de arranque CONOCIDA). Para el "caso B"
+        (no se sabe donde arranca el robot dentro del mapa grabado), usar en
+        cambio mapping.rtabmap_correction (ver _maybe_enable_rtabmap_correction)
+        — son dos estrategias alternativas, no hace falta ni tiene sentido
+        activar las dos juntas.
         """
         ext = (mem_cfg or {}).get("external_map", {}) or {}
         if not ext.get("enabled", False):
@@ -133,6 +153,47 @@ class IndoorBridge(Bridge):
               f"({self.odometry.pose.x:+.2f}, {self.odometry.pose.y:+.2f}) mirando a "
               f"{math.degrees(self.odometry.pose.theta):+.0f} grados de ESE mapa. "
               "Si no es asi, el mapa va a quedar desalineado con lo que ve la camara.")
+
+    # ------------------------------------------------------ correccion RTAB-Map
+
+    def _maybe_enable_rtabmap_correction(self, cfg: dict) -> None:
+        """Arma RtabmapPoseBridge si `mapping.rtabmap_correction.enabled: true`.
+
+        BUG que esto arregla: esta logica existia antes SOLO en
+        MapSessionBridge (la sesion de grabar el mapa, `map-session`), nunca
+        en IndoorBridge (la mision real de conos, `indoor-bridge`). Poner
+        `mapping.rtabmap_correction.enabled: true` en el config no tenia
+        ningun efecto en la mision real: seguia navegando 100% a ciegas por
+        dead-reckoning (rueda+giro), sin relocalizar nunca contra un mapa
+        grabado antes. Se movio la logica aca (la clase base de ambas) para
+        que la mision real tambien pueda arrancar en una pose desconocida y
+        relocalizarse apenas la camara reconoce algo del mapa grabado (caso
+        B de _maybe_load_external_map, arriba).
+
+        Requiere que, EN PARALELO, este corriendo la sesion ROS2 de mapeo en
+        modo localizacion (`rtabmap_mapping.launch.py ... localization:=true`,
+        argumento `database_path:=` -- OJO, no `db_path:=`). Deshabilitado
+        por defecto: si la seccion no esta o `enabled` no es true, no cambia
+        nada del comportamiento actual. Nunca lanza: si rclpy/tf2_ros no
+        estan instalados o el nodo de mapeo no esta corriendo, cae a
+        dead-reckoning solo con un aviso.
+        """
+        rtab_cfg = (cfg.get("mapping", {}) or {}).get("rtabmap_correction", {}) or {}
+        if not rtab_cfg.get("enabled", False):
+            return
+        try:
+            self._rtab = RtabmapPoseBridge(
+                map_frame=rtab_cfg.get("map_frame", "map"),
+                base_frame=rtab_cfg.get("base_frame", "base_link"),
+                lookup_timeout_s=float(rtab_cfg.get("lookup_timeout_s", 0.2)),
+            )
+            print("[indoor_bridge] correccion de pose por RTAB-Map habilitada "
+                  f"({rtab_cfg.get('map_frame', 'map')} -> "
+                  f"{rtab_cfg.get('base_frame', 'base_link')})")
+        except Exception as exc:
+            print("[indoor_bridge] AVISO: no pude habilitar la correccion de "
+                  f"RTAB-Map, sigo con dead-reckoning solo: {exc}")
+            self._rtab = None
 
     # ------------------------------------------------------------------ cono
 
@@ -185,6 +246,19 @@ class IndoorBridge(Bridge):
                 f"El frame no cambia desde hace {now - self._last_frame_change:.1f} s "
                 "(video congelado)"
             )
+
+        # Si hay correccion de RTAB-Map activa, reemplazar la pose ANTES de
+        # que odometry.update() integre el delta de este frame -- asi el
+        # dead-reckoning arranca cada frame desde la ultima pose relocalizada
+        # (map -> base_link) en vez de acumular deriva indefinidamente sobre
+        # una pose que nunca se corrige. Si get_corrected_pose() todavia no
+        # tiene una TF disponible (por ejemplo, arranque, o la camara no
+        # reconocio nada del mapa todavia), sigue con dead-reckoning para
+        # este frame sin romper nada.
+        if self._rtab is not None:
+            corrected = self._rtab.get_corrected_pose()
+            if corrected is not None:
+                self.odometry.pose = corrected
 
         telem = self.client.telemetry()
         res = self.perception.process(rgb)
@@ -274,6 +348,18 @@ class IndoorBridge(Bridge):
 
         self.send(cmd)
         self._maybe_dump_debug_indoor(rgb, res, plan, cone)
+
+    # ------------------------------------------------------------------ ciclo
+
+    def run(self, max_seconds: float | None = None) -> None:
+        """Igual que Bridge.run(), pero ademas cierra el hilo/nodo ROS2 de
+        RtabmapPoseBridge al terminar (fin normal, --max-seconds, Ctrl-C o
+        excepcion) -- Bridge.run() no sabe que self._rtab existe."""
+        try:
+            super().run(max_seconds=max_seconds)
+        finally:
+            if self._rtab is not None:
+                self._rtab.shutdown()
 
     # ------------------------------------------------------------------ foto
 

@@ -230,8 +230,10 @@ grabado.
 antes de la misión real):
 
 ```bash
-source /opt/ros/humble/setup.bash
-ros2 launch <ruta>/examples/ros2/mapping/rtabmap_mapping.launch.py --show-args
+ros2 launch earth-rovers-sdk/examples/ros2/mapping/rtabmap_mapping.launch.py \
+    sdk_url:=http://localhost:8000 \
+    database_path:=/home/user/maps/sesion1 \
+    localization:=true
 ```
 
 Buscá un argumento tipo `localization` en la salida.
@@ -245,7 +247,7 @@ grabado, sin agregar nodos nuevos:
 
 ```bash
 ros2 launch <ruta>/examples/ros2/mapping/rtabmap_mapping.launch.py \
-    db_path:=~/maps/sesion1.db localization:=true
+    db_path:=~/maps/rtabmap_mapping localization:=true
 ```
 
 **Config de `genie_rover`** — activá la corrección de pose vía RTAB-Map:

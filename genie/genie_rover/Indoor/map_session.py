@@ -17,8 +17,19 @@ si rclpy/ROS2 no estan disponibles en este entorno, cae automaticamente a
 usar solo rueda+giro (el comportamiento de siempre) e imprime un aviso una
 sola vez -- nunca falla en silencio ni se cuelga esperando ROS2.
 
-No modifica `indoor_bridge.py` ni `bridge.py` (misma politica que el resto
-del repo: subclasear, no tocar lo ya validado).
+IMPORTANTE (esto cambio): esa correccion de RTAB-Map ahora vive en
+`IndoorBridge` (`_maybe_enable_rtabmap_correction()`, llamada desde
+`IndoorBridge.__init__`, y aplicada al principio de `IndoorBridge._step()`),
+no aca. Antes MapSessionBridge la duplicaba por completo -- armaba su PROPIO
+`RtabmapPoseBridge` en `__init__` (pisando el que ya habia armado
+`IndoorBridge.__init__`, dejando el primero huerfano: un nodo ROS2 + un hilo
+de spin que nadie volvia a cerrar nunca) y la volvia a aplicar en `_step()`
+(una segunda consulta TF por frame, redundante con la que ya hacia
+`IndoorBridge._step()`). MapSessionBridge ya NO instancia `RtabmapPoseBridge`
+ni toca `self.odometry.pose` directamente: solo usa `self._rtab` (heredado)
+para imprimir las estadisticas finales de lookups. El resto de la politica
+del repo se mantiene: esta clase sigue sin tocar la logica de exploracion/
+mision de IndoorBridge, solo agrega el export periodico a formato ROS.
 
 Uso (mismo patron que bridge.py/indoor_bridge.py: dry-run por defecto):
 
@@ -57,39 +68,25 @@ class MapSessionBridge(IndoorBridge):
         self._exports_done = 0
         self._did_final_export = False
 
-        self._rtab = None
-        rtab_cfg = map_cfg.get("rtabmap_correction", {}) or {}
-        if rtab_cfg.get("enabled", False):
-            try:
-                from .rtabmap_pose_bridge import RtabmapPoseBridge
-                self._rtab = RtabmapPoseBridge(
-                    map_frame=rtab_cfg.get("map_frame", "map"),
-                    base_frame=rtab_cfg.get("base_frame", "base_link"),
-                    lookup_timeout_s=float(rtab_cfg.get("lookup_timeout_s", 0.2)),
-                )
-                print("[map_session] correccion de RTAB-Map ACTIVADA "
-                      "(TF map->base_link).")
-            except Exception as exc:
-                print(f"[map_session] AVISO: no pude activar la correccion de "
-                      f"RTAB-Map ({exc}).\n"
-                      f"[map_session] Sigo con odometria de rueda+giro sola "
-                      f"(el comportamiento de siempre). Si esperabas la "
-                      f"correccion, revisa que rtabmap_mapping.launch.py este "
-                      f"corriendo y que este proceso tenga rclpy/tf2_ros "
-                      f"instalados.")
-                self._rtab = None
+        # self._rtab ya lo arma IndoorBridge.__init__ (via
+        # _maybe_enable_rtabmap_correction), leyendo la misma seccion
+        # mapping.rtabmap_correction del config que este __init__ leia antes
+        # a mano -- no lo repetimos aca. Instanciar un segundo
+        # RtabmapPoseBridge en este punto pisaba self._rtab con una segunda
+        # conexion ROS2 y dejaba la primera (la de IndoorBridge.__init__)
+        # sin cerrar nunca: un nodo + un hilo de spin huerfanos corriendo en
+        # segundo plano el resto del proceso.
 
     # ------------------------------------------------------------- override
 
     def _step(self):
-        if self._rtab is not None:
-            corrected = self._rtab.get_corrected_pose()
-            if corrected is not None:
-                # Reemplaza la pose ENTERA (no solo para integrar el mapa):
-                # asi PersistentMap.integrate() y PersistentMap.extract_bev()
-                # (el planner) siguen viendo un unico marco consistente.
-                self.odometry.pose = corrected
-
+        # La correccion de pose por RTAB-Map (cuando self._rtab esta activo)
+        # ya la aplica IndoorBridge._step(), al principio, antes de que
+        # odometry.update() integre el delta de este frame -- exactamente el
+        # mismo mecanismo que este archivo implementaba antes por su cuenta.
+        # Repetirla aca era una segunda consulta TF por frame que solo
+        # duplicaba trabajo (y sumaba de mas a lookups_ok/lookups_failed)
+        # sin cambiar el resultado.
         result = super()._step()
         self._maybe_export(force=False)
         return result
@@ -100,9 +97,13 @@ class MapSessionBridge(IndoorBridge):
         finally:
             self._maybe_export(force=True)
             if self._rtab is not None:
+                # super().run() (IndoorBridge.run()) ya cerro self._rtab en
+                # su propio finally -- eso corre ANTES de llegar aca, porque
+                # queda "adentro" del super().run() de arriba. Esto solo
+                # imprime las estadisticas finales (shutdown() no las borra),
+                # no lo vuelve a cerrar.
                 print(f"[map_session] TF lookups: {self._rtab.lookups_ok} ok, "
                       f"{self._rtab.lookups_failed} fallidos")
-                self._rtab.shutdown()
 
     # --------------------------------------------------------------- export
 
@@ -165,13 +166,7 @@ def main() -> int:
 
     bridge = MapSessionBridge(cfg, dry_run=not args.go, debug_dir=args.debug_dir)
 
-    # NOTA: el nombre/firma exacto de run() (que argumentos acepta ademas de
-    # max_seconds) depende de tu bridge.py real -- si difiere, ajusta esta
-    # linea; el resto de MapSessionBridge no depende de como se invoque run().
-    kwargs = {}
-    if args.max_seconds is not None:
-        kwargs["max_seconds"] = args.max_seconds
-    bridge.run(**kwargs)
+    bridge.run(max_seconds=args.max_seconds)
     return 0
 
 

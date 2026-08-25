@@ -50,6 +50,10 @@ class LoopStats:
 
 
 class Bridge:
+    # IndoorBridge (mision sin GPS, busca un cono) pisa esto a False: no tiene
+    # sentido leer/anunciar checkpoints GPS en una mision que nunca los usa.
+    uses_gps_checkpoints = True
+
     def __init__(self, cfg: dict, dry_run: bool = True, debug_dir: str | None = None):
         self.cfg = cfg
         self.dry_run = bool(dry_run)
@@ -99,7 +103,7 @@ class Bridge:
                 track_width_m=float(odo_cfg.get("track_width_m", 0.15)),
                 left_rpm_indices=tuple(odo_cfg.get("left_rpm_indices", (0, 2))),
                 right_rpm_indices=tuple(odo_cfg.get("right_rpm_indices", (1, 3))),
-                rotation_sign=float(odo_cfg.get("rotation_sign", 1.0)),
+                rotation_sign=float(odo_cfg.get("rotation_sign", -1.0)),
                 use_gyro_for_rotation=bool(odo_cfg.get("use_gyro_for_rotation", True)),
                 gps_correction=bool(odo_cfg.get("gps_correction", True)),
                 min_gps_displacement_m=float(odo_cfg.get("min_gps_displacement_m", 1.0)),
@@ -180,14 +184,18 @@ class Bridge:
         signal.signal(signal.SIGINT, self.request_stop)
         signal.signal(signal.SIGTERM, self.request_stop)
 
-        self.refresh_checkpoints()
-        target = self.current_target()
-        if target is None:
-            print("[bridge] No hay checkpoint pendiente. Voy a navegar solo evitando "
-                  "obstaculos, con la meta fija derecho adelante.")
-        else:
-            print(f"[bridge] Objetivo: checkpoint #{target.sequence} "
-                  f"({target.latitude}, {target.longitude})")
+        # IndoorBridge (uses_gps_checkpoints = False) no usa checkpoints GPS
+        # en absoluto -- la mision de cono los ignora por completo, asi que
+        # leerlos y anunciarlos aca era puro ruido en el log.
+        if self.uses_gps_checkpoints:
+            self.refresh_checkpoints()
+            target = self.current_target()
+            if target is None:
+                print("[bridge] No hay checkpoint pendiente. Voy a navegar solo evitando "
+                      "obstaculos, con la meta fija derecho adelante.")
+            else:
+                print(f"[bridge] Objetivo: checkpoint #{target.sequence} "
+                      f"({target.latitude}, {target.longitude})")
 
         t_start = time.time()
         try:
@@ -332,6 +340,36 @@ class Bridge:
         self.send(cmd)
         self._maybe_dump_debug(rgb, res, plan)
 
+    # --------------------------------------------------------- odometria ciega
+
+    def _track_pose_during_maneuver(self) -> None:
+        """Pide telemetria y actualiza odometria durante una maniobra ciega
+        (_recover / _unstick).
+
+        BUG que esto arregla: _recover()/_unstick() mueven al robot con
+        send() + time.sleep(), sin llamar a client.telemetry()/odometry.update()
+        en el medio. Odometry.update() tiene un guard de max_dt_s (0.5s por
+        defecto): si el hueco entre dos muestras integradas supera eso,
+        DESCARTA el intervalo entero en vez de integrarlo (para no inventar
+        movimiento a partir de un salto grande de reloj). Como estas maniobras
+        duran 1.2-2.5s tipicamente, el hueco caia siempre en esa rama de
+        descarte: el robot se movia de verdad pero self.pose (y el
+        PersistentMap, que ancla todo en ese marco) quedaban exactamente
+        igual que antes de la maniobra -- el mapa y la pose se desalineaban
+        del mundo real justo en el momento en que mas importa que no lo hagan
+        (recuperandose de estar atascado).
+
+        Protegido con use_map/odometry is not None y try/except: un fallo
+        puntual de telemetry() no debe tumbar la maniobra de recuperacion.
+        """
+        if not self.use_map or self.odometry is None:
+            return
+        try:
+            telem = self.client.telemetry()
+            self.odometry.update(telem.raw)
+        except Exception as exc:
+            print(f"[bridge] no pude actualizar odometria durante la maniobra: {exc}")
+
     def _unstick(self) -> None:
         """Rompe el ciclo de giros sin avance.
 
@@ -350,6 +388,7 @@ class Bridge:
         t0 = time.time()
         while time.time() - t0 < self.unstick_forward_s and not self._stop_requested:
             time.sleep(0.15)
+            self._track_pose_during_maneuver()
             try:
                 rgb, _ = self.client.front_frame()
                 res = self.perception.process(rgb)
@@ -360,6 +399,10 @@ class Bridge:
                 break
 
         self.send(DriveCommand(0.0, 0.0, "fin del avance forzado"))
+        # Una muestra mas despues del freno, para capturar el movimiento
+        # hasta que el robot realmente se detiene (no solo hasta el ultimo
+        # comando enviado).
+        self._track_pose_during_maneuver()
         self._consecutive_turns = 0
         self._turn_sign_history.clear()
         self.heading_est.reset_track()
@@ -419,10 +462,24 @@ class Bridge:
         donde conviene meter el modulo del paper.
         """
         print("[bridge] RECUPERACION: girando para buscar terreno transitable")
-        self.send(DriveCommand(0.0, self.follower.angular_sign * self.follower.turn_speed,
-                               "barrido de recuperacion"))
-        time.sleep(self.recovery_turn_s)
+        # Clampeado a max_angular: nada obligaba antes a que turn_speed fuera
+        # <= max_angular, asi que un turn_speed mal configurado se saltaba el
+        # tope de seguridad que si respeta PathFollower.command().
+        ang = float(np.clip(self.follower.angular_sign * self.follower.turn_speed,
+                            -self.follower.max_angular, self.follower.max_angular))
+        self.send(DriveCommand(0.0, ang, "barrido de recuperacion"))
+
+        # Loop de polling en vez de un unico time.sleep(): alimenta odometria
+        # durante todo el barrido (ver _track_pose_during_maneuver) y permite
+        # que Ctrl-C (_stop_requested) corte la maniobra a mitad de camino en
+        # vez de esperar los recovery_turn_s completos.
+        t0 = time.time()
+        while time.time() - t0 < self.recovery_turn_s and not self._stop_requested:
+            time.sleep(0.15)
+            self._track_pose_during_maneuver()
+
         self.send(DriveCommand(0.0, 0.0, "fin del barrido"))
+        self._track_pose_during_maneuver()
         self.heading_est.reset_track()  # el track GPS previo ya no dice el rumbo
         self._consecutive_empty = 0
 
