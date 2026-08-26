@@ -11,4 +11,6 @@
 # Nota: el venv del SDK ya trae fastapi (el SDK es FastAPI + hypercorn), asi
 # que muchas veces alcanza con levantar el dashboard con ese python:
 #   ./rover_launch.sh dashboard        # lo elige solo si puede
-pip
+fastapi
+uvicorn[standard]
+websockets

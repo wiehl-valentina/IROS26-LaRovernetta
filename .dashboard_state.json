@@ -5,7 +5,6 @@
  },
  "genie-bridge": {
   "debug-dir": "debub/run2_wuhan2",
-  "start-mission": true,
   "go": false
  },
  "indoor-bridge": {
@@ -21,7 +20,9 @@
  },
  "mapping-ros2": {},
  "ros2-bridge": {},
- "sync-ros2": {},
+ "sync-ros2": {
+  "force": true
+ },
  "sdk-client": {},
  "perception": {},
  "maps": {},

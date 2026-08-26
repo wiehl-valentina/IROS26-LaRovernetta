@@ -150,6 +150,7 @@ class Bridge:
         self.recovery_min_cobertura_pct = float(
             safety.get("recovery_min_cobertura_pct", 25.0))
         self._vlm_recovery_failed = False   # avisar una sola vez si no se puede usar
+        self._vlm_recovery_errors = 0       # fallas en tiempo de ejecucion (timeout/red)
 
         self.stats = LoopStats()
         self._stop_requested = False
@@ -255,7 +256,13 @@ class Bridge:
                     self.stats.errors += 1
                     print(f"[bridge] error en la iteracion ({self._consecutive_errors}"
                           f"/{self.max_consecutive_errors}): {exc}")
-                    self.send(DriveCommand(0.0, 0.0, "freno por error"))
+                    try:
+                        self.send(DriveCommand(0.0, 0.0, "freno por error"))
+                    except Exception as exc_freno:
+                        # Si el SDK esta caido, self.send() puede levantar tambien.
+                        # No dejamos que eso escape y mate el proceso en el primer
+                        # error: seguimos con el reintento normal de mas abajo.
+                        print(f"[bridge] tampoco pude frenar: {exc_freno}")
                     if self._consecutive_errors >= self.max_consecutive_errors:
                         print("[bridge] demasiados errores seguidos, abandono")
                         break
@@ -583,22 +590,26 @@ class Bridge:
 
         memoria_util = mejor_giro is not None and mejor_giro_libre > 0.5
 
-        vlm_deg = None
-        if self.use_vlm_recovery and rgb is not None and not self._vlm_recovery_failed:
-            vlm_deg = self._ask_vlm_heading(rgb)
-
         if memoria_util and mejor_recto_libre > mejor_giro_libre + MARGEN_ADELANTE:
             # Raro: el mapa insiste en que adelante esta mucho mejor que
             # cualquier giro. No nos quedamos quietos (eso vuelve a fallar):
             # barrido ciego corto y que el planner reintente con datos frescos.
+            # (No consultamos al VLM aca: la memoria ya decidio, y esto evita
+            # pagar la latencia del VLM cuando su respuesta no se va a usar.)
             return None, (f"la memoria prefiere seguir derecho "
                           f"({mejor_recto_libre * 100:.0f}% libre), hago un barrido corto")
 
         if memoria_util:
-            extra = "" if vlm_deg is None else f", VLM sugeria {vlm_deg:+.0f}"
+            # Idem: la memoria ya alcanza, no hace falta esperar al VLM.
             return (mejor_giro,
                     f"memoria: {mejor_giro:+.0f} grados, {mejor_giro_libre * 100:.0f}% libre "
-                    f"({mejor_giro_cob * 100:.0f}% visto{extra})")
+                    f"({mejor_giro_cob * 100:.0f}% visto)")
+
+        # La memoria no dio una respuesta util: reciem aca vale la pena pagar
+        # la latencia del VLM (hasta vlm_recovery_timeout_s, default 4s).
+        vlm_deg = None
+        if self.use_vlm_recovery and rgb is not None and not self._vlm_recovery_failed:
+            vlm_deg = self._ask_vlm_heading(rgb)
 
         if vlm_deg is not None and abs(vlm_deg) >= 15.0:
             return vlm_deg, f"VLM sugiere {vlm_deg:+.0f} grados (memoria sin cobertura util)"
@@ -616,7 +627,7 @@ class Bridge:
             self._reporter.event(
                 "RECUPERACION",
                 f"use_vlm_recovery esta en true pero no pude importar vlm_recovery "
-                f"({exc}); sigo sin VLM el resto de la corrida", "amarillo")
+                f"({exc}); sigo sin VLM el resto de la corrida", "yellow")
             return None
         try:
             decision = ask_recovery_heading(
@@ -625,8 +636,20 @@ class Bridge:
                 timeout_s=self.vlm_recovery_timeout_s,
             )
         except Exception as exc:   # ask_recovery_heading ya no deberia levantar
-            self._reporter.event("RECUPERACION", f"VLM fallo ({exc}), sigo sin el", "amarillo")
+            self._vlm_recovery_errors += 1
+            self._reporter.event("RECUPERACION", f"VLM fallo ({exc}), sigo sin el", "yellow")
+            if self._vlm_recovery_errors >= 3:
+                # 3 fallas seguidas en tiempo de ejecucion (timeout/red): dejamos
+                # de pagar el timeout completo (hasta vlm_recovery_timeout_s) en
+                # cada recuperacion el resto de la corrida, igual que cuando
+                # falla el import mas arriba.
+                self._vlm_recovery_failed = True
+                self._reporter.event(
+                    "RECUPERACION",
+                    f"VLM fallo {self._vlm_recovery_errors} veces seguidas; "
+                    f"sigo sin VLM el resto de la corrida", "yellow")
             return None
+        self._vlm_recovery_errors = 0
         if decision is None:
             return None
         grados = {
@@ -684,6 +707,14 @@ class Bridge:
         falta con realimentacion de odometria. Si no hay ni memoria ni VLM el
         comportamiento es exactamente el de antes.
         """
+        # Freno antes de deliberar: _pick_recovery_heading() puede bloquear
+        # hasta vlm_recovery_timeout_s (default 4s) esperando al VLM, y antes
+        # el rover seguia con el ultimo comando de movimiento durante ese
+        # tiempo entero. Frenamos primero y seguimos alimentando la odometria
+        # mientras se decide el rumbo.
+        self.send(DriveCommand(0.0, 0.0, "freno para decidir la recuperacion"), quiet=True)
+        self._track_pose_during_maneuver()
+
         delta_deg, motivo = self._pick_recovery_heading(rgb)
         self._reporter.event("RECUPERACION", f"girando para buscar salida — {motivo}", "magenta")
 
