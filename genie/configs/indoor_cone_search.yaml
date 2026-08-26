@@ -373,7 +373,7 @@ cone:
     # Config para el backend alternativo (si backend: "yolo" en vez de "color").
     weights_path: "checkpoints/cono_detection_model.pt"   # pesos del modelo YOLO entrenado.
     class_names: ["cone"]                       # clases que reconoce el modelo.
-    conf_thresh: 0.85                           # umbral de confianza minimo.
+    conf_thresh: 0.50                           # umbral de confianza minimo.
     device: null                                # null = autodetectar (igual que samtp).
     img_size: 640                               # resolucion de entrada al modelo.
 
@@ -456,10 +456,10 @@ mission:
 
   # --- verificacion (VERIFY): exige varias detecciones estables antes de
   # confiar en que es el cono real, no un falso positivo de un solo frame ---
-  verify_hits_required: 3       # cuantas detecciones seguidas hacen falta.
+  verify_hits_required: 1       # cuantas detecciones seguidas hacen falta.
   verify_window: 6               # ventana de frames sobre la que se evaluan.
-  verify_min_confidence: 0.55    # confianza minima de cada deteccion en la ventana.
-  verify_max_jump_m: 0.6         # salto maximo de posicion entre detecciones
+  verify_min_confidence: 0.45    # confianza minima de cada deteccion en la ventana.
+  verify_max_jump_m: 0.4         # salto maximo de posicion entre detecciones
                                  # consecutivas para considerarlas "el mismo cono".
 
   # Confirmacion opcional con Gemini antes de dar el cono por bueno (mismo

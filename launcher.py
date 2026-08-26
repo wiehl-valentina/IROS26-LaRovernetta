@@ -315,6 +315,37 @@ def command_moves_rover(cmd: str, opts: dict) -> bool:
     return False
 
 
+# --------------------------------------------------- entorno de los hijos ---
+
+def child_env() -> dict:
+    """Entorno para los procesos que lanza el dashboard.
+
+    Dos cosas que NO se pueden dejar en el default, porque el stdout del hijo
+    es un pipe y no una terminal:
+
+    PYTHONUNBUFFERED
+        Python bufferea por bloques (~8 KB) cuando stdout no es un tty, y solo
+        hace flush al salir. Con la consola en tabla de las misiones (~100
+        bytes por fila) eso son ~80 iteraciones acumuladas en RAM: el log
+        aparecia entero recien al terminar el proceso, en vez de fila a fila.
+        Con esto stdout queda sin buffer y cada linea llega apenas se imprime.
+        Tambien lo heredan los subprocesos que lance el hijo.
+
+    FORCE_COLOR / NO_COLOR
+        Por el mismo motivo (`isatty()` falso), console_report.py y las
+        funciones c_red/c_green/... del launcher apagan solos los colores
+        ANSI. El frontend SI sabe interpretarlos (ansiToFragment), asi que
+        los forzamos y se pierde menos informacion: el color del estado y el
+        verde/rojo de la barra de traversabilidad. Si alguien exporta
+        NO_COLOR a proposito, se respeta y no se fuerza nada.
+    """
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    if not env.get("NO_COLOR"):
+        env["FORCE_COLOR"] = "1"
+    return env
+
+
 # ------------------------------------------------------------- JobManager ---
 
 class Job:
@@ -408,6 +439,7 @@ class JobManager:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            env=child_env(),
             # grupo de procesos propio: asi podemos cortar todo lo que lance
             # (ros2 launch arranca varios hijos) y no solo el proceso padre
             start_new_session=True,
@@ -662,7 +694,8 @@ INDEX_HTML = r"""<!doctype html>
   pre.log .hit{background:#3a3410}
   .empty{color:#565c66;font-size:13px;padding:24px;text-align:center;border:1px dashed var(--line);border-radius:10px}
   .ansi-red{color:#ff8080}.ansi-green{color:var(--ok)}.ansi-yellow{color:#f0c46a}.ansi-blue{color:var(--accent)}
-  .ansi-magenta{color:#e0a0ff}
+  .ansi-magenta{color:#e0a0ff}.ansi-cyan{color:#79d4d4}.ansi-white{color:#f2f4f7}
+  .ansi-gray{color:var(--dim)}.ansi-black{color:#4a4f58}.ansi-bold{font-weight:700}
 </style>
 </head>
 <body>
@@ -704,20 +737,48 @@ function el(tag, attrs, ...kids){
   return e;
 }
 
-// El launcher colorea con codigos ANSI pensados para una terminal. En el
-// navegador se verian como basura si no se interpretan.
-const ANSI_MAP = {"1;31":"ansi-red","1;32":"ansi-green","1;33":"ansi-yellow",
-                  "1;34":"ansi-blue","1;35":"ansi-magenta","0":null};
+// El launcher (c_red/c_green/...) y console_report.py colorean con codigos
+// ANSI pensados para una terminal; en el navegador se verian como basura si
+// no se interpretan.
+//
+// La version anterior solo entendia la forma "1;31" (negrita+color en UN
+// solo escape), que es la que emite el shell. console_report.py emite el
+// atributo y el color por separado ("\x1b[1m\x1b[32m") y usa colores que no
+// estaban en la tabla (gray 90, cyan 36, white 97), asi que sus filas salian
+// sin color. Ahora se parsea SGR de verdad: se acumulan los parametros y se
+// mantiene el estado (negrita + color de frente) hasta el reset.
+const ANSI_FG = {30:"ansi-black",31:"ansi-red",32:"ansi-green",33:"ansi-yellow",
+                 34:"ansi-blue",35:"ansi-magenta",36:"ansi-cyan",37:"ansi-white",
+                 90:"ansi-gray",91:"ansi-red",92:"ansi-green",93:"ansi-yellow",
+                 94:"ansi-blue",95:"ansi-magenta",96:"ansi-cyan",97:"ansi-white"};
+const ANSI_RE = /\x1b\[([0-9;]*)m/g;
+const stripAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, "");
+
 function ansiToFragment(text){
   const frag = document.createDocumentFragment();
-  const re = /\x1b\[([0-9;]*)m/g;
-  let last = 0, cls = null, m;
+  const re = new RegExp(ANSI_RE.source, "g");
+  let last = 0, m, fg = null, bold = false;
   const push = s => {
     if (!s) return;
-    if (cls){ const sp = document.createElement("span"); sp.className = cls; sp.textContent = s; frag.appendChild(sp); }
-    else frag.appendChild(document.createTextNode(s));
+    if (!fg && !bold){ frag.appendChild(document.createTextNode(s)); return; }
+    const sp = document.createElement("span");
+    sp.className = [fg, bold ? "ansi-bold" : null].filter(Boolean).join(" ");
+    sp.textContent = s;
+    frag.appendChild(sp);
   };
-  while ((m = re.exec(text)) !== null){ push(text.slice(last, m.index)); last = re.lastIndex; cls = ANSI_MAP[m[1]] ?? null; }
+  while ((m = re.exec(text)) !== null){
+    push(text.slice(last, m.index));
+    last = re.lastIndex;
+    // "\x1b[m" vacio == reset, igual que "\x1b[0m"
+    for (const raw of (m[1] === "" ? "0" : m[1]).split(";")){
+      const n = parseInt(raw || "0", 10);
+      if (n === 0){ fg = null; bold = false; }
+      else if (n === 1) bold = true;
+      else if (n === 22) bold = false;
+      else if (n === 39) fg = null;
+      else if (ANSI_FG[n]) fg = ANSI_FG[n];
+    }
+  }
   push(text.slice(last));
   return frag;
 }
@@ -909,6 +970,7 @@ function ensurePanel(job, container){
 
   const filterInput = el("input", {type:"text", placeholder:"filtrar lineas (vacio = todas)"});
   filterInput.addEventListener("input", () => { state.filter = filterInput.value.toLowerCase(); repaint(state); });
+  // (el filtro compara contra el texto SIN codigos ANSI: ver repaint)
   const body = el("div", {class:"panel-body"},
     el("div", {class:"filterbar"}, filterInput),
     el("pre", {class:"log", id:`log-${job.id}`}));
@@ -942,7 +1004,9 @@ function appendLines(state, entries){
 }
 
 function repaint(state){
-  const shown = state.filter ? state.all.filter(l => l.toLowerCase().includes(state.filter)) : state.all;
+  const shown = state.filter
+    ? state.all.filter(l => stripAnsi(l).toLowerCase().includes(state.filter))
+    : state.all;
   state.pre.textContent = "";
   state.pre.appendChild(ansiToFragment(shown.join("\n")));
   if (state.autoscroll) state.pre.scrollTop = state.pre.scrollHeight;

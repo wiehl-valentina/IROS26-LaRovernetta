@@ -117,8 +117,8 @@ class IndoorBridge(Bridge):
         # no tocar mission.py por una opcion puramente de presentacion.
         self._reporter = MissionConsoleReporter(
             target_label="cono",
-            color=(cfg.get("mission", {}) or {}).get("console_color"))
-        
+            enable_color=(cfg.get("mission", {}) or {}).get("console_color"))
+
     # ------------------------------------------------------ mapa importado
 
     def _maybe_load_external_map(self, mem_cfg: dict) -> None:
@@ -306,7 +306,7 @@ class IndoorBridge(Bridge):
         def _row(action: str) -> None:
             self._reporter.row(
                 iteration=self.stats.iterations, state=mission_goal.state, pose=pose,
-                cone_desc=cono_desc, map_cells=st["celdas_vistas"],
+                target_desc=cono_desc, map_cells=st["celdas_vistas"],
                 trav=res.traversability, action=action)
 
         if mission_goal.request_photo:
