@@ -14,22 +14,10 @@ cameracalibrator` con un tablero de ajedrez es el camino recomendado; hasta
 entonces podes arrancar con una aproximacion (fx=fy=ancho_px, cx=ancho/2,
 cy=alto/2) sabiendo que el registro de RTAB-Map va a ser menos preciso.
 
-La DISTORSION tambien se pasa por parametro (`d`, modelo plumb_bob:
-k1,k2,p1,p2,k3). Antes este nodo publicaba siempre `d = [0,0,0,0,0]`, o sea
-"lente perfecta": con la camara del Mini, que tiene barril fuerte
-(k1 ~ -0.26, ~92 grados de FOV), eso le da a RTAB-Map una geometria
-equivocada en los bordes de la imagen -- justo donde caen las features que
-mas informacion aportan al cierre de bucles. Pasale los mismos
-`camera.dist_coeffs` del yaml de genie.
-
 Uso:
     python3 camera_info_publisher.py --ros-args \
         -p width:=1280 -p height:=720 \
-        -p fx:=900.0 -p fy:=900.0 -p cx:=640.0 -p cy:=360.0 \
-        -p d:=[-0.2626,0.0650,-0.0003,-0.0012,-0.0074]
-
-    # o, sin acordarte los numeros:
-    #   ./rover_launch.sh mapping-ros2 --config genie/configs/indoor_mapping.yaml
+        -p fx:=900.0 -p fy:=900.0 -p cx:=640.0 -p cy:=360.0
 """
 
 import sys
@@ -49,8 +37,6 @@ class CameraInfoPublisher(Node):
         self.declare_parameter("fy", 0.0)
         self.declare_parameter("cx", 0.0)
         self.declare_parameter("cy", 0.0)
-        # plumb_bob: [k1, k2, p1, p2, k3]. Lista vacia = sin distorsion.
-        self.declare_parameter("d", [0.0, 0.0, 0.0, 0.0, 0.0])
         self.declare_parameter("frame_id", "earth_rover_front_camera")
         self.declare_parameter("rate_hz", 10.0)
 
@@ -60,11 +46,6 @@ class CameraInfoPublisher(Node):
         fy = float(self.get_parameter("fy").value)
         cx = float(self.get_parameter("cx").value)
         cy = float(self.get_parameter("cy").value)
-        d = [float(v) for v in (self.get_parameter("d").value or [])]
-        if not d:
-            d = [0.0] * 5
-        elif len(d) < 5:
-            d = d + [0.0] * (5 - len(d))   # plumb_bob espera 5
 
         if width <= 0 or height <= 0 or fx <= 0 or fy <= 0:
             self.get_logger().error(
@@ -79,18 +60,11 @@ class CameraInfoPublisher(Node):
         self.msg.width = width
         self.msg.height = height
         self.msg.distortion_model = "plumb_bob"
-        self.msg.d = d
+        self.msg.d = [0.0, 0.0, 0.0, 0.0, 0.0]
         self.msg.k = [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0]
         self.msg.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
         self.msg.p = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
         self.msg.header.frame_id = self.get_parameter("frame_id").value
-
-        if not any(abs(v) > 1e-9 for v in d):
-            self.get_logger().warn(
-                "Sin coeficientes de distorsion (d = 0): si tu camara tiene "
-                "barril (la del Mini lo tiene), pasale camera.dist_coeffs de "
-                "tu yaml de genie con -p d:=[k1,k2,p1,p2,k3]."
-            )
 
         qos = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=1,
                          reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -99,7 +73,7 @@ class CameraInfoPublisher(Node):
         self.timer = self.create_timer(1.0 / rate, self._tick)
         self.get_logger().info(
             f"Publicando camera_info {width}x{height} fx={fx:.1f} fy={fy:.1f} "
-            f"cx={cx:.1f} cy={cy:.1f} d={[round(v, 5) for v in d]}"
+            f"cx={cx:.1f} cy={cy:.1f}"
         )
 
     def _tick(self):

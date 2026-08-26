@@ -20,98 +20,60 @@ Requiere:
     sudo apt install ros-$ROS_DISTRO-rtabmap-ros
     pip install requests websocket-client opencv-python
 
-Uso RECOMENDADO (deriva todos los parametros del yaml de genie, asi la
-odometria/extrinsecos de este stack y los de genie_rover no divergen):
-
-    ./rover_launch.sh mapping-ros2 --db ~/maps/sesion1.db \\
-        --config genie/configs/indoor_mapping.yaml
-
-Uso manual equivalente:
-
+Uso -- grabar un mapa nuevo (modo por defecto, localization:=false):
     ros2 launch rtabmap_mapping.launch.py \\
-        database_path:=~/maps/sesion1.db \\
-        $(python3 ../config_to_ros_params.py ../../../genie/configs/indoor_mapping.yaml)
+        sdk_url:=http://localhost:8000 \\
+        camera_fx:=900.0 camera_fy:=900.0 camera_cx:=640.0 camera_cy:=360.0 \\
+        camera_width:=1280 camera_height:=720 \\
+        database_path:=/home/user/maps/sesion1.db
 
-CAMBIOS respecto de la version anterior de este archivo:
-  * `database_path` se expande (`~`) y se le crea la carpeta padre ANTES de
-    arrancar rtabmap. Antes, si la carpeta no existia o el path traia `~`
-    sin expandir, rtabmap caia silenciosamente a `~/.ros/rtabmap_mapping.db`
-    y la sesion "se perdia" (esta documentado en 2_Funcionamiento_Mapeo.md).
-  * `camera_d` (coeficientes de distorsion) ahora se puede pasar: la camara
-    del Mini tiene barril fuerte (k1 ~ -0.26) y publicar `d = [0,0,0,0,0]`
-    le daba a RTAB-Map una geometria equivocada.
-  * Los parametros de odometria (`wheel_radius_m`, `track_width_m`,
-    `rotation_sign`, indices de rpm, giroscopo, correccion GPS) y los
-    extrinsecos de camara (`camera_pose_*`) se pueden pasar por launch en
-    vez de quedar en los defaults hardcodeados del bridge, que NO coincidian
-    con los del yaml de genie.
-  * `delete_db_on_start` es un argumento (antes estaba fijo en el codigo, asi
-    que apuntar a una base existente la borraba sin avisar).
+Al terminar (Ctrl+C), la base .db queda en database_path. Para pasarla a
+formato ROS map_server (.yaml+.pgm) usa el Database Viewer de RTAB-Map
+("File -> Export 2D occupancy grid") -- aunque, por la limitacion de arriba,
+la grilla que exporte va a ser pobre; la fuente de verdad para la grilla de
+obstaculos es el export de PersistentMap (ver genie/genie_rover/Indoor/map_session.py).
+
+Uso -- RELOCALIZAR sobre un mapa YA grabado, sin agregar nodos nuevos
+(localization:=true; esto es lo que necesita `mapping.rtabmap_correction`
+de indoor_bridge.py/map_session.py para poder arrancar en cualquier pose):
+    ros2 launch rtabmap_mapping.launch.py \\
+        sdk_url:=http://localhost:8000 \\
+        camera_fx:=... camera_fy:=... camera_cx:=... camera_cy:=... \\
+        camera_width:=... camera_height:=... \\
+        database_path:=/home/user/maps/sesion1.db \\
+        localization:=true
+
+En modo localization, el nodo de RTAB-Map arranca SIN `--delete_db_on_start`
+(la base grabada no se toca) y con `Mem/IncrementalMemory:=false` (no
+agrega nodos nuevos al grafo, solo compara contra lo ya grabado para
+reconocer donde esta) -- ver los dos `Node(...)` mas abajo.
 """
 
 import os
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
-from launch.substitutions import LaunchConfiguration
+from launch.actions import DeclareLaunchArgument, ExecuteProcess
+from launch.conditions import IfCondition, UnlessCondition
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 
 
-THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-PARENT_DIR = os.path.dirname(THIS_DIR)  # .../ros2/
+def generate_launch_description():
+    this_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(this_dir)  # examples/ros2/
 
-
-ARGS = [
-    ("sdk_url", "http://localhost:8000"),
-    ("feed_fps", "15"),
-    ("database_path", "~/maps/rtabmap_mapping.db"),
-    ("delete_db_on_start", "true"),
-
-    # --- camara: mismos valores que camera.* del yaml de genie -------------
-    ("camera_width", "1920"),
-    ("camera_height", "1080"),
-    ("camera_fx", "925.265722853314"),
-    ("camera_fy", "924.6288195383473"),
-    ("camera_cx", "962.3052531643399"),
-    ("camera_cy", "528.3891677741947"),
-    # plumb_bob: k1,k2,p1,p2,k3. "[]" = sin distorsion (lo de antes).
-    ("camera_d", "[-0.26257227523222204,0.06503885855790396,"
-                 "-0.00031427372195389234,-0.0011895820486559178,"
-                 "-0.0073726075647136185]"),
-    ("camera_pose_height_m", "0.150"),
-    ("camera_pose_pitch_down_deg", "1.85"),
-    ("camera_pose_forward_offset_m", "0.0"),
-
-    # --- odometria: mismos valores que odometry.* del yaml de genie --------
-    ("wheel_radius_m", "0.0527"),
-    ("track_width_m", "0.15"),
-    ("rotation_sign", "1.0"),
-    ("left_rpm_indices", "[0,2]"),
-    ("right_rpm_indices", "[1,3]"),
-    ("use_gyro_for_rotation", "true"),
-    ("gps_correction", "false"),
-]
-
-
-def _resolve_db_path(raw: str) -> str:
-    """expanduser + crear la carpeta padre. Devuelve un path absoluto.
-
-    Sin esto rtabmap se guarda la sesion en ~/.ros/rtabmap_mapping.db cuando
-    el path pedido no se puede abrir, y el usuario se entera recien al final.
-    """
-    path = os.path.abspath(os.path.expanduser(os.path.expandvars(raw)))
-    parent = os.path.dirname(path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    return path
-
-
-def _launch_setup(context, *_args, **_kwargs):
-    def cfg(name: str) -> str:
-        return LaunchConfiguration(name).perform(context)
-
-    db_path = _resolve_db_path(cfg("database_path"))
-    delete_db = cfg("delete_db_on_start").strip().lower() in ("1", "true", "yes", "on")
+    sdk_url = LaunchConfiguration("sdk_url")
+    feed_fps = LaunchConfiguration("feed_fps")
+    database_path = LaunchConfiguration("database_path")
+    camera_width = LaunchConfiguration("camera_width")
+    camera_height = LaunchConfiguration("camera_height")
+    camera_fx = LaunchConfiguration("camera_fx")
+    camera_fy = LaunchConfiguration("camera_fy")
+    camera_cx = LaunchConfiguration("camera_cx")
+    camera_cy = LaunchConfiguration("camera_cy")
+    wheel_radius_m = LaunchConfiguration("wheel_radius_m")
+    track_width_m = LaunchConfiguration("track_width_m")
+    localization = LaunchConfiguration("localization")
 
     rtabmap_params = {
         "frame_id": "base_link",
@@ -121,7 +83,7 @@ def _launch_setup(context, *_args, **_kwargs):
         "subscribe_rgb": True,
         "subscribe_odom_info": False,
         "approx_sync": True,
-        "database_path": db_path,
+        "database_path": database_path,
         # Robot plano (el mundo de genie_rover es 2D: x,y,theta) -> restringe
         # la optimizacion del grafo a 3DoF, mucho mas estable sin depth/lidar.
         "Reg/Force3DoF": "true",
@@ -137,61 +99,103 @@ def _launch_setup(context, *_args, **_kwargs):
         "Rtabmap/DetectionRate": "1.0",
     }
 
-    bridge_params = [
-        "sdk_url", "feed_fps",
-        "wheel_radius_m", "track_width_m", "rotation_sign",
-        "left_rpm_indices", "right_rpm_indices",
-        "use_gyro_for_rotation", "gps_correction",
+    # Modo LOCALIZACION (relocalizacion sobre un mapa ya grabado): no agrega
+    # nodos nuevos al grafo -- solo lo compara contra lo ya guardado en
+    # database_path para reconocer donde esta la camara. InitWMWithAllNodes
+    # carga toda la memoria de largo plazo a memoria de trabajo al arrancar,
+    # para que pueda reconocer CUALQUIER parte del mapa grabado desde el
+    # primer frame, no solo ir "descubriendo" nodos a medida que se acerca
+    # (relevante justamente porque no sabemos en que pose arranca el rover).
+    localization_params = dict(rtabmap_params)
+    localization_params["Mem/IncrementalMemory"] = "false"
+    localization_params["Mem/InitWMWithAllNodes"] = "true"
+
+    common_remappings = [
+        ("rgb/image", "/earth_rover/front/image_raw"),
+        ("rgb/camera_info", "/earth_rover/front/camera_info"),
+        ("odom", "/earth_rover/odom"),
     ]
-    bridge_cmd = ["python3", os.path.join(PARENT_DIR, "earth_rover_bridge.py"), "--ros-args"]
-    for name in bridge_params:
-        bridge_cmd += ["-p", f"{name}:={cfg(name)}"]
-    # los extrinsecos usan otro nombre del lado del nodo
-    for launch_name, node_name in (
-        ("camera_pose_height_m", "camera_height_m"),
-        ("camera_pose_pitch_down_deg", "camera_pitch_down_deg"),
-        ("camera_pose_forward_offset_m", "camera_forward_offset_m"),
-    ):
-        bridge_cmd += ["-p", f"{node_name}:={cfg(launch_name)}"]
 
-    caminfo_cmd = ["python3", os.path.join(THIS_DIR, "camera_info_publisher.py"), "--ros-args"]
-    for launch_name, node_name in (
-        ("camera_width", "width"), ("camera_height", "height"),
-        ("camera_fx", "fx"), ("camera_fy", "fy"),
-        ("camera_cx", "cx"), ("camera_cy", "cy"),
-        ("camera_d", "d"),
-    ):
-        caminfo_cmd += ["-p", f"{node_name}:={cfg(launch_name)}"]
+    return LaunchDescription([
+        DeclareLaunchArgument("sdk_url", default_value="http://localhost:8000"),
+        DeclareLaunchArgument("feed_fps", default_value="15"),
+        DeclareLaunchArgument("database_path", default_value="~/.ros/rtabmap_mapping.db"),
+        DeclareLaunchArgument("camera_width", default_value="1920"),
+        DeclareLaunchArgument("camera_height", default_value="1080"),
+        DeclareLaunchArgument("camera_fx", default_value="925.265722853314"),
+        DeclareLaunchArgument("camera_fy", default_value="924.6288195383473"),
+        DeclareLaunchArgument("camera_cx", default_value="962.3052531643399"),
+        DeclareLaunchArgument("camera_cy", default_value="528.3891677741947"),
+        DeclareLaunchArgument("wheel_radius_m", default_value="0.0527"),
+        DeclareLaunchArgument("track_width_m", default_value="0.15"),
+        DeclareLaunchArgument(
+            "localization", default_value="false",
+            description="true = RELOCALIZA sobre database_path (NO agrega nodos "
+                        "nuevos, no borra la base al arrancar). false (default) = "
+                        "modo mapeo de siempre, arranca la base vacia "
+                        "(--delete_db_on_start)."),
 
-    rtabmap_args = ["--delete_db_on_start"] if delete_db else []
 
-    print(f"[rtabmap_mapping.launch.py] database_path -> {db_path}"
-          f"{' (se borra al arrancar)' if delete_db else ' (se continua la base existente)'}")
+        # --- bridge del SDK: imagen, imu, gps, y /earth_rover/odom + TF -----
+        ExecuteProcess(
+            cmd=[
+                "python3", PathJoinSubstitution([parent_dir, "earth_rover_bridge.py"]),
+                "--ros-args",
+                "-p", ["sdk_url:=", sdk_url],
+                "-p", ["feed_fps:=", feed_fps],
+                "-p", ["wheel_radius_m:=", wheel_radius_m],
+                "-p", ["track_width_m:=", track_width_m],
+            ],
+            output="screen",
+        ),
 
-    return [
-        # --- bridge del SDK: imagen, imu, gps, /earth_rover/odom y TF -------
-        ExecuteProcess(cmd=bridge_cmd, output="screen"),
-        # --- camera_info: misma calibracion que usa genie_rover ------------
-        ExecuteProcess(cmd=caminfo_cmd, output="screen"),
-        # --- RTAB-Map: odometria externa (nuestra) + loop closure visual ---
+        # --- camera_info: misma calibracion que uses en genie_rover ---------
+        ExecuteProcess(
+            cmd=[
+                "python3", PathJoinSubstitution([this_dir, "camera_info_publisher.py"]),
+                "--ros-args",
+                "-p", ["width:=", camera_width],
+                "-p", ["height:=", camera_height],
+                "-p", ["fx:=", camera_fx],
+                "-p", ["fy:=", camera_fy],
+                "-p", ["cx:=", camera_cx],
+                "-p", ["cy:=", camera_cy],
+            ],
+            output="screen",
+        ),
+
+        # --- RTAB-Map, modo MAPEO (localization:=false, default) -----------
+        # Arranca la base VACIA (--delete_db_on_start) y va agregando nodos
+        # nuevos al grafo a medida que el rover recorre -- este es el modo
+        # de siempre, para grabar una sesion nueva.
         Node(
             package="rtabmap_slam",
             executable="rtabmap",
             name="rtabmap",
             output="screen",
             parameters=[rtabmap_params],
-            remappings=[
-                ("rgb/image", "/earth_rover/front/image_raw"),
-                ("rgb/camera_info", "/earth_rover/front/camera_info"),
-                ("odom", "/earth_rover/odom"),
-            ],
-            arguments=rtabmap_args,
+            remappings=common_remappings,
+            arguments=["--delete_db_on_start"],
+            condition=UnlessCondition(localization),
         ),
-    ]
 
-
-def generate_launch_description():
-    return LaunchDescription(
-        [DeclareLaunchArgument(name, default_value=default) for name, default in ARGS]
-        + [OpaqueFunction(function=_launch_setup)]
-    )
+        # --- RTAB-Map, modo LOCALIZACION (localization:=true) --------------
+        # Carga database_path TAL CUAL (sin --delete_db_on_start -- si se
+        # lo pasaramos igual que en modo mapeo, borraria el mapa grabado
+        # antes de poder usarlo) y con Mem/IncrementalMemory:=false no
+        # agrega nodos nuevos, solo reconoce por apariencia visual donde
+        # esta el rover dentro del grafo ya grabado y publica la correccion
+        # como TF `map -> odom` -- esto es lo que necesita
+        # `mapping.rtabmap_correction` de indoor_bridge.py/map_session.py
+        # (via RtabmapPoseBridge, TF map -> base_link) para relocalizar sin
+        # importar en que pose arranca el robot.
+        Node(
+            package="rtabmap_slam",
+            executable="rtabmap",
+            name="rtabmap",
+            output="screen",
+            parameters=[localization_params],
+            remappings=common_remappings,
+            condition=IfCondition(localization),
+        ),
+    ])
