@@ -5,6 +5,21 @@
 # y te deja pasar configs por flags en vez de acordarte rutas y "source
 # .venv/bin/activate" cada vez.
 #
+# Novedades v3:
+#   * CONDA-SAFE: el script ya NO corre "conda deactivate" ni toca tu
+#     ~/.condarc. En vez de activar entornos, invoca el interprete del venv
+#     por RUTA ABSOLUTA ($VENV/bin/python), que es aislamiento real y no
+#     depende de que haya (o no) un entorno conda activo. Si no hay venv,
+#     usa el python del entorno activo — asi el que trabaja con conda corre
+#     lo mismo sin cambiar nada. Se puede forzar con ROVER_ENV_MODE.
+#   * TODO relativo al repo: nada de $HOME. maps/, debug/ y los .db caen
+#     dentro del repo (maps/ y debug/ estan gitignoreados) salvo que pases
+#     una ruta absoluta o exportes MAPS_DIR.
+#   * Combos de un clic desde la terminal:
+#       record-run  -> grabacion de recorrido (sdk + RTAB-Map + map-session)
+#       indoor-run  -> mision indoor con --mode checkpoints | map | both
+#     Los mismos combos estan como un solo boton en el dashboard.
+#
 # Novedades v2:
 #   * Las rutas se autodetectan desde la ubicacion de ESTE archivo (ya no
 #     asume ~/IROS26-LaRovernetta). Se pueden pisar con variables de entorno.
@@ -15,17 +30,11 @@
 #   * "mapping-ros2" deriva intrinsecos, distorsion, odometria y extrinsecos
 #     de camara del MISMO yaml de genie que usa el bridge, para que la pose
 #     de RTAB-Map y la de genie_rover no diverjan.
-#   * Todos los flags reales de cada modulo estan expuestos, y cada comando
-#     tiene su propio --help.
 #
 # Uso:
 #   ./rover_launch.sh <comando> [opciones]
 #   ./rover_launch.sh <comando> --help
 #   ./rover_launch.sh help
-#
-# Nota: este script desactiva conda antes de activar cualquier .venv, porque
-# conda pisa el "python3" del sistema y rompe la creacion/uso de venvs y de
-# rclpy.
 
 set -uo pipefail
 
@@ -37,11 +46,15 @@ while [ -L "$_SELF" ]; do _SELF="$(readlink "$_SELF")"; done
 SCRIPT_DIR="$(cd "$(dirname "$_SELF")" && pwd)"
 
 REPO="${REPO:-$SCRIPT_DIR}"
+SELF="$SCRIPT_DIR/$(basename "$_SELF")"      # para los combos de tmux
 SDK_DIR="${SDK_DIR:-$REPO/earth-rovers-sdk}"
 GENIE_DIR="${GENIE_DIR:-$REPO/genie}"
 TRAV_DIR="${TRAV_DIR:-$REPO/traversability}"
 INDOOR_DIR="${INDOOR_DIR:-$REPO/Indoor_Instalacion_SDK_SLAM}"
-MAPS_DIR="${MAPS_DIR:-$HOME/maps}"
+# v3: los mapas viven DENTRO del repo (maps/ esta en .gitignore). Asi el que
+# clona no tiene que crear ~/maps ni acordarse de donde quedo cada cosa.
+MAPS_DIR="${MAPS_DIR:-$REPO/maps}"
+DEBUG_DIR="${DEBUG_DIR:-$REPO/debug}"
 DASHBOARD="${DASHBOARD:-$REPO/dashboard_server.py}"
 
 c_red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }
@@ -100,22 +113,93 @@ CFG_INDOOR="${CFG_INDOOR:-configs/indoor_cone_search.yaml}"
 CFG_MAPPING="${CFG_MAPPING:-configs/indoor_mapping.yaml}"
 # ----------------------------------------------------------------------------
 
-neutralize_conda() {
-    if command -v conda >/dev/null 2>&1; then
-        conda deactivate >/dev/null 2>&1 || true
-        conda config --set auto_activate_base false >/dev/null 2>&1 || true
-    fi
+# ------------------------------------------------------------- ENTORNOS ---
+# v3: NUNCA tocamos el entorno del usuario.
+#
+# La v2 corria "conda deactivate" y, peor, "conda config --set
+# auto_activate_base false", que escribe en el ~/.condarc de quien lo corre:
+# un efecto permanente y global para arreglar un problema local. Ademas
+# "source .venv/bin/activate" no aisla de conda — solo reordena el PATH.
+#
+# Lo que hace la v3 es mas simple y mas fuerte: llama al interprete del venv
+# por ruta absoluta ("$VENV/bin/python"). Ese binario resuelve su propio
+# sys.prefix por el pyvenv.cfg de al lado, asi que corre con SUS paquetes
+# tenga conda activo o no, y el shell del usuario queda intacto. Lo unico
+# que puede romper eso son PYTHONHOME/PYTHONPATH heredados, asi que se
+# limpian solo para el proceso hijo.
+#
+# ROVER_ENV_MODE controla la eleccion del interprete:
+#   auto     (default) venv del componente si existe; si no, el python activo
+#   venv     exige el venv y falla si no esta
+#   current  usa siempre el python del entorno activo (conda, pyenv, lo que sea)
+ROVER_ENV_MODE="${ROVER_ENV_MODE:-auto}"
+PY=""                    # interprete elegido por el comando en curso
+_ENV_NOTICE=0
+
+active_env_label() {
+    if [ -n "${CONDA_PREFIX:-}" ]; then printf 'conda:%s' "$(basename "$CONDA_PREFIX")"
+    elif [ -n "${VIRTUAL_ENV:-}" ]; then printf 'venv:%s' "$(basename "$VIRTUAL_ENV")"
+    else printf 'sistema'; fi
+}
+
+# use_venv <dir_del_venv> — elige el interprete y lo deja en $PY.
+use_venv() {
+    local venv_dir="$1"
+    case "$ROVER_ENV_MODE" in
+        current)
+            PY="$(command -v python3 || true)"
+            [ -n "$PY" ] || die "ROVER_ENV_MODE=current pero no hay python3 en el PATH"
+            ;;
+        venv)
+            [ -x "$venv_dir/bin/python" ] || die "No encuentro el venv: $venv_dir. Crealo con: python3 -m venv '$venv_dir' (o usa ROVER_ENV_MODE=current)"
+            PY="$venv_dir/bin/python"
+            ;;
+        auto|*)
+            if [ -x "$venv_dir/bin/python" ]; then
+                PY="$venv_dir/bin/python"
+            else
+                PY="$(command -v python3 || true)"
+                [ -n "$PY" ] || die "No hay venv en $venv_dir ni python3 en el PATH"
+                [ "$_ENV_NOTICE" -eq 0 ] && {
+                    warn "sin venv en $(rel "$venv_dir") — uso el python del entorno activo ($(active_env_label): $PY)"
+                    _ENV_NOTICE=1
+                }
+            fi
+            ;;
+    esac
+}
+
+# exec_py <args...> — corre $PY sin heredar variables que rompan su prefix.
+# No desactiva nada: el entorno del usuario sigue igual despues de esto.
+exec_py() {
+    local clean=(env -u PYTHONHOME)
+    # PYTHONPATH de conda dentro de un venv mezcla site-packages de los dos
+    [ -n "${CONDA_PREFIX:-}" ] && [ "$PY" != "$(command -v python3 || true)" ] && clean+=(-u PYTHONPATH)
+    exec "${clean[@]}" "$PY" "$@"
+}
+
+# Python para lo que corre CON ROS2 sourceado: ahi hace falta el interprete
+# del sistema, que es contra el que se compilo rclpy. Si conda esta activo,
+# "python3" a secas es el de conda y rclpy no importa.
+ros_python() {
+    if [ -n "${ROS_PYTHON:-}" ]; then printf '%s' "$ROS_PYTHON"
+    elif [ -x /usr/bin/python3 ]; then printf '%s' /usr/bin/python3
+    else command -v python3; fi
+}
+
+# Ruta linda para los mensajes: relativa al repo cuando cae adentro.
+rel() {
+    local p="${1:-}"
+    case "$p" in
+        "$REPO"/*) printf '%s' "./${p#"$REPO"/}" ;;
+        "$REPO")   printf '.' ;;
+        *)         printf '%s' "$p" ;;
+    esac
 }
 
 need_dir()  { [ -d "$1" ] || die "No encuentro la carpeta: $1 (exporta la variable correspondiente o revisa el bloque RUTAS)"; }
 need_file() { [ -f "$1" ] || die "No encuentro el archivo: $1"; }
 
-activate_venv() {
-    local venv_dir="$1"
-    [ -f "$venv_dir/bin/activate" ] || die "No encuentro el venv: $venv_dir (falta bin/activate). Crealo con: python3 -m venv '$venv_dir'"
-    # shellcheck disable=SC1090
-    source "$venv_dir/bin/activate"
-}
 
 source_ros2() {
     [ -f "$ROS_SETUP" ] || die "No encuentro ROS2 en $ROS_SETUP. Instala ros-<distro>-desktop o exporta ROS_SETUP=/opt/ros/<distro>/setup.bash"
@@ -163,16 +247,17 @@ cmd_sdk() {
             *) die "Opcion desconocida para sdk: $1" ;;
         esac
     done
-    neutralize_conda
     need_dir "$SDK_DIR"
-    activate_venv "$SDK_VENV"
+    use_venv "$SDK_VENV"
     cd "$SDK_DIR" || exit 1
     need_file "main.py"
     [ -f ".env" ] || warn "No hay .env en $SDK_DIR — el SDK va a arrancar sin token/bot_slug (copiá .env.sample)."
     local args=(main:app --bind "127.0.0.1:$port")
     [ "$reload" -eq 1 ] && args+=(--reload)
     c_blue "==> SDK: hypercorn ${args[*]}  (dashboard en http://localhost:$port)"
-    exec hypercorn "${args[@]}"
+    # -m hypercorn en vez del ejecutable: no depende de que el venv este
+    # "activado" ni de que su bin/ este primero en el PATH.
+    exec_py -m hypercorn "${args[@]}"
 }
 
 HELP_DASH='dashboard — levanta el panel web local que maneja este mismo launcher
@@ -184,18 +269,21 @@ con WSL2). Usa FastAPI+uvicorn si estan instalados (logs por WebSocket) y
 si no cae solo a la version de libreria estandar (polling).'
 cmd_dashboard() {
     wants_help "$@" && show_help "$HELP_DASH"
-    neutralize_conda
     need_file "$DASHBOARD"
     # El dashboard solo necesita stdlib; si hay un venv con fastapi, mejor.
-    local py="python3"
-    if [ -x "$SDK_VENV/bin/python" ] && "$SDK_VENV/bin/python" -c "import fastapi, uvicorn" >/dev/null 2>&1; then
-        py="$SDK_VENV/bin/python"
-    elif [ -x "$GENIE_VENV/bin/python" ] && "$GENIE_VENV/bin/python" -c "import fastapi, uvicorn" >/dev/null 2>&1; then
-        py="$GENIE_VENV/bin/python"
-    fi
+    # El dashboard solo necesita stdlib; si algun interprete tiene fastapi,
+    # mejor (logs en vivo por WebSocket). Se prueba el entorno ACTIVO primero:
+    # si el companiero trabaja en conda y ahi instalo fastapi, se usa ese.
+    local py="" cand
+    for cand in "$(command -v python3 || true)" "$SDK_VENV/bin/python" "$GENIE_VENV/bin/python"; do
+        [ -n "$cand" ] && [ -x "$cand" ] || continue
+        if "$cand" -c "import fastapi, uvicorn" >/dev/null 2>&1; then py="$cand"; break; fi
+    done
+    [ -n "$py" ] || py="$(command -v python3 || true)"
+    [ -n "$py" ] || die "No hay python3 en el PATH"
     cd "$REPO" || exit 1
     c_blue "==> dashboard ($py) — http://localhost:8765"
-    exec "$py" "$DASHBOARD" --script "$REPO/rover_launch.sh" "$@"
+    exec "$py" "$DASHBOARD" --script "$SELF" "$@"
 }
 
 HELP_GENIE='genie-bridge — bridge outdoor (GPS + SAM-TP), genie_rover.bridge
@@ -218,9 +306,8 @@ cmd_genie_bridge() {
         esac
     done
 
-    neutralize_conda
     need_dir "$GENIE_DIR"
-    activate_venv "$GENIE_VENV"
+    use_venv "$GENIE_VENV"
     cd "$GENIE_DIR" || exit 1
     need_file "$config"
 
@@ -236,7 +323,7 @@ cmd_genie_bridge() {
         [ "$start_mission" -eq 1 ] && warn "--start-mission sin --go no hace nada (el simulacro no arranca la mision)"
         c_blue "==> genie_rover.bridge en simulacro (dry-run, no mueve el rover)"
     fi
-    exec python -m genie_rover.bridge "${args[@]}"
+    exec_py -m genie_rover.bridge "${args[@]}"
 }
 
 HELP_INDOOR='indoor-bridge — tour de checkpoints indoor sin GPS (busca conos y los fotografia)
@@ -271,9 +358,8 @@ cmd_indoor_bridge() {
         warn "--search-mode waypoints sin --waypoints-path: se usa mission.waypoints_path del config (si es null, el modulo va a fallar)"
     fi
 
-    neutralize_conda
     need_dir "$GENIE_DIR"
-    activate_venv "$GENIE_VENV"
+    use_venv "$GENIE_VENV"
     cd "$GENIE_DIR" || exit 1
     need_file "$config"
     [ -n "$waypoints_path" ] && need_file "$waypoints_path"
@@ -290,7 +376,7 @@ cmd_indoor_bridge() {
         c_blue "==> indoor_bridge en simulacro (dry-run)"
     fi
     [ -n "$search_mode" ] && c_blue "    modo de busqueda: $search_mode"
-    exec python -m genie_rover.Indoor.indoor_bridge "${args[@]}"
+    exec_py -m genie_rover.Indoor.indoor_bridge "${args[@]}"
 }
 
 HELP_MAPSESS='map-session — sesion de mapeo por frontera + export a maps/*.yaml+.pgm
@@ -317,9 +403,8 @@ cmd_map_session() {
         esac
     done
 
-    neutralize_conda
     need_dir "$GENIE_DIR"
-    activate_venv "$GENIE_VENV"
+    use_venv "$GENIE_VENV"
     cd "$GENIE_DIR" || exit 1
     need_file "$config"
 
@@ -338,7 +423,7 @@ cmd_map_session() {
     else
         c_blue "==> map_session en simulacro (dry-run)"
     fi
-    exec python -m genie_rover.Indoor.map_session "${args[@]}"
+    exec_py -m genie_rover.Indoor.map_session "${args[@]}"
 }
 
 HELP_MAPROS='mapping-ros2 — RTAB-Map + bridge ROS2 (correccion de pose por cierre de bucles)
@@ -364,7 +449,6 @@ cmd_mapping_ros2() {
         esac
     done
 
-    neutralize_conda
     need_dir "$MAPPING_DIR"
     need_file "$MAPPING_DIR/rtabmap_mapping.launch.py"
     [ -f "$ROS2_DIR/earth_rover_bridge.py" ] || die "Falta $ROS2_DIR/earth_rover_bridge.py — corre './rover_launch.sh sync-ros2' o revisa ROS2_DIR"
@@ -387,7 +471,7 @@ cmd_mapping_ros2() {
         local helper="$ROS2_DIR/config_to_ros_params.py"
         if [ -f "$helper" ] && [ -f "$config" ]; then
             local derived
-            derived="$(python3 "$helper" "$config" 2>/dev/null)"
+            derived="$("$(ros_python)" "$helper" "$config" 2>/dev/null)"
             if [ -n "$derived" ]; then
                 # shellcheck disable=SC2206
                 local extra=($derived)
@@ -425,7 +509,6 @@ cmd_ros2_bridge() {
         esac
     done
 
-    neutralize_conda
     need_file "$ROS2_DIR/earth_rover_bridge.py"
     source_ros2
     cd "$ROS2_DIR" || exit 1
@@ -434,7 +517,7 @@ cmd_ros2_bridge() {
     [ -n "$feed_fps" ] && ros_args+=(-p "feed_fps:=$feed_fps")
     if [ "$raw" -eq 0 ] && [ -f "$ROS2_DIR/config_to_ros_params.py" ] && [ -f "$config" ]; then
         local derived
-        derived="$(python3 "$ROS2_DIR/config_to_ros_params.py" --style ros-args "$config" 2>/dev/null)"
+        derived="$("$(ros_python)" "$ROS2_DIR/config_to_ros_params.py" --style ros-args "$config" 2>/dev/null)"
         if [ -n "$derived" ]; then
             # shellcheck disable=SC2206
             local extra=($derived)
@@ -443,7 +526,7 @@ cmd_ros2_bridge() {
         fi
     fi
     c_blue "==> earth_rover_bridge.py -> topicos /earth_rover/*  (Ctrl+C para cortar)"
-    exec python3 earth_rover_bridge.py "${ros_args[@]}"
+    exec "$(ros_python)" earth_rover_bridge.py "${ros_args[@]}"
 }
 
 HELP_SYNC='sync-ros2 — copia el stack ROS2 canonico del repo dentro del SDK
@@ -506,15 +589,14 @@ cmd_sdk_client() {
             *) die "Opcion desconocida para sdk-client: $1" ;;
         esac
     done
-    neutralize_conda
     need_dir "$GENIE_DIR"
-    activate_venv "$GENIE_VENV"
+    use_venv "$GENIE_VENV"
     cd "$GENIE_DIR" || exit 1
     c_blue "==> genie_rover.sdk_client — prueba de conexion, no mueve el rover"
     if [ -n "$base_url" ]; then
-        exec python -m genie_rover.sdk_client --base-url "$base_url"
+        exec_py -m genie_rover.sdk_client --base-url "$base_url"
     fi
-    exec python -m genie_rover.sdk_client
+    exec_py -m genie_rover.sdk_client
 }
 
 HELP_PERCEPTION='perception — prueba de percepcion SAM-TP sobre una imagen
@@ -533,15 +615,14 @@ cmd_perception() {
     done
     [ -n "$image" ] || die "Falta --image <ruta_a_foto.jpg>"
 
-    neutralize_conda
     need_dir "$GENIE_DIR"
-    activate_venv "$GENIE_VENV"
+    use_venv "$GENIE_VENV"
     cd "$GENIE_DIR" || exit 1
     need_file "$image"
     need_file "$config"
     mkdir -p "$out" 2>/dev/null || true
     c_blue "==> genie_rover.perception sobre $image"
-    exec python -m genie_rover.perception --config "$config" --image "$image" --out "$out"
+    exec_py -m genie_rover.perception --config "$config" --image "$image" --out "$out"
 }
 
 HELP_TRAV='traversability — stack rover_traversability (SAM-TP standalone)
@@ -580,9 +661,8 @@ cmd_traversability() {
     done
     set -- ${rest[@]+"${rest[@]}"}
 
-    neutralize_conda
     need_dir "$TRAV_DIR"
-    activate_venv "$GENIE_VENV"
+    use_venv "$GENIE_VENV"
 
     # OJO: --no-refine solo existe en rover_traversability.demo. Los modulos
     # de testing (capture_test / policy_test / policy_tuner) aceptan
@@ -602,7 +682,7 @@ cmd_traversability() {
     case "$level" in
         predict|live|drive|mission)
             cd "$REPO" || exit 1
-            python -c "import rover_traversability" 2>/dev/null || \
+            "$PY" -c "import rover_traversability" 2>/dev/null || \
                 die "rover_traversability no esta instalado en $GENIE_VENV. Corre, con ese venv activo y parado en $REPO:  pip install -e './traversability[hf]'"
             ;;
         capture|policy-test|tune)
@@ -623,7 +703,7 @@ cmd_traversability() {
             [ -n "$image" ] || die "Falta --image <ruta_a_foto.jpg>"
             need_file "$image"
             c_blue "==> traversability predict sobre $image"
-            exec python -m rover_traversability.demo ${globals[@]+"${globals[@]}"} predict "$image" --out "$(ensure_parent_dir "$out")"
+            exec_py -m rover_traversability.demo ${globals[@]+"${globals[@]}"} predict "$image" --out "$(ensure_parent_dir "$out")"
             ;;
         live)
             local save_dir="trav_out" interval="" max_frames=""
@@ -639,7 +719,7 @@ cmd_traversability() {
             [ -n "$interval" ] && a+=(--interval "$interval")
             [ -n "$max_frames" ] && a+=(--max-frames "$max_frames")
             c_blue "==> traversability live — NO mueve el rover, overlays en $save_dir"
-            exec python -m rover_traversability.demo ${globals[@]+"${globals[@]}"} live "${a[@]}"
+            exec_py -m rover_traversability.demo ${globals[@]+"${globals[@]}"} live "${a[@]}"
             ;;
         drive)
             local save_dir="" interval="" max_iterations=""
@@ -656,7 +736,7 @@ cmd_traversability() {
             [ -n "$interval" ] && a+=(--interval "$interval")
             [ -n "$max_iterations" ] && a+=(--max-iterations "$max_iterations")
             c_yellow "==> traversability drive — MODO REAL, esquiva obstaculos sin meta GPS"
-            exec python -m rover_traversability.demo ${globals[@]+"${globals[@]}"} drive "${a[@]}"
+            exec_py -m rover_traversability.demo ${globals[@]+"${globals[@]}"} drive "${a[@]}"
             ;;
         mission)
             local start_mission=0 arrive="" interval="" max_steps=""
@@ -678,7 +758,7 @@ cmd_traversability() {
             [ -n "$max_steps" ] && a+=(--max-steps "$max_steps")
             c_yellow "==> traversability mission — MODO REAL, navega checkpoints GPS"
             [ "$start_mission" -eq 0 ] && c_blue "    (sin --start-mission: asume que la mision ya esta arrancada)"
-            exec python -m rover_traversability.demo ${globals[@]+"${globals[@]}"} mission "${a[@]}"
+            exec_py -m rover_traversability.demo ${globals[@]+"${globals[@]}"} mission "${a[@]}"
             ;;
         capture)
             local save_dir="" interval="" max_frames="" with_policy=0
@@ -697,7 +777,7 @@ cmd_traversability() {
             [ -n "$max_frames" ] && a+=(--max-frames "$max_frames")
             [ "$with_policy" -eq 1 ] && a+=(--with-policy)
             c_blue "==> testing.capture_test — junta frames del SDK, no mueve el rover"
-            exec python -m testing.capture_test ${globals[@]+"${globals[@]}"} "${a[@]}"
+            exec_py -m testing.capture_test ${globals[@]+"${globals[@]}"} "${a[@]}"
             ;;
         policy-test)
             local images="" out="" configs="" cache_dir="" no_overlays=0
@@ -718,7 +798,7 @@ cmd_traversability() {
             [ -n "$cache_dir" ] && a+=(--cache-dir "$cache_dir")
             [ "$no_overlays" -eq 1 ] && a+=(--no-overlays)
             c_blue "==> testing.policy_test — barrido de configs de policy sobre frames guardados"
-            exec python -m testing.policy_test ${globals[@]+"${globals[@]}"} "${a[@]}"
+            exec_py -m testing.policy_test ${globals[@]+"${globals[@]}"} "${a[@]}"
             ;;
         tune)
             local images="" out="" base_config="" labels="" cache_dir=""
@@ -739,7 +819,7 @@ cmd_traversability() {
             [ -n "$labels" ] && a+=(--labels "$labels")
             [ -n "$cache_dir" ] && a+=(--cache-dir "$cache_dir")
             c_blue "==> testing.policy_tuner — busca la mejor config de policy"
-            exec python -m testing.policy_tuner ${globals[@]+"${globals[@]}"} "${a[@]}"
+            exec_py -m testing.policy_tuner ${globals[@]+"${globals[@]}"} "${a[@]}"
             ;;
         *) die "Nivel desconocido: $level (--help para la lista)" ;;
     esac
@@ -748,7 +828,6 @@ cmd_traversability() {
 HELP_ROSCHECK='ros2-check — talker de prueba de ROS2 (Ctrl+C para cortar)'
 cmd_ros2_check() {
     wants_help "$@" && show_help "$HELP_ROSCHECK"
-    neutralize_conda
     source_ros2
     c_blue "==> talker de prueba. En OTRA terminal:"
     c_blue "      source $ROS_SETUP && ros2 run demo_nodes_py listener"
@@ -785,12 +864,24 @@ cmd_doctor() {
     soft() { c_yellow "aviso $*"; }
 
     echo "== Entornos =="
-    command -v conda >/dev/null 2>&1 && soft "conda instalado (este script lo desactiva solo antes de cada comando)"
-    [ -f "$SDK_VENV/bin/activate" ]   && ok "venv del SDK: $SDK_VENV"     || bad "venv del SDK: $SDK_VENV"
-    [ -f "$GENIE_VENV/bin/activate" ] && ok "venv de genie: $GENIE_VENV"  || bad "venv de genie: $GENIE_VENV"
+    echo "      entorno activo: $(active_env_label)   ROVER_ENV_MODE=$ROVER_ENV_MODE"
+    if [ -n "${CONDA_PREFIX:-}" ]; then
+        soft "conda activo — el script NO lo desactiva; llama al python del venv por ruta absoluta"
+    fi
+    if [ "$ROVER_ENV_MODE" = "current" ]; then
+        soft "ROVER_ENV_MODE=current: se ignoran los venvs y se usa $(command -v python3)"
+    fi
+    # Con ROVER_ENV_MODE=current los venvs no hacen falta: es aviso, no falta.
+    if [ -x "$SDK_VENV/bin/python" ]; then ok "venv del SDK: $(rel "$SDK_VENV")"
+    elif [ "$ROVER_ENV_MODE" = "current" ]; then soft "sin venv del SDK (no hace falta en modo current)"
+    else bad "venv del SDK: $(rel "$SDK_VENV")"; fi
+    if [ -x "$GENIE_VENV/bin/python" ]; then ok "venv de genie: $(rel "$GENIE_VENV")"
+    elif [ "$ROVER_ENV_MODE" = "current" ]; then soft "sin venv de genie (no hace falta en modo current)"
+    else bad "venv de genie: $(rel "$GENIE_VENV")"; fi
     if [ -x "$GENIE_VENV/bin/python" ]; then
         echo "      python de genie: $("$GENIE_VENV/bin/python" -V 2>&1)"
     fi
+    echo "      python para ROS2: $(ros_python) ($("$(ros_python)" -V 2>&1))"
 
     echo
     echo "== Codigo =="
@@ -890,19 +981,208 @@ cmd_all() {
     tmux kill-session -t "$session" 2>/dev/null || true
     tmux new-session -d -s "$session" -n main -c "$REPO"
 
-    tmux send-keys -t "$session:main" "$0 sdk" C-m
+    tmux send-keys -t "$session:main" "'$SELF' sdk" C-m
     tmux split-window -h -t "$session:main" -c "$REPO"
     if [ "$flavor" = "indoor" ]; then
-        tmux send-keys -t "$session:main" "echo 'Esperando al SDK...'; sleep 6; $0 mapping-ros2" C-m
+        tmux send-keys -t "$session:main" "echo 'Esperando al SDK...'; sleep 6; '$SELF' mapping-ros2" C-m
     else
-        tmux send-keys -t "$session:main" "echo 'Esperando al SDK...'; sleep 6; $0 genie-bridge" C-m
+        tmux send-keys -t "$session:main" "echo 'Esperando al SDK...'; sleep 6; '$SELF' genie-bridge" C-m
     fi
     tmux split-window -v -t "$session:main" -c "$REPO"
-    tmux send-keys -t "$session:main" "$0 dashboard" C-m
+    tmux send-keys -t "$session:main" "'$SELF' dashboard" C-m
     tmux select-layout -t "$session:main" tiled
 
     c_green "Sesion tmux '$session' armada (sdk / $( [ "$flavor" = indoor ] && echo mapping-ros2 || echo genie-bridge) / dashboard)"
     c_blue  "Dashboard: http://localhost:8765"
+    tmux attach -t "$session"
+}
+
+
+# ------------------------------------------------------- combos de un clic ---
+# Los dos combos que se usan de verdad, para no acordarse del orden ni de
+# cuantas terminales abrir. Cada pieza va a su propio panel de tmux, se
+# cortan todas juntas con "tmux kill-session", y el dashboard tiene los
+# mismos dos combos como UN SOLO BOTON.
+
+need_tmux() {
+    command -v tmux >/dev/null 2>&1 || die "Estos combos usan tmux (sudo apt install -y tmux). Sin tmux, corre cada comando en su propia terminal o usa el dashboard."
+}
+
+# stamp para nombres de sesion/mapa/debug sin pisar corridas anteriores
+stamp() { date +%Y%m%d_%H%M%S; }
+
+HELP_RECORD='record-run — GRABACION DE RECORRIDO de un clic (ROS2 + SLAM + mapeo)
+
+  ./rover_launch.sh record-run [--go] [--map-out PREFIJO] [--db PATH]
+                               [--config PATH] [--export-every-s N]
+                               [--max-seconds N] [--debug-dir DIR]
+                               [--no-rtabmap] [--no-sdk] [--dashboard]
+
+Levanta en paneles de tmux, en este orden:
+  1. sdk            (el SDK; el control manual del rover sigue siendo suyo)
+  2. mapping-ros2   RTAB-Map + bridge ROS2 -> correccion de pose por cierre
+                    de bucles  (se saltea con --no-rtabmap)
+  3. map-session    explora por frontera y exporta maps/<prefijo>.yaml+.pgm
+
+Sin --go es simulacro. Por defecto escribe en maps/sesion_<fecha>.{db,yaml,pgm}
+dentro del repo. Cortar todo: tmux kill-session -t rover-rec'
+cmd_record_run() {
+    wants_help "$@" && show_help "$HELP_RECORD"
+    local go=0 map_out="" db="" config="" export_every_s="30" max_seconds="" \
+          debug_dir="" rtabmap=1 with_sdk=1 with_dash=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --go) go=1; shift ;;
+            --map-out) map_out="$2"; shift 2 ;;
+            --db) db="$2"; shift 2 ;;
+            --config) config="$2"; shift 2 ;;
+            --export-every-s) export_every_s="$2"; shift 2 ;;
+            --max-seconds) max_seconds="$2"; shift 2 ;;
+            --debug-dir) debug_dir="$2"; shift 2 ;;
+            --no-rtabmap) rtabmap=0; shift ;;
+            --no-sdk) with_sdk=0; shift ;;
+            --dashboard) with_dash=1; shift ;;
+            *) die "Opcion desconocida para record-run: $1 (--help para la lista)" ;;
+        esac
+    done
+    need_tmux
+
+    local st; st="$(stamp)"
+    [ -n "$map_out" ] || map_out="$MAPS_DIR/sesion_$st"
+    [ -n "$db" ] || db="$MAPS_DIR/sesion_$st.db"
+    mkdir -p "$MAPS_DIR"
+
+    local map_args=(--map-out "$map_out" --export-every-s "$export_every_s")
+    [ -n "$config" ] && map_args+=(--config "$config")
+    [ -n "$max_seconds" ] && map_args+=(--max-seconds "$max_seconds")
+    [ -n "$debug_dir" ] && map_args+=(--debug-dir "$debug_dir")
+    [ "$go" -eq 1 ] && map_args+=(--go)
+
+    local session="rover-rec"
+    tmux kill-session -t "$session" 2>/dev/null || true
+    tmux new-session -d -s "$session" -n main -c "$REPO"
+
+    local panes=0
+    if [ "$with_sdk" -eq 1 ]; then
+        tmux send-keys -t "$session:main" "'$SELF' sdk" C-m
+        panes=1
+    fi
+    if [ "$rtabmap" -eq 1 ]; then
+        [ "$panes" -gt 0 ] && tmux split-window -h -t "$session:main" -c "$REPO"
+        tmux send-keys -t "$session:main" "echo 'esperando al SDK...'; sleep 6; '$SELF' mapping-ros2 --db '$db'" C-m
+        panes=$((panes + 1))
+    fi
+    [ "$panes" -gt 0 ] && tmux split-window -v -t "$session:main" -c "$REPO"
+    tmux send-keys -t "$session:main" "echo 'esperando al stack...'; sleep 12; '$SELF' map-session ${map_args[*]@Q}" C-m
+    if [ "$with_dash" -eq 1 ]; then
+        tmux split-window -v -t "$session:main" -c "$REPO"
+        tmux send-keys -t "$session:main" "'$SELF' dashboard" C-m
+    fi
+    tmux select-layout -t "$session:main" tiled
+
+    c_green "Grabacion de recorrido armada en la sesion tmux '$session'"
+    c_blue  "  mapa   -> $(rel "$map_out").yaml + .pgm"
+    [ "$rtabmap" -eq 1 ] && c_blue "  RTAB-Map -> $(rel "$db")"
+    [ "$go" -eq 1 ] && c_yellow "  MODO REAL: el rover explora solo" || c_blue "  simulacro (agrega --go para que se mueva)"
+    c_blue  "  cortar todo: tmux kill-session -t $session"
+    tmux attach -t "$session"
+}
+
+HELP_INDOORRUN='indoor-run — MISION INDOOR de un clic, con modo de ejecucion
+
+  ./rover_launch.sh indoor-run --mode checkpoints|map|both [--go]
+                               [--waypoints-path PATH] [--config PATH]
+                               [--db PATH] [--max-seconds N] [--debug-dir DIR]
+                               [--no-sdk] [--dashboard]
+
+Modos:
+  checkpoints  (A) ruta pregrabada: indoor-bridge --search-mode waypoints
+                   sobre el yaml de waypoints. No levanta RTAB-Map.
+  map          (B) correccion por mapa: levanta mapping-ros2 (RTAB-Map) en
+                   paralelo y corre indoor-bridge --search-mode frontier, que
+                   toma la pose corregida via TF map->base_link.
+                   Requiere mapping.rtabmap_correction.enabled: true en el config.
+  both         (C) las dos: RTAB-Map corrigiendo la pose MIENTRAS sigue la
+                   ruta pregrabada. Es el modo recomendado cuando ya mapeaste.
+
+Sin --go es simulacro. Cortar todo: tmux kill-session -t rover-indoor'
+cmd_indoor_run() {
+    wants_help "$@" && show_help "$HELP_INDOORRUN"
+    local mode="" go=0 waypoints_path="" config="" db="" max_seconds="" \
+          debug_dir="" with_sdk=1 with_dash=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --mode) mode="$2"; shift 2 ;;
+            --go) go=1; shift ;;
+            --waypoints-path) waypoints_path="$2"; shift 2 ;;
+            --config) config="$2"; shift 2 ;;
+            --db) db="$2"; shift 2 ;;
+            --max-seconds) max_seconds="$2"; shift 2 ;;
+            --debug-dir) debug_dir="$2"; shift 2 ;;
+            --no-sdk) with_sdk=0; shift ;;
+            --dashboard) with_dash=1; shift ;;
+            *) die "Opcion desconocida para indoor-run: $1 (--help para la lista)" ;;
+        esac
+    done
+
+    case "$mode" in
+        checkpoints|map|both) ;;
+        "") die "Falta --mode (checkpoints | map | both). Ver --help" ;;
+        *)  die "--mode invalido: $mode (checkpoints | map | both)" ;;
+    esac
+    need_tmux
+
+    local search_mode="waypoints" with_rtabmap=0
+    case "$mode" in
+        checkpoints) search_mode="waypoints"; with_rtabmap=0 ;;
+        map)         search_mode="frontier";  with_rtabmap=1 ;;
+        both)        search_mode="waypoints"; with_rtabmap=1 ;;
+    esac
+
+    if [ "$search_mode" = "waypoints" ]; then
+        [ -n "$waypoints_path" ] || waypoints_path="configs/waypoints_example.yaml"
+        # el path es relativo a genie/ (que es desde donde corre el modulo)
+        [ -f "$GENIE_DIR/$waypoints_path" ] || [ -f "$waypoints_path" ] || \
+            die "No encuentro el yaml de waypoints: $waypoints_path (relativo a $(rel "$GENIE_DIR")). Sacalo del mapeo con poses_to_waypoints.py"
+    fi
+
+    local br_args=(--search-mode "$search_mode")
+    [ "$search_mode" = "waypoints" ] && br_args+=(--waypoints-path "$waypoints_path")
+    [ -n "$config" ] && br_args+=(--config "$config")
+    [ -n "$max_seconds" ] && br_args+=(--max-seconds "$max_seconds")
+    [ -n "$debug_dir" ] && br_args+=(--debug-dir "$debug_dir")
+    [ "$go" -eq 1 ] && br_args+=(--go)
+
+    [ -n "$db" ] || db="$MAPS_DIR/sesion_$(stamp).db"
+    [ "$with_rtabmap" -eq 1 ] && mkdir -p "$MAPS_DIR"
+
+    local session="rover-indoor"
+    tmux kill-session -t "$session" 2>/dev/null || true
+    tmux new-session -d -s "$session" -n main -c "$REPO"
+
+    local panes=0
+    if [ "$with_sdk" -eq 1 ]; then
+        tmux send-keys -t "$session:main" "'$SELF' sdk" C-m
+        panes=1
+    fi
+    if [ "$with_rtabmap" -eq 1 ]; then
+        [ "$panes" -gt 0 ] && tmux split-window -h -t "$session:main" -c "$REPO"
+        tmux send-keys -t "$session:main" "echo 'esperando al SDK...'; sleep 6; '$SELF' mapping-ros2 --db '$db'" C-m
+        panes=$((panes + 1))
+    fi
+    [ "$panes" -gt 0 ] && tmux split-window -v -t "$session:main" -c "$REPO"
+    tmux send-keys -t "$session:main" "echo 'esperando al stack...'; sleep 12; '$SELF' indoor-bridge ${br_args[*]@Q}" C-m
+    if [ "$with_dash" -eq 1 ]; then
+        tmux split-window -v -t "$session:main" -c "$REPO"
+        tmux send-keys -t "$session:main" "'$SELF' dashboard" C-m
+    fi
+    tmux select-layout -t "$session:main" tiled
+
+    c_green "Mision indoor armada en la sesion tmux '$session' (modo: $mode)"
+    c_blue  "  busqueda: $search_mode$( [ "$search_mode" = waypoints ] && echo "  ($waypoints_path)" )"
+    [ "$with_rtabmap" -eq 1 ] && c_blue "  RTAB-Map corrigiendo la pose -> $(rel "$db")"
+    [ "$go" -eq 1 ] && c_yellow "  MODO REAL: el rover se mueve" || c_blue "  simulacro (agrega --go)"
+    c_blue  "  cortar todo: tmux kill-session -t $session"
     tmux attach -t "$session"
 }
 
@@ -934,13 +1214,22 @@ Diagnostico
   perception         SAM-TP sobre una foto
   maps               lista .db de RTAB-Map y mapas exportados
 
-Combos
+Combos de un clic
+  record-run         GRABAR RECORRIDO: sdk + RTAB-Map + map-session
+                     ./rover_launch.sh record-run --go
+  indoor-run         MISION INDOOR:    --mode checkpoints | map | both
+                     ./rover_launch.sh indoor-run --mode both --go
   all                sdk + genie-bridge + dashboard en tmux
   all-indoor         sdk + mapping-ros2 + dashboard en tmux
 
+Los mismos dos combos estan como UN SOLO BOTON en el dashboard (:8765).
+
 Variables de entorno que pisan las rutas autodetectadas:
-  REPO SDK_DIR GENIE_DIR TRAV_DIR ROS2_DIR MAPPING_DIR MAPS_DIR
-  SDK_VENV GENIE_VENV ROS_SETUP
+  REPO SDK_DIR GENIE_DIR TRAV_DIR ROS2_DIR MAPPING_DIR MAPS_DIR DEBUG_DIR
+  SDK_VENV GENIE_VENV ROS_SETUP ROS_PYTHON
+
+Entornos (no se toca conda nunca):
+  ROVER_ENV_MODE=auto|venv|current   auto = venv si existe, si no el python activo
 USAGE
     exit "${1:-1}"
 }
@@ -965,6 +1254,8 @@ case "$cmd" in
     sdk-client)     cmd_sdk_client "$@" ;;
     perception)     cmd_perception "$@" ;;
     maps)           cmd_maps "$@" ;;
+    record-run)     cmd_record_run "$@" ;;
+    indoor-run)     cmd_indoor_run "$@" ;;
     all)            cmd_all outdoor ;;
     all-indoor)     cmd_all indoor ;;
     -h|--help|help) usage 0 ;;

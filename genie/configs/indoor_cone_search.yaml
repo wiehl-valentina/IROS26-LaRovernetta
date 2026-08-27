@@ -345,7 +345,7 @@ memory:
   # son dos estrategias alternativas, no activar las dos juntas.
   external_map:
     enabled: false
-    yaml_path: "maps/sesion1_final.yaml"   # ruta relativa a donde se corre
+    yaml_path: "maps/sesion1.yaml"   # ruta relativa a donde se corre
                                              # el comando (normalmente genie/)
     start_pose_map:
       x_m: 0.0      # posicion del robot AHORA, en el marco de ESE mapa
