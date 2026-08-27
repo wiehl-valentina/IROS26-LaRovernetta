@@ -82,26 +82,17 @@ navigation:
   commit_min_deg: 8.0
   commit_override_deg: 30.0
 
-  # REPLANIFICACION POR DISPARO ESPACIAL (guia tecnica, seccion 03).
-  # El planner geometrico (plan_on_bev) NO corre en cada frame. A 0.25 m/s y
-  # 5 Hz eso serian 5 cm de avance por decision con celdas de 3 cm: dos frames
-  # seguidos ven casi la misma escena y lo unico que cambia entre ellos es
-  # ruido. Ese es el mecanismo del titubeo.
-  #
-  # Se replanifica solo si: se avanzo replan_every_m desde el ultimo plan
-  # (medido sobre la pose de odometry.py, ya corregida por GPS cuando hay fix),
-  # o al camino cacheado le quedan menos de replan_min_remaining_m por delante,
-  # o el chequeo frontal veto el plan, o pasaron replan_max_age_s (red de
-  # seguridad, y unico disparador si memory.enabled esta en false).
-  #
-  # Entre replanificaciones el bridge sigue el ultimo camino calculado,
-  # reproyectado a la pose actual (_transform_path_xy, definido DENTRO de
-  # bridge.py — no en navigation.py). Un obstaculo al frente (front_is_blocked)
-  # sigue frenando de inmediato, cada frame: el compromiso es con la ruta,
-  # nunca con "no frenar".
+  # El planner geometrico (plan_on_bev) NO corre en cada frame: solo cuando
+  # el robot avanzo esto desde el ultimo plan (medido sobre la pose de
+  # odometry.py, ya corregida por GPS cuando hay fix), o antes si al camino
+  # cacheado le queda menos de replan_min_remaining_m por delante. Entre
+  # medio, el bridge sigue el ultimo camino calculado, reproyectado a la pose
+  # actual (transform_path_xy en navigation.py) — asi el robot se sigue
+  # moviendo en vez de quedarse "pensando" cada frame. Un obstaculo al frente
+  # (front_is_blocked) sigue frenando de inmediato, cada frame, sin esperar
+  # a que se cumpla esta distancia.
   replan_every_m: 1.0
   replan_min_remaining_m: 0.4
-  replan_max_age_s: 2.0
 planner:
   grid_size: 240
   unknown_cost: 0.2
@@ -129,48 +120,38 @@ safety:
   recovery_turn_s: 1.5
   loop_period_s: 0.2
   max_consecutive_turns: 4
+  unstick_forward_s: 2.5
+  # Confirmacion con VLM del rumbo de recuperacion. Requiere GEMINI_API_KEY.
+  # Si falla / timeout / poca confianza, _recover() cae a la memoria espacial
+  # y despues al barrido ciego: nunca bloquea el bucle de control.
+  use_vlm_recovery: true
+  vlm_recovery_timeout_s: 4.0
+  vlm_recovery_min_confidence: 0.35
 
-  # unstick_forward_s SE SACO. _unstick() ya no existe: forzar un avance recto
-  # estando trabado de frente es exactamente lo peor que se puede hacer (en el
-  # mejor caso choca suave y el operador interviene). Los giros repetidos sin
-  # avance ahora entran a la misma rutina de recuperacion que todo lo demas.
-
-  # use_vlm_recovery / vlm_recovery_timeout_s / vlm_recovery_min_confidence
-  # SE SACARON. Esta version de bridge.py no usa VLM en absoluto: no importa
-  # .vlm_recovery ni necesita GEMINI_API_KEY. Si volves a poner
-  # use_vlm_recovery: true, bridge.py avisa una vez y lo ignora.
-
-  # ------------------------------------------------------ obstaculo al frente
-  # Cuantos frames SEGUIDOS de "OBSTACULO al frente" antes de recuperar: no
-  # reaccionar a un bloqueo de un solo frame (alguien que cruzo caminando),
-  # pero tampoco quedarse frenado indefinidamente contra una maceta. Contador
-  # propio, separado de max_consecutive_turns.
+  # Obstaculo persistente: cuantos frames SEGUIDOS de "OBSTACULO al frente"
+  # antes de evaluar un retroceso (no reaccionar a un bloqueo de un solo
+  # frame, p.ej. alguien que cruzo caminando).
   obstacle_persist_frames: 4
-
-  # ------------------------------------------------------------- retroceso
-  # AHORA SI SE IMPLEMENTAN (antes eran config muerta). _recover() retrocede
-  # antes de girar: a 0.3 m un obstaculo ocupa 60 grados del campo visual y los
-  # 12 caminos candidatos del planner lo atraviesan, giremos hacia donde
-  # giremos, porque la zona ciega gira con el robot. Retroceder es la unica
-  # accion que lo aleja.
-  #
-  # La unica evidencia de que atras hay lugar es la memoria (no hay camara
-  # trasera), y la memoria de atras es la mas vieja y la mas deteriorada por
-  # decay_per_s — por eso los dos umbrales de abajo son conservadores y, si no
-  # se cumplen, el retroceso se OMITE y se pasa directo al giro.
+  # Umbrales sobre lo que dice la MEMORIA (PersistentMap, no una camara
+  # trasera real) del rumbo "atras" para animarse a retroceder.
   retroceso_min_libre_pct: 55.0
   retroceso_min_cobertura_pct: 30.0
   retroceso_max_m: 0.6
   retroceso_paso_m: 0.2
-  # Negativo = reversa. SIN VERIFICAR EMPIRICAMENTE todavia (no hay un tools/
-  # equivalente a check_angular_sign.py para esto). CONFIRMALO A MANO la
-  # primera vez, en dry-run y despues con espacio de sobra detras del robot:
-  # esta version SI maneja en reversa.
+  # Negativo = reversa. Sin verificar empiricamente todavia (no hay un
+  # tools/ equivalente a check_angular_sign.py para esto) — confirmalo a
+  # mano la primera vez, con espacio de sobra detras del robot.
   retroceso_linear: -0.18
+  # AVISO: obstacle_persist_frames y retroceso_* siguen SIN implementarse en
+  # bridge.py (a diferencia de use_vlm_recovery / recovery_headings_deg /
+  # recovery_min_cobertura_pct, que desde esta version si se leen). Manejar en
+  # reversa sin ningun sensor trasero se dejo deliberadamente afuera: la unica
+  # evidencia de que atras hay lugar seria la memoria, y la memoria de atras
+  # es siempre la mas vieja y la mas deteriorada por decay_per_s.
 
-  # ----------------------------------------------------- rumbo de escape
-  # Rumbos candidatos (grados relativos al actual) que _recover() evalua contra
-  # el PersistentMap antes de girar. 180 = atras, positivo = izquierda.
+  # Recuperacion informada por memoria: rumbos candidatos (grados relativos
+  # al actual) que _recover() evalua con el mapa antes de girar. 180 = atras,
+  # positivo = izquierda.
   #
   # 0.0 (adelante) se saco de la lista a proposito: a _recover() se llega
   # porque el planner —que YA planifica sobre este mismo mapa— no encontro
@@ -179,28 +160,6 @@ safety:
   # bridge.py lo filtra igual aunque este en la lista.
   recovery_headings_deg: [90.0, -90.0, 180.0]
   recovery_min_cobertura_pct: 25.0
-
-  # Si la memoria no tiene cobertura util, el rumbo lo deciden los CORREDORES
-  # de rover_traversability (suggest_command sobre la mascara de imagen
-  # fresca). Ese paquete vive fuera de genie/, asi que bridge.py lo busca solo:
-  # import directo -> traversability_path -> candidatos relativos al repo. Si
-  # no lo encuentra, avisa y sigue con mapa + barrido ciego (nunca es fatal).
-  # Dejalo en null si el repo tiene la estructura habitual.
-  traversability_path: null
-
-  # Pisa campos de PolicyConfig (rover_traversability/policy.py). Vacio = los
-  # defaults de ese archivo, que son los que salieron de policy_tuner.py.
-  # Solo se usa el SCORING de corredores: la velocidad del giro la ponen
-  # navigation.turn_speed / angular_sign, no PolicyConfig.
-  corridors: {}
-
-  # Cada cuanto puede volver a dispararse una recuperacion (evita encadenarlas
-  # sobre datos identicos), a partir de que recuperacion consecutiva sin avance
-  # el retroceso escala de retroceso_paso_m a retroceso_max_m, y a la cuanta se
-  # pide intervencion humana en vez de seguir golpeando la pared.
-  recovery_block_s: 2.0
-  recovery_escalate_after: 2
-  recovery_give_up_after: 3
 
 
 odometry:
