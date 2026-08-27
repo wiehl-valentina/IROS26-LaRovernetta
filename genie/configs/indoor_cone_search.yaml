@@ -334,6 +334,24 @@ memory:
                               # planner puede "ver" mas lejos/ancho de lo que
                               # el BEV de un solo frame alcanza.
 
+  # --- mapa externo (opcional) ---------------------------------------------
+  # Importa un mapa YA GRABADO (export de map_session.py o del
+  # rtabmap-databaseViewer, formato ROS map_server: .yaml+.pgm) en vez de
+  # arrancar con el PersistentMap vacio. Usar SOLO si sabes con certeza en
+  # que pose (x, y, yaw) de ESE mapa esta parado el robot AHORA, al arrancar
+  # indoor_bridge.py (medido a mano, una vez, con cinta en el piso). Si no
+  # controlas la pose de arranque, dejar esto deshabilitado y usar en cambio
+  # mapping.rtabmap_correction (relocalizacion automatica via RTAB-Map) —
+  # son dos estrategias alternativas, no activar las dos juntas.
+  external_map:
+    enabled: false
+    yaml_path: "maps/sesion1_final.yaml"   # ruta relativa a donde se corre
+                                             # el comando (normalmente genie/)
+    start_pose_map:
+      x_m: 0.0      # posicion del robot AHORA, en el marco de ESE mapa
+      y_m: 0.0
+      yaw_deg: 0.0
+
 
 # ============================================================================
 # CONE (nuevo, solo en indoor): configuracion del detector de conos —
