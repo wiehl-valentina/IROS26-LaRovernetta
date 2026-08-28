@@ -1,0 +1,236 @@
+# Config para MapSessionBridge (genie_rover.Indoor.map_session): sesion de
+# mapeo puro por exploracion de frontera, SIN buscar cono.
+#
+# Es indoor_cone_search.yaml con tres cambios:
+#   1. mission.search_mode: "frontier" (en vez de "wander")
+#   2. mission.detect_confidence_min subido a un valor imposible de alcanzar,
+#      para que la deteccion de cono jamas dispare NAVIGATE/APPROACH/STOP y
+#      la sesion se quede explorando indefinidamente (o hasta --max-seconds)
+#   3. seccion "mapping:" nueva, al final, que no existe en indoor_bridge.py
+
+rover:
+  base_url: "http://localhost:8000"
+  timeout_s: 5.0
+
+# --- copiar/ajustar estas secciones desde tu config real ya calibrado -----
+# (camera, projection, navigation, planner, safety: identico a
+#  indoor_cone_search.yaml / frodobot_rover.yaml, no reproducido aca para no
+#  arriesgar que quede desincronizado de tu calibracion real -- copialo tal
+#  cual de tu config existente)
+
+
+samtp:
+  config_path: "sam2/configs/sam2.1_inference_tiny/sam2.1_custom2.yaml"
+  checkpoint_path: "sam2_logs/configs/sam2.1_training_tiny/sam2_training_custom2_freezeNoneNone_f57.yaml/checkpoints/checkpoint_2.pt"  # viejo, checkpoint generico del paper
+  #checkpoint_path: "checkpoints/checkpoint_finetuned_v2.pt"   # nuevo, fine-tuneado en 50k frames del Mini+
+  device: null
+  precision: "auto"
+  score_thresh: 0.0
+
+odometry:
+  wheel_radius_m: 0.0527
+  track_width_m: 0.15
+  left_rpm_indices: [0, 2]
+  right_rpm_indices: [1, 3]
+  rotation_sign: 1.0
+  use_gyro_for_rotation: true
+  gps_correction: false
+  min_gps_displacement_m: 1.0
+
+memory:
+  enabled: true
+  map_size_m: 10.0            # un poco mas grande que para cone_search: la
+                               # sesion de mapeo puede recorrer mas terreno
+  update_weight: 0.45
+  decay_per_s: 0.03            # mas lento que cone_search: durante el mapeo
+                               # interesa ACUMULAR evidencia, no olvidar rapido
+  recenter_margin_m: 1.5
+  min_confidence: 0.15
+  plan_forward_m: 3.0
+  plan_side_m: 2.0
+
+cone:
+  backend: "color"
+  color:
+    hsv_low: [5, 120, 120]
+    hsv_high: [18, 255, 255]
+    hsv_low2: null
+    hsv_high2: null
+    min_area_px: 250
+    min_aspect_ratio: 0.25
+    max_aspect_ratio: 1.3
+    min_fill_ratio: 0.35
+    morph_kernel: 5
+
+mission:
+  search_mode: "frontier"      # <- la diferencia clave con indoor_cone_search.yaml
+  frontier_free_thresh: 0.55
+  frontier_min_m: 0.6
+  frontier_max_m: 3.5
+  frontier_preferred_m: 1.8
+  frontier_fov_deg: 140.0
+  frontier_goal_hold_s: 4.0
+
+  # Practicamente imposible de alcanzar (la confianza del detector de cono
+  # esta en [0,1]) -- asi la mision nunca sale de SEARCH/frontier durante
+  # una sesion de mapeo, aunque el heuristico de color de un falso positivo.
+  detect_confidence_min: 2.0
+  approach_start_m: 2.0
+  verify_at_m: 0.8
+  stop_distance_m: 0.5
+  approach_max_linear_scale: 0.6
+  lost_cone_grace_s: 1.5
+  verify_hits_required: 3
+  verify_window: 6
+  verify_min_confidence: 0.55
+  verify_max_jump_m: 0.6
+  verify_with_vlm: false
+
+# ------------------------------------------------------------- mapeo (nuevo)
+mapping:
+  # Prefijo de salida; se le agrega "_000", "_001", ... y "_final".
+  map_out_prefix: "maps/indoor_session"
+  # Cada cuanto exportar el mapa MIENTRAS corre (ademas del export final al
+  # terminar) -- util para poder cortar la sesion en cualquier momento y ya
+  # tener algo guardado, o para inspeccionar el progreso a mitad de camino.
+  export_every_s: 30.0
+
+  rtabmap_correction:
+    # true: reemplaza la pose de dead-reckoning por la corregida via TF
+    # map->base_link que publica Indoor_Instalacion_SDK_SLAM/ros2/mapping/rtabmap_mapping.launch.py (o examples/ros2/... dentro del SDK)
+    # (tiene que estar corriendo en paralelo). false: usa solo rueda+giro+GPS,
+    # como indoor_bridge.py normal -- podes correr map_session.py sin ROS2
+    # para nada si dejas esto en false.
+    enabled: false
+    map_frame: "map"
+    base_frame: "base_link"
+    lookup_timeout_s: 0.2
+
+camera:
+  calibrated: true
+
+  image_size: [1920, 1080]
+
+  intrinsics:
+    - [925.265722853314, 0.0, 962.3052531643399]
+    - [0.0, 924.6288195383473, 528.3891677741947]
+    - [0.0, 0.0, 1.0]
+
+  # k1 = -0.263: barril marcado, tipico de un gran angular de ~92 grados.
+  # Corregirlo NO es opcional: project_score_to_bev asume pinhole puro.
+  dist_coeffs: [-0.26257227523222204, 0.06503885855790396, -0.00031427372195389234, -0.0011895820486559178, -0.0073726075647136185]
+
+  # Solo se usan si 'pose' es null. Se dejan como referencia.
+  height_m: 0.150
+  pitch_down_deg: 1.85
+
+  # T_world_camera de pose_D (el de menor error). Tiene prioridad sobre
+  # height_m y pitch_down_deg.
+  pose:
+    - [-0.000313571, -0.032360666, 0.999476207, 0.000000000]
+    - [-0.999953056, 0.009689420, -0.000000000, 0.000000000]
+    - [-0.009684345, -0.999429288, -0.032362186, 0.150244633]
+    - [0.000000000, 0.000000000, 0.000000000, 1.000000000]
+
+projection:
+  ground_z: 0.0
+  resolution_m_per_px: 0.03
+
+  # PENDIENTE: con la camara a 15 cm, el suelo lejano se ve muy comprimido y
+  # la mascara se vuelve poco confiable a partir de cierta distancia. Mirar el
+  # BEV sobre una foto de vereda y bajar esto a 2.5-3.0 si hace falta.
+  forward_range_m: 2.0
+  side_range_m: 2.0
+  max_ray_distance_m: 2.5
+  projection_downscale: 2
+
+navigation:
+  # Determinar con tools/check_angular_sign.py:
+  #   -1.0  si angular positivo hace girar a la IZQUIERDA
+  #   +1.0  si angular positivo hace girar a la DERECHA
+  angular_sign: -1.0
+
+  max_linear: 0.90       # bien lento para las primeras corridas
+  max_angular: 0.60
+  turn_speed: 0.40
+  kp_angular: 0.9
+  lookahead_m: 1.5
+  align_threshold_deg: 90.0
+
+  goal_range_m: 3.5
+  claim_radius_m: 15.0    # tolerancia oficial del ERC
+
+  # El rumbo sale del track GPS (ruidoso pero sin sesgo). El magnetometro va
+  # montado al lado de los motores y suele tener offset variable.
+  heading_min_displacement_m: 1.5
+  trust_orientation: false
+  orientation_offset_deg: 0.0
+  orientation_sign: 1.0
+  commit_hold_s: 2.0
+  commit_min_deg: 8.0
+  commit_override_deg: 30.0
+
+  # El planner geometrico (plan_on_bev) NO corre en cada frame: solo cuando
+  # el robot avanzo esto desde el ultimo plan (medido sobre la pose de
+  # odometry.py, ya corregida por GPS cuando hay fix), o antes si al camino
+  # cacheado le queda menos de replan_min_remaining_m por delante. Entre
+  # medio, el bridge sigue el ultimo camino calculado, reproyectado a la pose
+  # actual (transform_path_xy en navigation.py) — asi el robot se sigue
+  # moviendo en vez de quedarse "pensando" cada frame. Un obstaculo al frente
+  # (front_is_blocked) sigue frenando de inmediato, cada frame, sin esperar
+  # a que se cumpla esta distancia.
+  replan_every_m: 1.0
+  replan_min_remaining_m: 0.4
+
+planner:
+  grid_size: 240
+  unknown_cost: 0.2
+  smooth_kernel: 3
+  num_goals: 30
+  num_mid_points_per_goal: 20
+  path_num_samples: 100
+  footprint_px: 12        # ~0.30 m de ancho de robot. Medir el Mini y ajustar.
+  threshold_cost: 0.35
+  threshold_points_ratio: 0.02
+  number_of_points_to_filter: 60
+  alpha: 1.0
+  best_k: 12
+  use_clustering: true    # el path fusion del paper
+  max_clusters: 2
+  cluster_angle_threshold_deg: 40.0
+  random_seed: 42
+  include_goal_in_path_bank: false
+  include_random_goals: true
+
+safety:
+  stale_frame_s: 2.0
+  max_consecutive_errors: 5
+  recovery_after_empty_plans: 3
+  recovery_turn_s: 1.5
+  loop_period_s: 0.2
+  max_consecutive_turns: 4
+  unstick_forward_s: 2.5
+  use_vlm_recovery: true
+  vlm_recovery_timeout_s: 4.0
+  vlm_recovery_min_confidence: 0.35
+
+  # Obstaculo persistente: cuantos frames SEGUIDOS de "OBSTACULO al frente"
+  # antes de evaluar un retroceso (no reaccionar a un bloqueo de un solo
+  # frame, p.ej. alguien que cruzo caminando).
+  obstacle_persist_frames: 4
+  # Umbrales sobre lo que dice la MEMORIA (PersistentMap, no una camara
+  # trasera real) del rumbo "atras" para animarse a retroceder.
+  retroceso_min_libre_pct: 55.0
+  retroceso_min_cobertura_pct: 30.0
+  retroceso_max_m: 0.6
+  retroceso_paso_m: 0.2
+  # Negativo = reversa. Sin verificar empiricamente todavia (no hay un
+  # tools/ equivalente a check_angular_sign.py para esto) — confirmalo a
+  # mano la primera vez, con espacio de sobra detras del robot.
+  retroceso_linear: -0.18
+
+  # Recuperacion informada por memoria: rumbos candidatos (grados relativos
+  # al actual) que _recover() evalua con el mapa antes de girar. 0=adelante
+  # (por si el bloqueo ya se disolvio), 180=atras.
+  recovery_headings_deg: [0.0, 90.0, -90.0, 180.0]
+  recovery_min_cobertura_pct: 25.0

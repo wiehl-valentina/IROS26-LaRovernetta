@@ -1,0 +1,515 @@
+# Config de IndoorBridge: navegacion SIN GPS + busqueda de un cono.
+#
+# Parte de la MISMA calibracion de camara que configs/frodobot_rover.yaml
+# (rover/samtp/camera/projection/planner/odometry/memory: si calibraste el
+# robot para el modo ERC, es la misma camara y el mismo SAM-TP, asi que estas
+# secciones se copian tal cual). Lo nuevo esta al final: `cone:` y `mission:`.
+#
+# Si tu robot / camara es distinto, corre primero tools/calibrate_camera.py
+# y tools/camera_pose_from_ground.py como en frodobot_rover.yaml — sin eso
+# _check_placeholders() no te deja arrancar (a proposito).
+
+# ============================================================================
+# ROVER: como hablarle al SDK (el servidor FastAPI que corre "hypercorn
+# main:app" y controla el robot fisico / la simulacion).
+# ============================================================================
+rover:
+  base_url: "http://localhost:8000"   # donde esta corriendo el SDK. Si el SDK
+                                       # esta en otra maquina, cambiar el host.
+  timeout_s: 5.0                      # cuanto esperar una respuesta HTTP del
+                                       # SDK antes de darla por caida/error.
+
+
+# ============================================================================
+# SAMTP: donde vive el modelo de percepcion (SAM-TP) que segmenta la imagen
+# en "transitable / no transitable". Esta seccion la lee PerceptionPipeline
+# (perception.py) sin default: si falta, revienta con KeyError.
+# ============================================================================
+samtp:
+  config_path: "sam2/configs/sam2.1_inference_tiny/sam2.1_custom2.yaml"
+  # yaml de arquitectura del modelo SAM2 (rutas relativas a la raiz del repo).
+
+  checkpoint_path: "sam2_logs/configs/sam2.1_training_tiny/sam2_training_custom2_freezeNoneNone_f57.yaml/checkpoints/checkpoint_2.pt"
+  # pesos entrenados (.pt). No viaja en git por el peso — hay que bajarlo
+  # aparte segun el README. Cambiar de checkpoint = cambiar de que tan bueno
+  # es el detector de "transitable".
+
+  device: null       # null = autodetectar (usa GPU CUDA si hay, si no CPU).
+                      # En CPU, SAM-TP tiny puede tardar ~1-4 s por frame.
+
+  precision: "auto"  # deja que el runner elija fp16/fp32 segun la GPU
+                      # (fp16 en GPUs Turing como la RTX 2080, por ejemplo).
+
+  score_thresh: 0.0  # umbral minimo de confianza de la mascara de
+                      # segmentacion. 0.0 = no filtra nada aca (el filtrado
+                      # real pasa mas adelante en el pipeline de conos).
+
+
+# ============================================================================
+# CAMERA: calibracion fisica de la camara. La parte mas delicada del
+# archivo: si esto esta mal, TODO lo que se calcula sobre "donde esta el
+# piso" es basura, aunque el resto del config este perfecto.
+# ============================================================================
+camera:
+  calibrated: true
+  # Flag que exige _check_placeholders() (bridge.py) para dejarte arrancar.
+  # Si esta en false, el programa corta al toque con un mensaje explicito
+  # pidiendote calibrar antes de seguir — es a proposito, para no arrancar
+  # con una calibracion de ejemplo y que el robot choque.
+
+  image_size: [1920, 1080]
+  # Resolucion CON LA QUE SE CALIBRO (ancho, alto). Si el stream real llega a
+  # otra resolucion, perception.py reescala los intrinsecos proporcionalmente
+  # (ver _rectifier_for en perception.py) — no hace falta que coincida frame
+  # a frame, pero SI tiene que ser la resolucion real de cuando calibraste.
+
+  intrinsics:
+    # Matriz K de la camara (distancia focal fx/fy, punto principal cx/cy),
+    # en pixeles. Sale de tools/calibrate_camera.py con un tablero de
+    # ajedrez. Formato: [[fx, 0, cx], [0, fy, cy], [0, 0, 1]].
+    - [925.265722853314, 0.0, 962.3052531643399]
+    - [0.0, 924.6288195383473, 528.3891677741947]
+    - [0.0, 0.0, 1.0]
+
+  dist_coeffs: [-0.26257227523222204, 0.06503885855790396, -0.00031427372195389234, -0.0011895820486559178, -0.0073726075647136185]
+  # Coeficientes de distorsion de lente (k1, k2, p1, p2, k3 - modelo OpenCV).
+  # k1 negativo y grande = distorsion de barril marcada, tipica de un gran
+  # angular (~92 grados de FOV en esta camara). Corregir esto NO es
+  # opcional: el codigo de proyeccion a BEV asume un modelo pinhole puro.
+
+  height_m: 0.150         # altura de la camara sobre el piso, en metros.
+  pitch_down_deg: 1.85    # inclinacion de la camara hacia abajo, en grados.
+  # height_m / pitch_down_deg SOLO se usan si 'pose' (abajo) es null — son
+  # una forma mas simple/menos precisa de decir "donde esta la camara".
+
+  pose:
+    # T_world_camera: matriz de transformacion 4x4 completa (rotacion +
+    # traslacion) de camara a mundo. Mas precisa que height_m/pitch_down_deg
+    # porque viene de una calibracion con mas grados de libertad (aca,
+    # "pose_D", la de menor error de las que se probaron). Si esta presente,
+    # TIENE PRIORIDAD sobre height_m/pitch_down_deg.
+    - [-0.000313571, -0.032360666, 0.999476207, 0.000000000]
+    - [-0.999953056, 0.009689420, -0.000000000, 0.000000000]
+    - [-0.009684345, -0.999429288, -0.032362186, 0.150244633]
+    - [0.000000000, 0.000000000, 0.000000000, 1.000000000]
+
+
+# ============================================================================
+# PROJECTION: como se convierte la mascara de segmentacion (en la imagen 2D
+# de la camara) a una vista de pajaro (BEV, bird's-eye-view) sobre el piso,
+# que es lo que usa el planner para decidir por donde ir.
+# ============================================================================
+projection:
+  ground_z: 0.0              # asume piso plano (altura 0 en todo el BEV).
+  resolution_m_per_px: 0.03  # tamano de cada celda del BEV: 3 cm x 3 cm.
+
+  # Pasillo interior: mas corto que afuera porque hay menos espacio para
+  # frenar/maniobrar. Si el pasillo es angosto (< 2 m) bajar side_range_m.
+  forward_range_m: 2.0   # cuanto ve el BEV hacia adelante, en metros.
+  side_range_m: 2.0      # cuanto ve el BEV a cada costado, en metros.
+                          # (afuera, en frodobot_rover.yaml, es 2.0 — mas
+                          # angosto aca porque es pasillo, no campo abierto)
+
+  max_ray_distance_m: 2.5    # hasta donde se proyecta cada rayo de camara
+                              # al armar el BEV.
+  projection_downscale: 2    # submuestrea la proyeccion a la mitad de
+                              # resolucion (mas rapido, un poco menos de
+                              # detalle observado por frame).
+
+
+# ============================================================================
+# NAVIGATION: como se convierte "el camino planificado" en comandos de motor
+# (linear, angular). Los usa PathFollower (navigation.py). IMPORTANTE:
+# linear/angular NO son m/s ni rad/s — son "esfuerzo" normalizado en
+# [-1, 1] que interpreta el propio SDK (sdk_client.control() clampea a eso).
+# ============================================================================
+navigation:
+  # Determinar con tools/check_angular_sign.py, es el mismo robot.
+  angular_sign: -1.0
+  # Corrige la convencion de signo del firmware: -1.0 si angular positivo
+  # hace girar a la IZQUIERDA, +1.0 si hace girar a la DERECHA. Se mide una
+  # sola vez por robot, con el script.
+
+  max_linear: 0.9        # mas lento que afuera: pasillo angosto, gente cerca
+  # OJO: este valor (0.9) es el MISMO que frodobot_rover.yaml (outdoor), no
+  # el 0.8 mas conservador que trae la version de referencia del repo para
+  # indoor. El comentario dice "mas lento que afuera" pero el numero no lo
+  # es. Si vas a correr cerca de gente en un pasillo, considera bajarlo
+  # (ej. 0.5-0.6) — es el tope de velocidad de avance.
+
+  max_angular: 0.6        # tope de velocidad de giro (mismo comentario:
+                           # coincide con el valor de afuera, no es mas bajo).
+  turn_speed: 0.40         # velocidad angular FIJA al girar en el lugar,
+                           # cuando el error de rumbo es grande (> align_threshold_deg).
+  kp_angular: 0.9          # ganancia proporcional del control angular
+                           # (cuanto giro por grado de error de rumbo).
+  lookahead_m: 1.5         # a que distancia sobre el camino planificado se
+                           # mira para calcular hacia donde apuntar.
+  align_threshold_deg: 90.0
+  # Si el error de rumbo hacia el punto de lookahead supera esto, el robot
+  # gira en el lugar (linear=0) en vez de avanzar girando. Por debajo,
+  # avanza reduciendo velocidad segun que tan grande es el error.
+
+  commit_hold_s: 2.0        # cuanto tiempo "se compromete" a un lado de
+                             # esquive (izquierda/derecha) antes de poder
+                             # cambiar, para no titubear a mitad de maniobra.
+  commit_min_deg: 8.0        # diferencia minima de rumbo para considerar
+                             # cambiar de lado dentro del periodo de commit.
+  commit_override_deg: 30.0  # diferencia GRANDE que fuerza el cambio de
+                             # lado igual, aunque el commit_hold_s no haya
+                             # vencido (evita quedarse atascado en un lado
+                             # claramente peor).
+
+  # goal_range_m / claim_radius_m / heading_* / orientation_* / trust_orientation:
+  # los usa el flujo GPS de bridge.py (goal_from_gps / HeadingEstimator). Los
+  # dejamos en el archivo por si algun dia corres bridge.py normal con este
+  # mismo config, pero indoor_bridge.py NO los lee — la meta sale siempre de
+  # genie_rover.mission, nunca de un checkpoint GPS.
+  goal_range_m: 3.5              # (sin efecto en indoor_bridge.py)
+  claim_radius_m: 8.0            # (sin efecto en indoor_bridge.py)
+  heading_min_displacement_m: 1.5  # (sin efecto en indoor_bridge.py)
+  trust_orientation: false          # (sin efecto en indoor_bridge.py)
+  orientation_offset_deg: 0.0       # (sin efecto en indoor_bridge.py)
+  orientation_sign: 1.0             # (sin efecto en indoor_bridge.py)
+
+
+# ============================================================================
+# PLANNER: el planificador geometrico (plan_on_bev, de genie_path_planner)
+# que arma bancos de rutas polinomiales sobre el BEV y elige la mejor hacia
+# la meta que le pasa la mision. Mas chico/liviano aca que en outdoor porque
+# el BEV tambien es mas chico (side_range_m 1.5 vs 2.0).
+# ============================================================================
+planner:
+  grid_size: 200                  # resolucion de la grilla interna del
+                                   # planner (afuera: 240).
+  unknown_cost: 0.2                # costo asignado a celdas "no observadas"
+                                   # todavia (ni transitable ni obstaculo).
+  smooth_kernel: 3                 # suavizado aplicado al mapa de costos.
+  num_goals: 24                    # cuantas metas candidatas evalua el
+                                   # banco de rutas (afuera: 30).
+  num_mid_points_per_goal: 16      # puntos intermedios por cada ruta
+                                   # candidata (afuera: 20).
+  path_num_samples: 80             # muestras por ruta al evaluar el costo
+                                   # (afuera: 100).
+  footprint_px: 12                 # ancho del robot en pixeles del BEV
+                                   # (~0.30 m — medir el Mini real y ajustar
+                                   # si cambia el robot o resolution_m_per_px).
+  threshold_cost: 0.35             # costo maximo aceptable para considerar
+                                   # una ruta valida.
+  threshold_points_ratio: 0.02
+  number_of_points_to_filter: 60
+  alpha: 1.0                       # peso relativo en el scoring de rutas.
+  best_k: 10                       # cuantas de las mejores rutas candidatas
+                                   # se retienen (afuera: 12).
+  use_clustering: true             # el "path fusion" del paper: agrupa
+                                   # rutas similares antes de elegir.
+  max_clusters: 2
+  cluster_angle_threshold_deg: 40.0
+  random_seed: 42                  # semilla fija = resultados reproducibles
+                                   # entre corridas con el mismo BEV.
+  include_goal_in_path_bank: false
+  include_random_goals: true
+
+
+# ============================================================================
+# SAFETY: parametros del bucle principal y de las salvaguardas (frenado por
+# video congelado, recuperacion ante planes vacios, anti-loop de giro).
+# ACTUALIZADO: bridge.py ahora SI lee use_vlm_recovery / vlm_recovery_* /
+# recovery_headings_deg / recovery_min_cobertura_pct (ver Bridge._recover()).
+# Antes eran config muerta. Los que siguen SIN leerse son los de retroceso
+# (retroceso_*, obstacle_persist_frames): esa maniobra implica manejar en
+# reversa sin ningun sensor trasero, asi que queda deliberadamente sin
+# implementar — no los agregamos aca para no dar a entender que hacen algo.
+# ============================================================================
+safety:
+  stale_frame_s: 2.0
+  # si el frame de la camara no cambia en 2 s, se asume video congelado y
+  # se corta la corrida con error (en vez de seguir manejando a ciegas).
+
+  max_consecutive_errors: 5
+  # si _step() tira excepcion 5 veces seguidas, el bucle abandona la corrida
+  # (con freno antes de salir).
+
+  recovery_after_empty_plans: 3
+  # si el planner no encuentra camino valido 3 veces seguidas, dispara
+  # _recover() (gira en el lugar buscando terreno transitable).
+
+  recovery_turn_s: 1.2
+  # cuanto tiempo dura el giro de _recover() (afuera: 1.5 s).
+
+  loop_period_s: 0.2
+  # duracion MINIMA objetivo de cada iteracion del bucle (~5 Hz). Si _step()
+  # tarda mas que esto (tipico con SAM-TP en CPU), el bucle simplemente no
+  # duerme y sigue a la velocidad real del hardware — nunca fuerza a ir mas
+  # rapido de lo que da la maquina.
+
+  max_consecutive_turns: 5
+  # si lleva 5 iteraciones seguidas girando sin avanzar (linear=0), dispara
+  # _unstick() en vez de seguir girando en un loop inutil (afuera: 4).
+
+  unstick_forward_s: 1.5
+  # cuanto avanza derecho _unstick() al desatascar (afuera: 2.5 s).
+
+  # --- recuperacion informada (Bridge._recover) -----------------------------
+  # Rumbos candidatos, en GRADOS relativos al rumbo actual, que _recover()
+  # evalua contra el PersistentMap antes de girar: elige el que tenga mas
+  # terreno visto Y transitable. 0 = adelante, 180 = atras, positivo =
+  # izquierda (misma convencion que la odometria).
+  #
+  # OJO adentro: 180 significa girar en el lugar media vuelta. En un pasillo
+  # angosto eso es seguro (gira sobre su eje), pero si tenes gente cerca
+  # conviene sacarlo de la lista y dejar solo +-90.
+  recovery_headings_deg: [90.0, -90.0, 180.0]
+
+  # Cobertura minima (%) de la ventana de memoria en ese rumbo para que su
+  # puntaje cuente. Por debajo, "no lo vi nunca" NO se toma como "esta libre".
+  recovery_min_cobertura_pct: 25.0
+
+  # Confirmacion con VLM (Gemini) del rumbo de recuperacion. Requiere
+  # GEMINI_API_KEY; si falla, da timeout o reporta poca confianza, _recover()
+  # cae solo a la memoria y despues al barrido ciego — nunca se cuelga.
+  # Adentro suele aportar poco (paredes lisas, poca textura): por eso false.
+  use_vlm_recovery: false
+  vlm_recovery_timeout_s: 4.0
+  vlm_recovery_min_confidence: 0.35
+
+
+# ============================================================================
+# ODOMETRY: como se estima la pose del robot (x, y, orientacion) a partir de
+# las ruedas y el giroscopo, SIN depender de GPS.
+# ============================================================================
+odometry:
+  wheel_radius_m: 0.0527    # radio de rueda, para pasar de RPM a m/s.
+  track_width_m: 0.15       # distancia entre las ruedas izquierda/derecha
+                             # (para el modelo diferencial).
+  left_rpm_indices: [0, 2]  # que indices del array de telemetria son las
+  right_rpm_indices: [1, 3] # ruedas izquierda/derecha (segun el firmware
+                             # del SDK).
+  rotation_sign: 1.0
+  # signo de la convencion diferencial del firmware del Mini (se determina
+  # empiricamente, igual espiritu que angular_sign de navigation).
+
+  use_gyro_for_rotation: true
+  # usa el giroscopo (mas preciso) para estimar el giro en vez de solo
+  # inferirlo de la diferencia de RPM entre ruedas.
+
+  # SIN GPS: no hay fix adentro del edificio. odometry.py ya tolera esto (si
+  # lat/lon no vienen o son el codigo "sin fix" del SDK, simplemente no
+  # corrige nada) — lo apagamos aca de forma explicita para que quede
+  # documentado por que nunca va a haber "correcciones GPS: N>0" en el resumen.
+  gps_correction: false
+  # en outdoor esto va en true: usa el GPS para corregir la deriva de la
+  # odometria de rueda+giro. Adentro no hay fix, asi que se apaga a proposito
+  # (no por un bug — para que quede documentado y no sorprenda en el resumen
+  # final de la corrida).
+
+  min_gps_displacement_m: 1.0
+  # (sin efecto real con gps_correction: false — desplazamiento minimo entre
+  # fixes de GPS para aplicar una correccion, si estuviera prendido).
+
+
+# ============================================================================
+# MEMORY: el PersistentMap — memoria espacial acumulada del entorno, anclada
+# SIEMPRE al marco de la odometria (nunca a GPS). Sin esto, el planner solo
+# ve una foto de 2x2 m que se descarta cada frame; con esto, "recuerda" el
+# entorno ya visto. IndoorBridge EXIGE memory.enabled: true (frontier y la
+# meta del cono lo necesitan) — sin esto, el constructor tira ValueError.
+# ============================================================================
+memory:
+  enabled: true              # IndoorBridge lo exige (frontier + goal del cono lo necesitan)
+  map_size_m: 8.0            # tamano del mapa acumulado, en metros (8x8 m).
+  update_weight: 0.45         # cuanto peso tiene una observacion NUEVA al
+                              # mezclarse con lo ya sabido de esa celda.
+  decay_per_s: 0.06           # un poco mas lento que afuera: adentro cambia menos
+  # velocidad a la que una celda "olvida" su valor si no se vuelve a
+  # observar, y tiende hacia "desconocido" con el tiempo. Mas lento adentro
+  # porque el entorno cambia menos que afuera.
+
+  recenter_margin_m: 1.5      # margen antes de recentrar el mapa cuando el
+                              # robot se acerca al borde del area cubierta.
+  min_confidence: 0.15        # confianza minima para considerar una celda
+                              # "vista" (por debajo, se trata como desconocida).
+  plan_forward_m: 3.0         # cuanto del mapa (no solo del frame actual)
+  plan_side_m: 2.0            # se le pasa al planner — gracias al mapa, el
+                              # planner puede "ver" mas lejos/ancho de lo que
+                              # el BEV de un solo frame alcanza.
+
+  # --- mapa externo (opcional) ---------------------------------------------
+  # Importa un mapa YA GRABADO (export de map_session.py o del
+  # rtabmap-databaseViewer, formato ROS map_server: .yaml+.pgm) en vez de
+  # arrancar con el PersistentMap vacio. Usar SOLO si sabes con certeza en
+  # que pose (x, y, yaw) de ESE mapa esta parado el robot AHORA, al arrancar
+  # indoor_bridge.py (medido a mano, una vez, con cinta en el piso). Si no
+  # controlas la pose de arranque, dejar esto deshabilitado y usar en cambio
+  # mapping.rtabmap_correction (relocalizacion automatica via RTAB-Map) —
+  # son dos estrategias alternativas, no activar las dos juntas.
+  external_map:
+    enabled: false
+    yaml_path: "maps/sesion1.yaml"   # ruta relativa a donde se corre
+                                             # el comando (normalmente genie/)
+    start_pose_map:
+      x_m: 0.0      # posicion del robot AHORA, en el marco de ESE mapa
+      y_m: 0.0
+      yaw_deg: 0.0
+
+
+# ============================================================================
+# CONE (nuevo, solo en indoor): configuracion del detector de conos —
+# QUE busca en cada frame para saber si hay un cono a la vista.
+# ============================================================================
+cone:
+  # "color": heuristica HSV+forma, cero entrenamiento, para arrancar hoy.
+  # "yolo":  ultralytics YOLO, requiere checkpoint entrenado (ver doc).
+  backend: "color"
+
+  # Alto real del cono en metros. Se usa SOLO como respaldo cuando el cono
+  # NO toca el piso visible en la imagen (esta a otra altura -- arriba de un
+  # cordon/escalon/estante -- o su base esta parcialmente tapada): en vez de
+  # perder la deteccion, estima la distancia por tamaño aparente en la
+  # imagen. Ajustar al cono real que se use en la pista.
+  real_height_m: 0.30
+
+  color:
+    # rango de color HSV que se considera "cono" (naranja tipico).
+    hsv_low: [5, 120, 120]
+    hsv_high: [18, 255, 255]
+    hsv_low2: null            # segundo rango HSV opcional (naranja que se corre a rojo)
+    hsv_high2: null           # (util si el naranja del cono "cruza" el 0/180
+                               # del circulo de matiz HSV y hace falta un
+                               # segundo rango para cubrirlo entero)
+    min_area_px: 250          # area minima en pixeles para no confundir
+                               # ruido/manchitas con un cono real.
+    min_aspect_ratio: 0.25    # relacion ancho/alto minima del blob detectado.
+    max_aspect_ratio: 1.3     # relacion ancho/alto maxima (filtra formas
+                               # muy alargadas o muy achatadas, no-cono).
+    min_fill_ratio: 0.35      # que tan "lleno" tiene que estar el bounding
+                               # box (filtra formas muy huecas/irregulares).
+    morph_kernel: 5           # tamano del kernel morfologico (limpieza de
+                               # la mascara de color antes de buscar blobs).
+
+  yolo:
+    # Config para el backend alternativo (si backend: "yolo" en vez de "color").
+    weights_path: "checkpoints/cono_detection_model.pt"   # pesos del modelo YOLO entrenado.
+    class_names: ["cone"]                       # clases que reconoce el modelo.
+    conf_thresh: 0.50                           # umbral de confianza minimo.
+    device: null                                # null = autodetectar (igual que samtp).
+    img_size: 640                               # resolucion de entrada al modelo.
+
+
+# ============================================================================
+# MISSION (nuevo, solo en indoor): la maquina de estados del "tour de
+# checkpoints" — QUE HACER una vez que sabe si hay o no un cono a la vista.
+# Ciclo: SEARCH -> NAVIGATE -> APPROACH -> VERIFY -> PHOTO -> (SEARCH de
+# nuevo, o STOP). Cada cono es un CHECKPOINT, no el fin de la mision: solo
+# termina cuando se agota la ruta/exploracion sin ningun cono enganchado.
+# ============================================================================
+mission:
+  # "wander":    sin mapa ni waypoints, derecho adelante evitando obstaculos
+  #              (Opcion mas simple; usa el estado NAVIGATE con meta fija en
+  #              cuanto ve el cono. Sirve de fallback siempre.)
+  # "frontier":  Opcion B del doc (mapa desconocido): explora hacia el borde
+  #              entre lo conocido-transitable y lo nunca-visto en
+  #              PersistentMap.
+  # "waypoints": Opcion A del doc (mapa conocido): sigue una ruta fija, ver
+  #              waypoints_example.yaml.
+  #
+  # RECOMENDADO si ya tenes un mapeo previo del recorrido (ver
+  # genie_rover.Indoor.map_session / configs/indoor_mapping.yaml): usar
+  # "waypoints" con la ruta estimada de ese mapeo (waypoints_path) COMBINADO
+  # con memory.external_map (mas abajo) para arrancar con el mapa ya
+  # poblado en vez de vacio. Asi el rover sigue la ruta conocida en vez de
+  # explorar a ciegas, y en cuanto el detector engancha un cono (Fase 4,
+  # abajo) la maquina de estados abandona la ruta y va derecho al cono —
+  # el cono funciona como un checkpoint sobre/cerca de esa ruta, no como
+  # el unico mecanismo de navegacion.
+  # "frontier" queda como fallback si el mapeo previo no cubre toda la
+  # zona (explora la parte desconocida) y "wander" como ultimo recurso.
+  #
+  # Se puede pisar sin editar este archivo con:
+  #   ./rover_launch.sh indoor-bridge --search-mode frontier
+  #   ./rover_launch.sh indoor-bridge --search-mode waypoints --waypoints-path configs/waypoints_example.yaml
+  search_mode: "wander"
+  waypoints_path: null          # ej. "configs/waypoints_example.yaml" (ruta estimada del mapeo previo)
+  waypoint_reach_radius_m: 0.6  # a que distancia de un waypoint se considera
+                                 # "alcanzado" y pasa al siguiente.
+  wander_forward_m: 3.0         # en modo wander, meta fija "derecho adelante"
+                                 # a esta distancia (mientras no hay cono).
+
+  # --- solo aplican en search_mode: "frontier" ---
+  frontier_free_thresh: 0.55    # umbral de "transitable" del PersistentMap
+                                 # para considerar una celda como explorable.
+  frontier_min_m: 0.6           # distancia minima de una frontera candidata.
+  frontier_max_m: 3.5           # distancia maxima de una frontera candidata.
+  frontier_preferred_m: 1.6     # distancia "preferida" al elegir entre
+                                 # varias fronteras candidatas.
+  frontier_fov_deg: 140.0       # campo de vision considerado al buscar
+                                 # fronteras (grados).
+  frontier_goal_hold_s: 4.0     # cuanto tiempo se mantiene la misma meta de
+                                 # frontera antes de re-evaluar una nueva.
+  # Modo "frontier": cuanto esperar sin frontera nueva antes de dar la
+  # exploracion por agotada (recien ahi, y solo si en ese momento no hay
+  # ningun cono enganchado, termina la mision). En "waypoints" el fin de
+  # ruta ya es explicito (ultimo waypoint alcanzado) y esto no aplica; en
+  # "wander" no hay condicion de fin propia (ver mission.py).
+  frontier_exhausted_grace_s: 6.0
+
+  # --- deteccion / aproximacion al cono (Fase 4 del doc) ---
+  # Fase 4 del doc: 2.0 m empieza a aproximarse con cuidado, 0.5 m frena.
+  detect_confidence_min: 0.45   # confianza minima del detector para
+                                 # considerar la deteccion como "posible cono".
+  approach_start_m: 2.0         # a esta distancia pasa de NAVIGATE a APPROACH
+                                 # (empieza a acercarse con mas cuidado).
+  verify_at_m: 0.8              # a esta distancia pasa a VERIFY (exige
+                                 # confirmacion antes de dar el cono por bueno).
+  stop_distance_m: 0.5          # distancia a la que se frena definitivamente
+                                 # frente al cono confirmado.
+  approach_max_linear_scale: 0.6
+  # en fase APPROACH, escala la velocidad lineal que calcularia el
+  # PathFollower al 60% — mas lento para no llegar rapido a algo todavia
+  # sin confirmar del todo.
+
+  lost_cone_grace_s: 1.5
+  # cuanto tiempo "recuerda" el cono si lo pierde de vista un momento
+  # (oclusion momentanea) antes de volver a SEARCH.
+
+  # --- verificacion (VERIFY): exige varias detecciones estables antes de
+  # confiar en que es el cono real, no un falso positivo de un solo frame ---
+  verify_hits_required: 1       # cuantas detecciones seguidas hacen falta.
+  verify_window: 6               # ventana de frames sobre la que se evaluan.
+  verify_min_confidence: 0.45    # confianza minima de cada deteccion en la ventana.
+  verify_max_jump_m: 0.4         # salto maximo de posicion entre detecciones
+                                 # consecutivas para considerarlas "el mismo cono".
+
+  # Confirmacion opcional con Gemini antes de dar el cono por bueno (mismo
+  # cliente que usa vlm_recovery, programs/client/genai_client.py). Requiere
+  # GEMINI_API_KEY en el entorno. Si falla o da timeout, NO frena a ciegas:
+  # sigue esperando mas evidencia geometrica.
+  #
+  # DESCONECTADO DEL BRIDGE HOY A PROPOSITO: aunque se ponga en true,
+  # indoor_bridge.py no llama a ConeMissionFSM.confirm_with_vlm() en ningun
+  # punto de _step(), asi que este flag no tiene efecto todavia. No es parte
+  # de la solucion actual (puede sumarse mas adelante conectando ese
+  # llamado; el metodo ya esta listo en mission.py).
+  verify_with_vlm: false     # SIN EFECTO hoy (ver nota arriba) — dejar en false.
+  vlm_timeout_s: 4.0         # SIN EFECTO hoy.
+  vlm_min_confidence: 0.5    # SIN EFECTO hoy.
+
+  # --- foto del cono (checkpoint) ------------------------------------------
+  # Cuando el cono queda confirmado y el rover llega a stop_distance_m, se
+  # frena y se guarda una foto del frame actual (con el bbox dibujado). Cada
+  # cono es un CHECKPOINT, no el final de la mision: despues de la foto (o
+  # directo despues de confirmar, si take_photo=false) el rover sigue
+  # buscando el proximo. La mision solo termina (STOP) cuando se agota la
+  # ruta fija ("waypoints") o la exploracion por frontera ("frontier") y en
+  # ese momento no hay ningun cono enganchado — ver mission.py.
+  take_photo: true                    # si false, no guarda foto, solo
+                                       # confirma el checkpoint y sigue.
+  photo_dir: "genie_rover/Indoor/checkpoint_photos"      # carpeta donde se guardan las fotos.
+
+  # Radio (m) en el mapa/odometria para no re-fotografiar el mismo cono: una
+  # deteccion nueva a esta distancia o menos de un cono ya visitado se
+  # ignora, y la busqueda sigue de largo hacia el proximo.
+  revisit_radius_m: 1.0
+  # OJO al ajustar esto: no debe ser mayor a la separacion real entre conos
+  # de tu pista, o confundiria dos conos distintos con el mismo ya visitado
+  # y se saltearia el segundo sin fotografiarlo.

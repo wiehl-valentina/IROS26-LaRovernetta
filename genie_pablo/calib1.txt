@@ -1,0 +1,14 @@
+Calibracion de escala de ruedas contra GPS RTK.
+1 corridas de 20 s a linear=0.3.
+Necesita ~3 m libres y cielo despejado (adentro no hay fix).
+
+GPS: lat=-34.9261017 lon=-57.9452934 signal=49.0 hdop=0.00983333308249712
+
+ENTER para arrancar...
+--- corrida 1/1 ---
+    GPS: 6.590 m   ruedas: 5.720 m   factor: 1.152
+    200 muestras, cobertura 100%, hdop 0.009333333000540733
+
+[frenado]
+
+Solo 1 corridas validas. Repeti con mejor senal.
