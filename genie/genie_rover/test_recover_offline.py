@@ -5,13 +5,19 @@ llama Bridge._recover(stub) sobre un objeto minimo que imita los atributos
 que _recover() necesita, reemplazando front_frame() por una imagen guardada
 en disco en vez de pedirsela al SDK por HTTP.
 
-Esto prueba el circuito completo:
-    _recover() -> self.client.front_frame() (falso, imagen de disco)
+_recover() ahora prueba primero el mapa persistente (ver
+_recover_informado en bridge.py); el stub le da un PersistentMap vacio
+(nada observado todavia) a proposito, para que ese primer paso no encuentre
+nada confiable y el circuito caiga al VLM, que es lo que esta prueba quiere
+ejercitar:
+    _recover() -> _recover_informado() -> mapa vacio, sin candidato
                -> ask_recovery_heading()      (real, llama a Gemini)
                -> self.send(...)              (falso, solo imprime)
 
 Lo que NO prueba (necesita SDK/rover de verdad): _step(), telemetria GPS,
-front_is_blocked sobre un frame en vivo, el planner sobre un BEV real.
+front_is_blocked sobre un frame en vivo, el planner sobre un BEV real, el
+mapa persistente con observaciones de verdad (para eso ver
+test_near_regime_offline.py).
 
 Uso:
     python -m genie_rover.test_recover_offline --image genie/debug/obst2/00007_rgb.jpg
@@ -29,6 +35,8 @@ from PIL import Image
 
 from .bridge import Bridge
 from .navigation import DriveCommand, HeadingEstimator, PathFollower
+from .odometry import Pose
+from .persistent_map import MapConfig, PersistentMap
 
 
 def _build_stub(image_path: str, use_vlm: bool, timeout_s: float, min_confidence: float):
@@ -41,13 +49,32 @@ def _build_stub(image_path: str, use_vlm: bool, timeout_s: float, min_confidence
 
     stub = types.SimpleNamespace()
     stub.use_vlm_recovery = use_vlm
-    stub.vlm_timeout_s = timeout_s
-    stub.vlm_min_confidence = min_confidence
+    stub.vlm_recovery_timeout_s = timeout_s
+    stub.vlm_recovery_min_confidence = min_confidence
     stub.recovery_turn_s = 1.5
     stub._consecutive_empty = 3
 
+    # Mapa persistente presente pero vacio: _recover_informado() no va a
+    # encontrar ningun rumbo con cobertura suficiente y va a caer al VLM (o
+    # al barrido ciego si --no-vlm), que es lo que esta prueba ejercita.
+    stub.use_map = True
+    stub.pmap = PersistentMap(MapConfig())
+    stub.odometry = types.SimpleNamespace(
+        pose=Pose(0.0, 0.0, 0.0),
+        update=lambda _raw: Pose(0.0, 0.0, 0.0),
+    )
+    stub.recovery_headings_deg = [0.0, 90.0, -90.0, 180.0]
+    stub.recovery_min_cobertura_pct = 25.0
+    stub.retroceso_min_libre_pct = 55.0
+    stub.heading_search_radius_m = 2.0
+    stub.resolution = 0.03
+    stub.stats = types.SimpleNamespace(
+        recoveries_por_mapa=0, recoveries_por_vlm=0, recoveries_ciegas=0,
+    )
+
     stub.client = types.SimpleNamespace(
-        front_frame=lambda: (rgb, time.time())
+        front_frame=lambda: (rgb, time.time()),
+        telemetry=lambda: types.SimpleNamespace(raw={}),
     )
     stub.follower = PathFollower(angular_sign=-1.0, turn_speed=0.35, max_linear=0.35)
     stub.heading_est = HeadingEstimator()
@@ -60,6 +87,14 @@ def _build_stub(image_path: str, use_vlm: bool, timeout_s: float, min_confidence
 
     stub.send = _send
     stub._sent = sent
+
+    # _recover() -> _recover_informado() -> _map_free_and_coverage /
+    # _girar_hacia / _preguntar_vlm / _barrido_ciego, todas llamadas por
+    # self. El stub no es una instancia real de Bridge: hay que atarlas.
+    for name in ("_recover_informado", "_map_free_and_coverage", "_girar_hacia",
+                "_preguntar_vlm", "_barrido_ciego"):
+        setattr(stub, name, types.MethodType(getattr(Bridge, name), stub))
+
     return stub
 
 
@@ -91,7 +126,7 @@ def main() -> None:
     print(f"\n=== resultado ===")
     print(f"  comandos enviados: {len(stub._sent)}")
     print(f"  tiempo total: {dt:.2f}s")
-    if any("VLM" in c.reason for c in stub._sent):
+    if stub.stats.recoveries_por_vlm:
         print("  ✓ el circuito con Gemini se ejecuto y produjo una decision")
     else:
         print("  el bridge cayo al barrido ciego (VLM desactivado, timeout, o confianza baja)")
