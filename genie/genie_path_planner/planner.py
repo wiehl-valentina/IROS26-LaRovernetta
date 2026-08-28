@@ -38,6 +38,17 @@ class PlannerConfig:
     random_seed: int | None = 42
     include_goal_in_path_bank: bool = False
     include_random_goals: bool = True
+    # Peso del termino "terminar cerca de la meta" en el costo de cada camino
+    # (ver costs.goal_term). 0.0 = comportamiento original: el costo solo mide
+    # transitabilidad, asi que en terreno uniformemente libre todos los caminos
+    # empatan y la direccion elegida es arbitraria.
+    goal_weight: float = 0.0
+    # True: banco de caminos con destinos repartidos uniformemente en angulo
+    # (sample_paths_uniform_fan). False: el banco aleatorio original, que deja
+    # direcciones sin ningun candidato y hace subvirar al planner.
+    uniform_path_bank: bool = True
+    fan_max_angle_deg: float = 75.0
+    fan_num_headings: int = 31
 
 
 @dataclass
@@ -355,6 +366,9 @@ def plan_on_bev(
         planner_cost,
         alpha=float(cfg.alpha),
         footprint_px=int(cfg.footprint_px),
+        goal_rc=planner_goal,
+        goal_weight=float(cfg.goal_weight),
+        grid_size=int(cfg.grid_size),
     )
     if len(paths_costed) == 0:
         raise RuntimeError("No paths left after cost computation")
@@ -367,6 +381,9 @@ def plan_on_bev(
         cost_map=planner_cost,
         alpha=float(cfg.alpha),
         footprint_px=int(cfg.footprint_px),
+        goal_rc=planner_goal,
+        goal_weight=float(cfg.goal_weight),
+        grid_size=int(cfg.grid_size),
     )
     final_path_px = np.stack([np.asarray(final_rows), np.asarray(final_cols)], axis=1).astype(np.float32)
     final_path_bev = _planner_path_to_bev_path(final_path_px, src_shape=bev.shape, grid_size=int(cfg.grid_size))

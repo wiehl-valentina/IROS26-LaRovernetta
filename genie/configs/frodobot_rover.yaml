@@ -62,20 +62,36 @@ navigation:
   #   +1.0  si angular positivo hace girar a la DERECHA
   angular_sign: -1.0
 
-  max_linear: 0.7       # bien lento para las primeras corridas
+  max_linear: 1.0       # maximo de la escala -1..1 (NO m/s).
   max_angular: 0.45
   turn_speed: 0.40
-  kp_angular: 0.9
+  # Ganancia del giro: angular = kp_angular * radianes(error). Con 0.9 el
+  # comando saturaba en max_angular apenas el error pasaba los 29 grados, y
+  # como el planner devuelve tipicamente 40-70 grados, giraba SIEMPRE al
+  # maximo: sobrepasaba, el error cambiaba de signo, giraba al maximo para el
+  # otro lado -> el zigzag que se ve en la traza del mapa. Con 0.45 recien
+  # satura a los 57 grados, asi que en el rango normal responde proporcional
+  # al error en vez de a todo o nada.
+  kp_angular: 0.45
   lookahead_m: 1.5
   align_threshold_deg: 90.0
 
   goal_range_m: 3.5
   claim_radius_m: 15.0    # tolerancia oficial del ERC
 
-  # El rumbo sale del track GPS (ruidoso pero sin sesgo). El magnetometro va
-  # montado al lado de los motores y suele tener offset variable.
+  # MEDIDO en la corrida debug/go6 (14 muestras con las dos fuentes leidas en
+  # el mismo instante): el desacuerdo medio brujula-GPS es de -3 grados, o sea
+  # que el magnetometro de ESTE robot NO tiene el offset que asumia el
+  # comentario anterior. Y mientras el robot giraba ~110 grados horario, la
+  # brujula (-27 -> +99) y el giroscopo de la odometria (-169 -> -272) lo
+  # siguieron los dos; el track GPS se quedo clavado en ~26 grados.
+  #
+  # El problema es estructural del track GPS: _heading_from_track mide la
+  # direccion desde la muestra mas vieja a la mas nueva, o sea una CUERDA del
+  # arco, no la tangente. Girando, esa cuerda no dice hacia donde mira el
+  # robot. Por eso ahora la fuente primaria es la brujula.
   heading_min_displacement_m: 1.5
-  trust_orientation: false
+  trust_orientation: true
   orientation_offset_deg: 0.0
   orientation_sign: 1.0
   commit_hold_s: 2.0
@@ -93,9 +109,30 @@ navigation:
   # a que se cumpla esta distancia.
   replan_every_m: 1.0
   replan_min_remaining_m: 0.4
+  # Red de seguridad temporal: replanificar igual si pasaron estos segundos
+  # desde el ultimo plan, aunque no se haya cumplido el disparo por distancia
+  # (p.ej. si la odometria se queda quieta por un hueco de telemetria).
+  replan_max_s: 2.0
+
+  # Velocidad lineal minima mientras se sigue un plan YA comprometido.
+  # Es la perilla principal contra el patron avanza-frena-avanza: con un plan
+  # elegido, un error de rumbo mayor a align_threshold_deg hace CURVAR a esta
+  # velocidad en vez de pivotear en el lugar (linear=0, que es avance neto
+  # cero). Subila si el rover todavia se frena de mas al corregir rumbo.
+  min_linear_while_planned: 0.08
 planner:
   grid_size: 240
-  unknown_cost: 0.2
+  # Costo de una celda nunca observada. Una celda OBSERVADA cuesta
+  # (1 - transitabilidad), asi que este numero define el break-even: con 0.2,
+  # el piso observado necesitaba transitabilidad > 0.80 para que el planner lo
+  # prefiriera sobre territorio que nunca vio -> tiraba hacia lo desconocido
+  # teniendo verde al lado. Con 0.30 el break-even baja a 0.70.
+  #
+  # TECHO DURO: tiene que quedar por DEBAJO de threshold_cost (0.35). Si lo
+  # iguala o lo supera, el filtro de caminos (path_selection.py) descarta todo
+  # camino que cruce >2% de celdas desconocidas, y como ~67% del mapa esta sin
+  # observar, se quedaria sin ningun camino valido.
+  unknown_cost: 0.30
   smooth_kernel: 3
   num_goals: 30
   num_mid_points_per_goal: 20
@@ -112,6 +149,17 @@ planner:
   random_seed: 42
   include_goal_in_path_bank: false
   include_random_goals: true
+
+  # Peso del termino "terminar cerca de la meta" en el costo de cada camino.
+  # Con 0.0 (el comportamiento original) el costo SOLO mide transitabilidad:
+  # en una explanada libre todos los caminos empatan, la direccion elegida es
+  # arbitraria, y el robot describe circulos sin acercarse al checkpoint.
+  # Medido sobre el BEV real de debug/go3, pidiendo metas de -45 a +45 grados:
+  #   0.0 -> el planner devuelve solo -20 o +43, ignora la meta
+  #   1.0 -> respuesta monotona (-34 -22 -15 -11 +19 +24 +24), signo correcto
+  # Sigue subvirando porque el banco de caminos tiene destinos ALEATORIOS y no
+  # existen candidatos hacia cualquier direccion: eso se arregla aparte.
+  goal_weight: 1.0
 
 safety:
   stale_frame_s: 2.0
@@ -143,8 +191,26 @@ safety:
   # Recuperacion informada por memoria: rumbos candidatos (grados relativos
   # al actual) que _recover() evalua con el mapa antes de girar. 0=adelante
   # (por si el bloqueo ya se disolvio), 180=atras.
+  # Giro de recuperacion (el "girando hacia +180 grados"). Antes tardaba ~8 s
+  # en dar media vuelta: usaba turn_speed (0.40) como si fuera rad/s, y son
+  # unidades distintas -- turn_speed es un comando normalizado en -1..1.
+  #   recovery_turn_speed : comando angular durante el giro
+  #   recovery_step_deg   : cuanto gira entre verificacion y verificacion
+  #                         (pasos mas grandes = menos pausas = mas rapido)
+  #   recovery_deg_per_s  : tasa REAL de giro del robot, en grados por segundo.
+  #                         Es lo que fija la duracion de cada paso. Medila
+  #                         cronometrando media vuelta: si el robot se pasa,
+  #                         subila; si se queda corto, bajala.
+  # Con estos valores media vuelta son 4 pasos de 1 s en vez de 9 de 0.87 s.
+  recovery_turn_speed: 0.45
+  recovery_step_deg: 45.0
+  recovery_deg_per_s: 45.0
   recovery_headings_deg: [0.0, 90.0, -90.0, 180.0]
   recovery_min_cobertura_pct: 25.0
+  # Radio de la ventana del mapa persistente que se consulta por cada rumbo
+  # candidato. Muy grande diluye obstaculos chicos en el promedio y todo sale
+  # "libre"; muy chico decide con poquisimas celdas.
+  heading_search_radius_m: 2.0
 
 
 odometry:

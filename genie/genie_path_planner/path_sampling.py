@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 
 import numpy as np
@@ -189,3 +190,67 @@ def sample_paths_polynomial(
             if is_path_inside_grid(path, int(grid_size)) and is_strictly_decreasing_rows(path[:, 0]):
                 all_paths.append(path.astype(np.float32))
     return all_paths
+
+
+def sample_paths_uniform_fan(
+    bev_shape: tuple[int, int],
+    bev_resolution_m: float,
+    grid_size: int = 240,
+    max_angle_deg: float = 75.0,
+    num_headings: int = 31,
+    radius_fractions: tuple[float, ...] = (0.55, 0.8),
+    bulges: tuple[float, ...] = (-0.3, -0.15, 0.0, 0.15, 0.3),
+    num_samples: int = 100,
+) -> list[np.ndarray]:
+    """Banco de caminos con destinos repartidos UNIFORMEMENTE en angulo.
+
+    sample_paths_polynomial elige sus destinos al AZAR, asi que hay direcciones
+    hacia las que simplemente no existe ningun candidato: por mas que el costo
+    penalice terminar lejos de la meta, el planner no puede elegir un camino que
+    no esta en el banco, y termina subvirando (le pedis -45 grados y te da -34).
+
+    Los destinos se calculan en METROS y recien despues se pasan a pixeles de la
+    grilla del planner. Es la unica forma correcta: el BEV no es cuadrado (p.ej.
+    67x134) y la grilla del planner si (240x240), asi que filas y columnas se
+    estiran por factores distintos y un abanico uniforme construido directamente
+    sobre la grilla sale deformado.
+
+    Igual que el banco aleatorio, NO depende de la escena ni de la meta, asi que
+    se calcula una sola vez por corrida y se cachea.
+    """
+    from .geometry import goal_xy_to_bev_pixel
+    from .planner import _resize_pixel
+
+    h, w = int(bev_shape[0]), int(bev_shape[1])
+    res = float(bev_resolution_m)
+    grid = int(grid_size)
+    start_rc = _resize_pixel((h - 1, w // 2), (h, w), grid)
+    reach_m = float(h) * res
+
+    paths: list[np.ndarray] = []
+    for angle_deg in np.linspace(-float(max_angle_deg), float(max_angle_deg), int(num_headings)):
+        angle = math.radians(float(angle_deg))
+        for fraction in radius_fractions:
+            radius = float(fraction) * reach_m
+            end_xy = (radius * math.sin(angle), radius * math.cos(angle))
+            end_rc = _resize_pixel(goal_xy_to_bev_pixel(end_xy[0], end_xy[1], (h, w), res), (h, w), grid)
+            for bulge in bulges:
+                # Punto medio del arco: mitad de la cuerda, desplazado
+                # perpendicularmente. Cada bulge da una curvatura distinta hacia
+                # el mismo destino, que es lo que le deja al planner elegir
+                # "llego ahi rodeando por izquierda / derecha / derecho".
+                mid_xy = (
+                    0.5 * end_xy[0] + float(bulge) * radius * math.cos(angle),
+                    0.5 * end_xy[1] - float(bulge) * radius * math.sin(angle),
+                )
+                if mid_xy[1] <= 0.0:
+                    continue  # punto medio detras del robot: no es un camino util
+                mid_rc = _resize_pixel(
+                    goal_xy_to_bev_pixel(mid_xy[0], mid_xy[1], (h, w), res), (h, w), grid
+                )
+                path = uniformly_sample_by_arclength(
+                    start_rc, mid_rc, end_rc, num_points=int(num_samples), high_res=1000
+                )
+                if is_path_inside_grid(path, grid) and is_strictly_decreasing_rows(path[:, 0]):
+                    paths.append(path.astype(np.float32))
+    return paths
