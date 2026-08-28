@@ -1,0 +1,28 @@
+Este es el árbol de carpetas real, tal como debería quedar en tu repo (IROS26-LaRovernetta/):
+
+IROS26-LaRovernetta/
+│
+├── earth-rovers-sdk/
+│   └── examples/
+│       └── ros2/
+│           ├── earth_rover_bridge.py          ← REEMPLAZA el que ya tenías
+│           ├── differential_odometry.py       ← NUEVO
+│           └── mapping/                       ← carpeta NUEVA
+│               ├── rtabmap_mapping.launch.py   ← NUEVO
+│               ├── camera_info_publisher.py    ← NUEVO
+│               └── README.md                   ← NUEVO (guía de uso)
+│
+└── genie/
+    ├── configs/
+    │   └── indoor_mapping.yaml                 ← NUEVO
+    │
+    └── genie_rover/
+        ├── persistent_map.py                   ← existente: PEGARLE ADENTRO
+        │                                          el método que trae...
+        ├── persistent_map_export_addon.py       ← NUEVO (parche a aplicar,
+        │                                           no se importa, se copia
+        │                                           el método a mano)
+        └── Indoor/
+            ├── indoor_bridge.py                 ← existente, SIN TOCAR
+            ├── map_session.py                   ← NUEVO (hereda de IndoorBridge)
+            └── rtabmap_pose_bridge.py            ← NUEVO

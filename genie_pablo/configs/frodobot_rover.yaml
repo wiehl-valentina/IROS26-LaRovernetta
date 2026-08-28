@@ -1,0 +1,227 @@
+  # Config del puente GeNIE <-> Earth Rovers SDK
+# Earth Rover Mini+ — calibrado el 2026-07-31
+#
+# Calibracion propia de ESTE robot:
+#   intrinsecos: 24/24 vistas, error de reproyeccion 0.42 px
+#   pose:        error 0.67 px, altura 0.1502 m (regla: 0.15 m — coinciden)
+#
+# Si cambia IMAGE_QUALITY o IMAGE_FORMAT en el .env del SDK, o si le pegas un
+# golpe a la camara, hay que recalibrar.
+
+rover:
+  base_url: "http://localhost:8000"
+  timeout_s: 5.0
+
+samtp:
+  config_path: "sam2/configs/sam2.1_inference_tiny/sam2.1_custom2.yaml"
+  checkpoint_path: "sam2_logs/configs/sam2.1_training_tiny/sam2_training_custom2_freezeNoneNone_f57.yaml/checkpoints/checkpoint_2.pt"  # viejo, checkpoint generico del paper
+  #checkpoint_path: "checkpoints/checkpoint_finetuned_v2.pt"   # nuevo, fine-tuneado en 50k frames del Mini+
+  device: null
+  precision: "auto"
+  score_thresh: 0.0
+camera:
+  calibrated: true
+
+  image_size: [1920, 1080]
+
+  intrinsics:
+    - [925.265722853314, 0.0, 962.3052531643399]
+    - [0.0, 924.6288195383473, 528.3891677741947]
+    - [0.0, 0.0, 1.0]
+
+  # k1 = -0.263: barril marcado, tipico de un gran angular de ~92 grados.
+  # Corregirlo NO es opcional: project_score_to_bev asume pinhole puro.
+  dist_coeffs: [-0.26257227523222204, 0.06503885855790396, -0.00031427372195389234, -0.0011895820486559178, -0.0073726075647136185]
+
+  # Solo se usan si 'pose' es null. Se dejan como referencia.
+  height_m: 0.150
+  pitch_down_deg: 1.85
+
+  # T_world_camera de pose_D (el de menor error). Tiene prioridad sobre
+  # height_m y pitch_down_deg.
+  pose:
+    - [-0.000313571, -0.032360666, 0.999476207, 0.000000000]
+    - [-0.999953056, 0.009689420, -0.000000000, 0.000000000]
+    - [-0.009684345, -0.999429288, -0.032362186, 0.150244633]
+    - [0.000000000, 0.000000000, 0.000000000, 1.000000000]
+
+projection:
+  ground_z: 0.0
+  resolution_m_per_px: 0.03
+
+  # PENDIENTE: con la camara a 15 cm, el suelo lejano se ve muy comprimido y
+  # la mascara se vuelve poco confiable a partir de cierta distancia. Mirar el
+  # BEV sobre una foto de vereda y bajar esto a 2.5-3.0 si hace falta.
+  forward_range_m: 2.0
+  side_range_m: 2.0
+  max_ray_distance_m: 2.5
+  projection_downscale: 2
+navigation:
+  # Determinar con tools/check_angular_sign.py:
+  #   -1.0  si angular positivo hace girar a la IZQUIERDA
+  #   +1.0  si angular positivo hace girar a la DERECHA
+  angular_sign: -1.0
+
+  max_linear: 0.90       # bien lento para las primeras corridas
+  max_angular: 0.60
+  turn_speed: 0.40
+  kp_angular: 0.9
+  lookahead_m: 1.5
+  align_threshold_deg: 90.0
+
+  goal_range_m: 3.5
+  claim_radius_m: 15.0    # tolerancia oficial del ERC
+
+  # El rumbo sale del track GPS (ruidoso pero sin sesgo). El magnetometro va
+  # montado al lado de los motores y suele tener offset variable.
+  heading_min_displacement_m: 1.5
+  trust_orientation: false
+  orientation_offset_deg: 0.0
+  orientation_sign: 1.0
+  commit_hold_s: 2.0
+  commit_min_deg: 8.0
+  commit_override_deg: 30.0
+
+  # REPLANIFICACION POR DISPARO ESPACIAL (guia tecnica, seccion 03).
+  # El planner geometrico (plan_on_bev) NO corre en cada frame. A 0.25 m/s y
+  # 5 Hz eso serian 5 cm de avance por decision con celdas de 3 cm: dos frames
+  # seguidos ven casi la misma escena y lo unico que cambia entre ellos es
+  # ruido. Ese es el mecanismo del titubeo.
+  #
+  # Se replanifica solo si: se avanzo replan_every_m desde el ultimo plan
+  # (medido sobre la pose de odometry.py, ya corregida por GPS cuando hay fix),
+  # o al camino cacheado le quedan menos de replan_min_remaining_m por delante,
+  # o el chequeo frontal veto el plan, o pasaron replan_max_age_s (red de
+  # seguridad, y unico disparador si memory.enabled esta en false).
+  #
+  # Entre replanificaciones el bridge sigue el ultimo camino calculado,
+  # reproyectado a la pose actual (_transform_path_xy, definido DENTRO de
+  # bridge.py — no en navigation.py). Un obstaculo al frente (front_is_blocked)
+  # sigue frenando de inmediato, cada frame: el compromiso es con la ruta,
+  # nunca con "no frenar".
+  replan_every_m: 1.0
+  replan_min_remaining_m: 0.4
+  replan_max_age_s: 2.0
+planner:
+  grid_size: 240
+  unknown_cost: 0.2
+  smooth_kernel: 3
+  num_goals: 30
+  num_mid_points_per_goal: 20
+  path_num_samples: 100
+  footprint_px: 12        # ~0.30 m de ancho de robot. Medir el Mini y ajustar.
+  threshold_cost: 0.35
+  threshold_points_ratio: 0.02
+  number_of_points_to_filter: 60
+  alpha: 1.0
+  best_k: 12
+  use_clustering: true    # el path fusion del paper
+  max_clusters: 2
+  cluster_angle_threshold_deg: 40.0
+  random_seed: 42
+  include_goal_in_path_bank: false
+  include_random_goals: true
+
+safety:
+  stale_frame_s: 2.0
+  max_consecutive_errors: 5
+  recovery_after_empty_plans: 3
+  recovery_turn_s: 1.5
+  loop_period_s: 0.2
+  max_consecutive_turns: 4
+
+  # unstick_forward_s SE SACO. _unstick() ya no existe: forzar un avance recto
+  # estando trabado de frente es exactamente lo peor que se puede hacer (en el
+  # mejor caso choca suave y el operador interviene). Los giros repetidos sin
+  # avance ahora entran a la misma rutina de recuperacion que todo lo demas.
+
+  # use_vlm_recovery / vlm_recovery_timeout_s / vlm_recovery_min_confidence
+  # SE SACARON. Esta version de bridge.py no usa VLM en absoluto: no importa
+  # .vlm_recovery ni necesita GEMINI_API_KEY. Si volves a poner
+  # use_vlm_recovery: true, bridge.py avisa una vez y lo ignora.
+
+  # ------------------------------------------------------ obstaculo al frente
+  # Cuantos frames SEGUIDOS de "OBSTACULO al frente" antes de recuperar: no
+  # reaccionar a un bloqueo de un solo frame (alguien que cruzo caminando),
+  # pero tampoco quedarse frenado indefinidamente contra una maceta. Contador
+  # propio, separado de max_consecutive_turns.
+  obstacle_persist_frames: 4
+
+  # ------------------------------------------------------------- retroceso
+  # AHORA SI SE IMPLEMENTAN (antes eran config muerta). _recover() retrocede
+  # antes de girar: a 0.3 m un obstaculo ocupa 60 grados del campo visual y los
+  # 12 caminos candidatos del planner lo atraviesan, giremos hacia donde
+  # giremos, porque la zona ciega gira con el robot. Retroceder es la unica
+  # accion que lo aleja.
+  #
+  # La unica evidencia de que atras hay lugar es la memoria (no hay camara
+  # trasera), y la memoria de atras es la mas vieja y la mas deteriorada por
+  # decay_per_s — por eso los dos umbrales de abajo son conservadores y, si no
+  # se cumplen, el retroceso se OMITE y se pasa directo al giro.
+  retroceso_min_libre_pct: 55.0
+  retroceso_min_cobertura_pct: 30.0
+  retroceso_max_m: 0.6
+  retroceso_paso_m: 0.2
+  # Negativo = reversa. SIN VERIFICAR EMPIRICAMENTE todavia (no hay un tools/
+  # equivalente a check_angular_sign.py para esto). CONFIRMALO A MANO la
+  # primera vez, en dry-run y despues con espacio de sobra detras del robot:
+  # esta version SI maneja en reversa.
+  retroceso_linear: -0.18
+
+  # ----------------------------------------------------- rumbo de escape
+  # Rumbos candidatos (grados relativos al actual) que _recover() evalua contra
+  # el PersistentMap antes de girar. 180 = atras, positivo = izquierda.
+  #
+  # 0.0 (adelante) se saco de la lista a proposito: a _recover() se llega
+  # porque el planner —que YA planifica sobre este mismo mapa— no encontro
+  # camino varias veces seguidas con el rumbo actual. Elegir "adelante" seria
+  # no hacer nada y volver a entrar en recuperacion en la iteracion siguiente.
+  # bridge.py lo filtra igual aunque este en la lista.
+  recovery_headings_deg: [90.0, -90.0, 180.0]
+  recovery_min_cobertura_pct: 25.0
+
+  # Si la memoria no tiene cobertura util, el rumbo lo deciden los CORREDORES
+  # de rover_traversability (suggest_command sobre la mascara de imagen
+  # fresca). Ese paquete vive fuera de genie/, asi que bridge.py lo busca solo:
+  # import directo -> traversability_path -> candidatos relativos al repo. Si
+  # no lo encuentra, avisa y sigue con mapa + barrido ciego (nunca es fatal).
+  # Dejalo en null si el repo tiene la estructura habitual.
+  traversability_path: null
+
+  # Pisa campos de PolicyConfig (rover_traversability/policy.py). Vacio = los
+  # defaults de ese archivo, que son los que salieron de policy_tuner.py.
+  # Solo se usa el SCORING de corredores: la velocidad del giro la ponen
+  # navigation.turn_speed / angular_sign, no PolicyConfig.
+  corridors: {}
+
+  # Cada cuanto puede volver a dispararse una recuperacion (evita encadenarlas
+  # sobre datos identicos), a partir de que recuperacion consecutiva sin avance
+  # el retroceso escala de retroceso_paso_m a retroceso_max_m, y a la cuanta se
+  # pide intervencion humana en vez de seguir golpeando la pared.
+  recovery_block_s: 2.0
+  recovery_escalate_after: 2
+  recovery_give_up_after: 3
+
+
+odometry:
+  wheel_radius_m: 0.0527
+  track_width_m: 0.15
+  left_rpm_indices: [0, 2]
+  right_rpm_indices: [1, 3]
+  # El firmware del Mini invierte la convencion diferencial estandar:
+  # rueda izquierda adelante + derecha atras = giro a la IZQUIERDA.
+  # Verificado con el control manual el 2026-08-01.
+  rotation_sign:  1.0
+  use_gyro_for_rotation: true
+  gps_correction: true
+  min_gps_displacement_m: 1.0
+
+memory:
+  enabled: true
+  map_size_m: 8.0
+  update_weight: 0.45
+  decay_per_s: 0.08
+  recenter_margin_m: 1.5
+  min_confidence: 0.15
+  plan_forward_m: 3.0
+  plan_side_m: 2.0

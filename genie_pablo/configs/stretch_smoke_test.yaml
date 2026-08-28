@@ -1,0 +1,99 @@
+# Smoke test: NO es para tu rover.
+#
+# Reproduce la observacion del Stretch que viene en el repo, con la calibracion
+# real de esa camara (sacada de configs/stretch_path_planner.yaml). Sirve para
+# validar toda la cadena (carga del modelo -> SAM-TP -> proyeccion BEV) contra
+# una salida de referencia conocida, antes de calibrar tu propia camara.
+#
+#   python -m genie_rover.perception --config configs/stretch_smoke_test.yaml \
+#       --image stretch_example/stretch_obs/rgb.png --out debug/
+#
+# Compara debug/perception_debug.png (panel del medio) contra:
+#   stretch_example/stretch_obs/planner_output/*_cli_observation_samtp.png
+
+rover:
+  base_url: "http://localhost:8000"
+  timeout_s: 5.0
+
+samtp:
+  config_path: "sam2/configs/sam2.1_inference_tiny/sam2.1_custom2.yaml"
+  #checkpoint_path: "checkpoints/checkpoint_finetuned_v2.pt"   # nuevo, fine-tuneado en 50k frames del Mini+
+  checkpoint_path: "sam2_logs/configs/sam2.1_training_tiny/sam2_training_custom2_freezeNoneNone_f57.yaml/checkpoints/checkpoint_2.pt"
+  device: null
+  precision: "auto"
+  score_thresh: 0.0
+
+camera:
+  calibrated: true          # es la calibracion real del Stretch, no un placeholder
+
+  # rgb.png es 480 de ancho por 640 de alto (retrato)
+  image_size: [480, 640]
+
+  intrinsics:
+    - [606.1235961914062, 0.0, 247.56045532226562]
+    - [0.0, 606.080078125, 325.16796875]
+    - [0.0, 0.0, 1.0]
+
+  # El stream del Stretch ya viene rectificado en el ejemplo
+  dist_coeffs: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+  # Pose fija de la camara de cabeza del prototipo Stretch, tal cual figura en
+  # configs/stretch_path_planner.yaml. Al estar presente, se ignoran
+  # height_m y pitch_down_deg.
+  pose:
+    - [0.0011988871, -0.42378852, 0.90576035, 0.049710721]
+    - [-0.99995166, -0.0093474351, -0.0030499310, -0.0032095660]
+    - [0.0097590620, -0.90571290, -0.42377925, 1.3030162]
+    - [0.0, 0.0, 0.0, 1.0]
+
+  height_m: 1.30
+  pitch_down_deg: 25.0
+
+projection:
+  ground_z: 0.0
+  resolution_m_per_px: 0.03
+  forward_range_m: 4.0
+  side_range_m: 2.0
+  max_ray_distance_m: 6.0
+
+navigation:
+  angular_sign: -1.0
+  max_linear: 0.30
+  max_angular: 0.45
+  turn_speed: 0.35
+  kp_angular: 0.9
+  lookahead_m: 1.0
+  align_threshold_deg: 25.0
+  goal_range_m: 3.5
+  claim_radius_m: 8.0
+  heading_min_displacement_m: 1.5
+  trust_orientation: false
+  orientation_offset_deg: 0.0
+  orientation_sign: 1.0
+
+planner:
+  grid_size: 240
+  unknown_cost: 0.2
+  smooth_kernel: 3
+  num_goals: 30
+  num_mid_points_per_goal: 20
+  path_num_samples: 100
+  footprint_px: 18
+  threshold_cost: 0.50
+  threshold_points_ratio: 0.05
+  number_of_points_to_filter: 60
+  alpha: 1.0
+  best_k: 12
+  use_clustering: true
+  max_clusters: 4
+  cluster_angle_threshold_deg: 40.0
+  random_seed: 42
+  include_goal_in_path_bank: false
+  include_random_goals: true
+
+safety:
+  stale_frame_s: 2.0
+  max_consecutive_errors: 5
+  recovery_after_empty_plans: 3
+  recovery_turn_s: 1.5
+  loop_period_s: 0.2

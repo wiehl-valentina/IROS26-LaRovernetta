@@ -118,10 +118,24 @@ def test_mission_completion(fake_session):
 
 
 def test_goal_behind_arc_turns(fake_session):
-    """Goal offset > turn_in_place_deg -> slow arc, not a spin and not a predict."""
+    """Goal offset > turn_in_place_deg AND closer than align_urgent_m -> slow arc.
+
+    Dos cosas que este test tenia mal y hacian que fallara siempre:
+
+      * no encolaba ningun frame, asi que _decide() cortaba en "no_frame"
+        antes de llegar a la rama del arco. El docstring viejo decia "not a
+        predict", pero mission._decide() corre traversability SIEMPRE primero
+        y a proposito (esta documentado ahi): no se manda ningun movimiento,
+        ni siquiera un giro hacia la meta, sin haber mirado la mascara.
+      * el checkpoint estaba a ~44 m, muy por encima de align_urgent_m (20 m),
+        asi que `urgente` era False y el arco forzado no correspondia igual.
+        Ahora el checkpoint esta a ~11 m al sur (dentro de align_urgent_m) y
+        fuera de arrive_attempt_m, que es exactamente el caso que el arco
+        forzado quiere cubrir.
+    """
     body = {
         "checkpoints_list": [
-            {"id": 1, "sequence": 1, "latitude": str(LAT0 - 0.0004), "longitude": str(LON0)},
+            {"id": 1, "sequence": 1, "latitude": str(LAT0 - 0.0001), "longitude": str(LON0)},
         ],
         "latest_scanned_checkpoint": 0,
     }
@@ -133,7 +147,9 @@ def test_goal_behind_arc_turns(fake_session):
         FakeResponse(200, {"latitude": LAT0, "longitude": LON0,
                            "speed": 0.0, "orientation": 0.0}),
     )
-    result = _runner(fake_session, max_steps=1).run()
+    fake_session.queue("/v2/screenshot", FakeResponse(200, {"front_frame": _frame_b64()}))
+    result = _runner(fake_session, max_steps=1, arrive_attempt_m=5.0).run()
     d = result.history[0]["decision"]
     assert d.reason == "arc_turn_to_goal"
     assert d.linear > 0  # arc, not a pure spin (GPS-COG needs motion)
+    assert abs(d.angular) > 0

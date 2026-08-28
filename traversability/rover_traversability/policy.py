@@ -44,7 +44,7 @@ class PolicyConfig:
     bottom_weight: float = 2.0       # near (bottom) rows weighted up, linear ramp 1 -> this
     min_valid_pixels: int = 200      # fewer finite ROI pixels than this -> stop ("no_data")
     max_linear: float = 0.8
-    min_linear: float = 0.5
+    min_linear: float = 0.3
     max_angular: float = 0.5
     k_angular: float = 1.2           # steering gain on normalized image-x offset
     hfov_deg: float = DEFAULT_HFOV_DEG

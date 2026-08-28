@@ -1,0 +1,50 @@
+{
+ "sdk": {
+  "port": "8000",
+  "reload": true
+ },
+ "genie-bridge": {
+  "debug-dir": "debub/run2_wuhan2",
+  "go": false
+ },
+ "indoor-bridge": {
+  "config": "/home/pablolube/IROS26-LaRovernetta/genie/configs/indoor_cone_search.yaml",
+  "debug-dir": "debug/cono2",
+  "go": false
+ },
+ "map-session": {
+  "go": false
+ },
+ "traversability": {
+  "level": "live"
+ },
+ "mapping-ros2": {},
+ "ros2-bridge": {},
+ "sync-ros2": {},
+ "sdk-client": {},
+ "perception": {},
+ "maps": {},
+ "ros2-check": {},
+ "doctor": {},
+ "stack:record-run": {
+  "sdk": true,
+  "slam": true,
+  "map_out": "maps/sesion1",
+  "db": "",
+  "config": "configs/indoor_mapping.yaml",
+  "export_every": "30",
+  "max_seconds": "",
+  "debug_dir": "",
+  "go": false
+ },
+ "stack:indoor-run": {
+  "mode": "map",
+  "sdk": false,
+  "waypoints": "configs/waypoints_example.yaml",
+  "db": "/home/pablolube/IROS26-LaRovernetta/genie/maps/sesion1.db",
+  "config": "/home/pablolube/IROS26-LaRovernetta/genie/configs/indoor_cone_search.yaml",
+  "max_seconds": "",
+  "debug_dir": "/home/pablolube/IROS26-LaRovernetta/genie/debug/casamia",
+  "go": true
+ }
+}
