@@ -7,6 +7,16 @@
 #
 # Si cambia IMAGE_QUALITY o IMAGE_FORMAT en el .env del SDK, o si le pegas un
 # golpe a la camara, hay que recalibrar.
+#
+# ACTUALIZADO 30/08 (fusion con las mejoras del compañero sobre el bridge.py
+# mergeado): las claves nuevas de abajo (navigation.min_linear_while_planned,
+# navigation.replan_max_s -- reemplaza a la vieja replan_max_age_s, que
+# bridge.py YA NO LEE --, planner.goal_weight/unknown_cost/uniform_path_bank/
+# fan_*, safety.use_vlm_recovery/vlm_recovery_*/unstick_forward_s/
+# recovery_turn_speed/recovery_step_deg/recovery_deg_per_s/
+# heading_search_radius_m) vienen de frodobot_rover_compañero.yaml. Los
+# valores de velocidad/tamaño propios de ESTE robot (max_linear, max_angular,
+# footprint_px, calibracion de camara, etc.) NO se tocaron.
 
 rover:
   base_url: "http://localhost:8000"
@@ -64,8 +74,20 @@ navigation:
 
   max_linear: 0.90       # bien lento para las primeras corridas
   max_angular: 0.60
+
   turn_speed: 0.40
-  kp_angular: 0.9
+
+  # FUSIONADO del compañero (frodobot_rover_compañero.yaml): con 0.9 el
+  # comando saturaba en max_angular apenas el error de rumbo pasaba ~38
+  # grados (0.60 / 0.9 en radianes), y como el planner devuelve tipicamente
+  # 40-70 grados de error, giraba SIEMPRE al maximo -> sobrepasaba, el error
+  # cambiaba de signo, giraba al maximo para el otro lado -> el zigzag que se
+  # ve en la traza del mapa. Con 0.45 recien satura a los ~76 grados (con
+  # ESTE max_angular=0.60; el compañero mide 57 grados con su max_angular
+  # propio de 0.45), asi que en el rango normal responde proporcional al
+  # error en vez de a todo o nada. Si notas que el rover gira "de mas" para
+  # errores chicos, se puede subir un poco, pero no volver a 0.9.
+  kp_angular: 0.45
   lookahead_m: 1.5
   align_threshold_deg: 90.0
 
@@ -91,20 +113,39 @@ navigation:
   # Se replanifica solo si: se avanzo replan_every_m desde el ultimo plan
   # (medido sobre la pose de odometry.py, ya corregida por GPS cuando hay fix),
   # o al camino cacheado le quedan menos de replan_min_remaining_m por delante,
-  # o el chequeo frontal veto el plan, o pasaron replan_max_age_s (red de
-  # seguridad, y unico disparador si memory.enabled esta en false).
-  #
-  # Entre replanificaciones el bridge sigue el ultimo camino calculado,
-  # reproyectado a la pose actual (_transform_path_xy, definido DENTRO de
-  # bridge.py — no en navigation.py). Un obstaculo al frente (front_is_blocked)
+  # o pasaron replan_max_s (red de seguridad, y unico disparador si
+  # memory.enabled esta en false). Un obstaculo al frente (front_is_blocked)
   # sigue frenando de inmediato, cada frame: el compromiso es con la ruta,
   # nunca con "no frenar".
   replan_every_m: 1.0
   replan_min_remaining_m: 0.4
-  replan_max_age_s: 2.0
+  # RENOMBRADO: esta clave se llamaba "replan_max_age_s" -- bridge.py (el
+  # mergeado, como el del compañero) lee "replan_max_s", no
+  # "replan_max_age_s". Con el nombre viejo esta red de seguridad quedaba
+  # silenciosamente ignorada (caia al default de 2.0s, que coincide con este
+  # valor asi que no cambiaba nada en la practica, pero convenia corregir el
+  # nombre para que quede documentado que SI se esta leyendo).
+  replan_max_s: 2.0
+
+  # FUSIONADO del compañero: velocidad lineal minima mientras se sigue un
+  # plan YA comprometido. Con un plan elegido, un error de rumbo mayor a
+  # align_threshold_deg hace CURVAR a esta velocidad en vez de pivotear en el
+  # lugar (linear=0, que es avance neto cero) -- la perilla principal contra
+  # el patron avanza-frena-avanza. Coincide con el default de bridge.py, se
+  # deja explicito para que quede documentado.
+  min_linear_while_planned: 0.08
 planner:
   grid_size: 240
-  unknown_cost: 0.2
+
+  # FUSIONADO del compañero (subido de 0.2 a 0.30): costo de una celda nunca
+  # observada. Una celda OBSERVADA cuesta (1 - transitabilidad), asi que este
+  # numero define el break-even: con 0.2, el piso observado necesitaba
+  # transitabilidad > 0.80 para que el planner lo prefiriera sobre territorio
+  # que nunca vio -> tiraba hacia lo desconocido teniendo verde al lado. Con
+  # 0.30 el break-even baja a 0.70. TECHO DURO: tiene que quedar por DEBAJO
+  # de threshold_cost (0.35) o path_selection.py descarta todo camino que
+  # cruce >2% de celdas desconocidas.
+  unknown_cost: 0.30
   smooth_kernel: 3
   num_goals: 30
   num_mid_points_per_goal: 20
@@ -122,6 +163,24 @@ planner:
   include_goal_in_path_bank: false
   include_random_goals: true
 
+  # FUSIONADO del compañero: peso del termino "terminar cerca de la meta" en
+  # el costo de cada camino (ver costs.goal_term). Con 0.0 (el comportamiento
+  # original) el costo SOLO mide transitabilidad: en una explanada libre
+  # todos los caminos empatan, la direccion elegida es arbitraria, y el
+  # robot describe circulos sin acercarse al checkpoint. Medido por el
+  # compañero sobre un BEV real pidiendo metas de -45 a +45 grados: con 1.0
+  # la respuesta es monotona y de signo correcto (con 0.0 el planner
+  # ignoraba la meta).
+  goal_weight: 1.0
+  # FUSIONADO del compañero: banco de caminos con destinos repartidos
+  # uniformemente en angulo (sample_paths_uniform_fan) en vez del banco
+  # aleatorio original, que dejaba direcciones sin ningun candidato y hacia
+  # subvirar al planner. Coincide con el default de planner.py, se deja
+  # explicito para que quede documentado.
+  uniform_path_bank: true
+  fan_max_angle_deg: 75.0
+  fan_num_headings: 31
+
 safety:
   stale_frame_s: 2.0
   max_consecutive_errors: 5
@@ -130,15 +189,24 @@ safety:
   loop_period_s: 0.2
   max_consecutive_turns: 4
 
-  # unstick_forward_s SE SACO. _unstick() ya no existe: forzar un avance recto
-  # estando trabado de frente es exactamente lo peor que se puede hacer (en el
-  # mejor caso choca suave y el operador interviene). Los giros repetidos sin
-  # avance ahora entran a la misma rutina de recuperacion que todo lo demas.
+  # FUSIONADO del compañero: _unstick() SIGUE existiendo en el bridge.py
+  # mergeado (rompe el ciclo de giros sin avance forzando un tramo recto) --
+  # el comentario que decia lo contrario en una version anterior de este
+  # archivo ya no aplica. Sin esta clave el default es 1.2s; se sube a 2.5s
+  # (valor del compañero) porque un tramo mas largo desatasca mejor cuando
+  # el ciclo de giros viene de un error de rumbo grande, no de un obstaculo
+  # real (front_is_blocked ya se evaluo en libre esta misma iteracion).
+  unstick_forward_s: 2.5
 
-  # use_vlm_recovery / vlm_recovery_timeout_s / vlm_recovery_min_confidence
-  # SE SACARON. Esta version de bridge.py no usa VLM en absoluto: no importa
-  # .vlm_recovery ni necesita GEMINI_API_KEY. Si volves a poner
-  # use_vlm_recovery: true, bridge.py avisa una vez y lo ignora.
+  # FUSIONADO del compañero: confirmacion opcional con VLM (Gemini) del
+  # rumbo de recuperacion elegido por el mapa, antes de comprometerse a el.
+  # Requiere GEMINI_API_KEY en el entorno; si falla, da timeout o reporta
+  # poca confianza, _recover() cae solo a la memoria y despues al barrido
+  # ciego -- nunca se cuelga. Se deja en false (igual que el default): activalo
+  # solo si tenes la API key configurada y queres esa capa extra de chequeo.
+  use_vlm_recovery: false
+  vlm_recovery_timeout_s: 4.0
+  vlm_recovery_min_confidence: 0.35
 
   # ------------------------------------------------------ obstaculo al frente
   # Cuantos frames SEGUIDOS de "OBSTACULO al frente" antes de recuperar: no
@@ -148,11 +216,10 @@ safety:
   obstacle_persist_frames: 4
 
   # ------------------------------------------------------------- retroceso
-  # AHORA SI SE IMPLEMENTAN (antes eran config muerta). _recover() retrocede
-  # antes de girar: a 0.3 m un obstaculo ocupa 60 grados del campo visual y los
-  # 12 caminos candidatos del planner lo atraviesan, giremos hacia donde
-  # giremos, porque la zona ciega gira con el robot. Retroceder es la unica
-  # accion que lo aleja.
+  # _recover() retrocede antes de girar: a 0.3 m un obstaculo ocupa 60 grados
+  # del campo visual y los caminos candidatos del planner lo atraviesan,
+  # giremos hacia donde giremos, porque la zona ciega gira con el robot.
+  # Retroceder es la unica accion que lo aleja.
   #
   # La unica evidencia de que atras hay lugar es la memoria (no hay camara
   # trasera), y la memoria de atras es la mas vieja y la mas deteriorada por
@@ -179,6 +246,26 @@ safety:
   # bridge.py lo filtra igual aunque este en la lista.
   recovery_headings_deg: [90.0, -90.0, 180.0]
   recovery_min_cobertura_pct: 25.0
+
+  # FUSIONADO del compañero: el giro de recuperacion ("girando hacia +-180
+  # grados") tardaba ~8s en dar media vuelta porque usaba turn_speed (0.40)
+  # como si fuera rad/s, y son unidades distintas (turn_speed es un comando
+  # normalizado en -1..1). Con estos tres valores media vuelta son 4 pasos
+  # de 1s en vez de 9 de 0.87s. Coinciden con los defaults de bridge.py, se
+  # dejan explicitos para que quede documentado.
+  #   recovery_turn_speed : comando angular durante el giro
+  #   recovery_step_deg   : cuanto gira entre verificacion y verificacion
+  #   recovery_deg_per_s  : tasa REAL de giro del robot, en grados por
+  #                         segundo -- medila cronometrando media vuelta: si
+  #                         el robot se pasa, subila; si se queda corto,
+  #                         bajala.
+  recovery_turn_speed: 0.45
+  recovery_step_deg: 45.0
+  recovery_deg_per_s: 45.0
+  # Radio de la ventana del mapa persistente que se consulta por cada rumbo
+  # candidato. Muy grande diluye obstaculos chicos en el promedio y todo sale
+  # "libre"; muy chico decide con poquisimas celdas.
+  heading_search_radius_m: 2.0
 
   # Si la memoria no tiene cobertura util, el rumbo lo deciden los CORREDORES
   # de rover_traversability (suggest_command sobre la mascara de imagen

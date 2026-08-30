@@ -332,13 +332,23 @@ class IndoorBridge(Bridge):
             _row("frenado: obstaculo al frente")
             return
 
+        bev_resolution_m = (2.0 * side) / plan_bev.shape[1]
         plan = plan_on_bev(
             bev_traversability=plan_bev,
             observed_mask=plan_obs,
             goal_x_m=float(mission_goal.x_right_m),
             goal_y_m=float(mission_goal.y_forward_m),
-            bev_resolution_m=(2.0 * side) / plan_bev.shape[1],
+            bev_resolution_m=bev_resolution_m,
             config=self.planner_cfg,
+            # Mismo banco de caminos candidatos cacheado que usa
+            # Bridge._step() (ver Bridge._path_bank): sin esto, plan_on_bev
+            # recalculaba el banco EN CADA FRAME (~3s en la RTX 2080 de
+            # referencia), mas que el dead-man watchdog del SDK (3s por
+            # defecto) -- el rover se frenaria solo entre comando y comando,
+            # exactamente el problema que la mejora de mi compañero elimino
+            # del lado outdoor. self._bank/self._bank_shape ya existen: los
+            # inicializa Bridge.__init__, heredado via super().__init__().
+            candidate_path_bank=self._path_bank(plan_bev.shape, bev_resolution_m),
         )
 
         path = plan.final_path_xy_m
@@ -347,7 +357,13 @@ class IndoorBridge(Bridge):
             self._consecutive_empty += 1
             if self._consecutive_empty >= self.recovery_after_empty:
                 _row(f"RECUPERACION ({self._consecutive_empty} planes vacios seguidos)")
-                self._recover(rgb)
+                # Bridge._recover() no toma argumentos (arma el frame que
+                # necesita internamente, via self.client.front_frame() en
+                # _preguntar_vlm() si use_vlm_recovery esta activo). El
+                # archivo original llamaba self._recover(rgb) -- eso tira
+                # TypeError la primera vez que se llega aca, apenas la
+                # mision indoor encadena recovery_after_empty planes vacios.
+                self._recover()
             else:
                 self.send(DriveCommand(0.0, 0.0, "el planner no encontro camino"), quiet=True)
                 _row(f"sin camino ({self._consecutive_empty}/{self.recovery_after_empty})")
@@ -356,7 +372,13 @@ class IndoorBridge(Bridge):
         self._consecutive_empty = 0
         self.stats.plans_ok += 1
 
-        cmd = self.follower.command(path)
+        # committed=True: igual que Bridge._send_path_command() del lado
+        # outdoor -- una vez que el camino ya esta elegido, el seguidor debe
+        # CURVAR hacia el en vez de pivotear en el lugar por cada error de
+        # rumbo grande. Sin esto la mision indoor pivotea mas de lo
+        # necesario en corredores angostos, justo donde girar en el lugar es
+        # mas propenso a rozar una pared.
+        cmd = self.follower.command(path, committed=True)
         cmd = self._apply_commit(cmd, path)
         if mission_goal.linear_scale != 1.0:
             cmd = DriveCommand(cmd.linear * mission_goal.linear_scale, cmd.angular,

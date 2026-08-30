@@ -8,6 +8,16 @@
 # Si tu robot / camara es distinto, corre primero tools/calibrate_camera.py
 # y tools/camera_pose_from_ground.py como en frodobot_rover.yaml — sin eso
 # _check_placeholders() no te deja arrancar (a proposito).
+#
+# ACTUALIZADO 30/08 (fusion con el bridge.py/indoor_bridge.py mergeados):
+# se suman las claves nuevas que el bridge mergeado ya lee (replanificacion
+# por disparo espacial, banco de caminos cacheado con goal_weight, retroceso
+# en regimen cercano, recuperacion informada con VLM opcional) — antes esta
+# seccion no las tenia y todo caia en los defaults de bridge.py, que son los
+# valores de EXTERIOR, no pensados para un pasillo. Los valores elegidos aca
+# son puntos de partida conservadores para interior, no una copia de
+# frodobot_rover_compañero.yaml — confirmalos con un dry-run real antes de
+# una mision larga (ver Pendiente en el doc del proyecto).
 
 # ============================================================================
 # ROVER: como hablarle al SDK (el servidor FastAPI que corre "hypercorn
@@ -141,8 +151,14 @@ navigation:
                            # coincide con el valor de afuera, no es mas bajo).
   turn_speed: 0.40         # velocidad angular FIJA al girar en el lugar,
                            # cuando el error de rumbo es grande (> align_threshold_deg).
-  kp_angular: 0.9          # ganancia proporcional del control angular
-                           # (cuanto giro por grado de error de rumbo).
+
+  # FUSIONADO del compañero (mismo fix que en frodobot_rover.yaml): con 0.9
+  # el comando saturaba en max_angular apenas el error de rumbo pasaba unos
+  # 38 grados, y el planner devuelve tipicamente 40-70 -- giraba SIEMPRE al
+  # maximo, de un lado y del otro, el zigzag caracteristico. El bug es el
+  # mismo de este lado (indoor comparte PathFollower.command con outdoor),
+  # asi que se adopta el mismo valor corregido.
+  kp_angular: 0.45
   lookahead_m: 1.5         # a que distancia sobre el camino planificado se
                            # mira para calcular hacia donde apuntar.
   align_threshold_deg: 90.0
@@ -159,6 +175,26 @@ navigation:
                              # lado igual, aunque el commit_hold_s no haya
                              # vencido (evita quedarse atascado en un lado
                              # claramente peor).
+
+  # FUSIONADO del compañero: replanificacion por disparo espacial. En
+  # indoor_bridge.py esto lo usa Bridge._path_bank() (via
+  # IndoorBridge._step(), ya reconciliado) para el banco de caminos, pero
+  # OJO — la replanificacion por distancia en si (need_replan /
+  # _plan_path_world) vive en Bridge._step(), que IndoorBridge._step() NO
+  # llama (arma su propio _step() de punta a punta). Estas tres claves se
+  # agregan igual porque min_linear_while_planned SI lo usa
+  # PathFollower.command(..., committed=True) — el que indoor ya adopto en
+  # la reconciliacion — independientemente de quien dispare el replan.
+  # Valores un poco mas chicos que afuera: pasillo angosto, conviene
+  # reaccionar mas seguido a lo que ve la camara.
+  replan_every_m: 0.6
+  replan_min_remaining_m: 0.3
+  replan_max_s: 1.5
+
+  # Velocidad lineal minima curvando con un plan ya comprometido, en vez de
+  # pivotear en el lugar (linear=0). Mas baja que afuera (0.08): en un
+  # pasillo angosto conviene curvar mas despacio que en campo abierto.
+  min_linear_while_planned: 0.06
 
   # goal_range_m / claim_radius_m / heading_* / orientation_* / trust_orientation:
   # los usa el flujo GPS de bridge.py (goal_from_gps / HeadingEstimator). Los
@@ -182,8 +218,11 @@ navigation:
 planner:
   grid_size: 200                  # resolucion de la grilla interna del
                                    # planner (afuera: 240).
-  unknown_cost: 0.2                # costo asignado a celdas "no observadas"
-                                   # todavia (ni transitable ni obstaculo).
+  # FUSIONADO del compañero (mismo fix que en frodobot_rover.yaml, subido
+  # de 0.2 a 0.30): con 0.2, el piso observado necesitaba transitabilidad
+  # > 0.80 para que el planner lo prefiriera sobre territorio nunca visto.
+  # TECHO DURO: tiene que quedar por debajo de threshold_cost (0.35).
+  unknown_cost: 0.30
   smooth_kernel: 3                 # suavizado aplicado al mapa de costos.
   num_goals: 24                    # cuantas metas candidatas evalua el
                                    # banco de rutas (afuera: 30).
@@ -210,16 +249,28 @@ planner:
   include_goal_in_path_bank: false
   include_random_goals: true
 
+  # FUSIONADO del compañero: peso del termino "terminar cerca de la meta".
+  # Sin esto (default 0.0) el costo solo mide transitabilidad y en un
+  # pasillo ancho o una sala abierta el planner puede describir circulos sin
+  # acercarse al cono. Mismo valor que afuera: la mision del cono depende
+  # AUN MAS de apuntar bien a la meta que el tour de checkpoints GPS.
+  goal_weight: 1.0
+  # Banco de caminos con destinos repartidos uniformemente en angulo (evita
+  # el sesgo del banco aleatorio original, que dejaba direcciones sin
+  # candidatos). Coincide con el default de planner.py.
+  uniform_path_bank: true
+  fan_max_angle_deg: 75.0
+  fan_num_headings: 31
+
 
 # ============================================================================
 # SAFETY: parametros del bucle principal y de las salvaguardas (frenado por
 # video congelado, recuperacion ante planes vacios, anti-loop de giro).
-# ACTUALIZADO: bridge.py ahora SI lee use_vlm_recovery / vlm_recovery_* /
-# recovery_headings_deg / recovery_min_cobertura_pct (ver Bridge._recover()).
-# Antes eran config muerta. Los que siguen SIN leerse son los de retroceso
-# (retroceso_*, obstacle_persist_frames): esa maniobra implica manejar en
-# reversa sin ningun sensor trasero, asi que queda deliberadamente sin
-# implementar — no los agregamos aca para no dar a entender que hacen algo.
+# ACTUALIZADO 30/08: se suma la seccion de retroceso (regimen cercano) que
+# faltaba por completo, y se completan las claves de recuperacion informada
+# que ya estaban parcialmente (recovery_headings_deg/recovery_min_cobertura_pct
+# ya existian, ahora se agregan recovery_turn_speed/recovery_step_deg/
+# recovery_deg_per_s/heading_search_radius_m que las acompañan).
 # ============================================================================
 safety:
   stale_frame_s: 2.0
@@ -232,10 +283,11 @@ safety:
 
   recovery_after_empty_plans: 3
   # si el planner no encuentra camino valido 3 veces seguidas, dispara
-  # _recover() (gira en el lugar buscando terreno transitable).
+  # _recover() (retrocede/gira buscando terreno transitable — ver mas abajo).
 
   recovery_turn_s: 1.2
-  # cuanto tiempo dura el giro de _recover() (afuera: 1.5 s).
+  # cuanto tiempo dura el barrido ciego (ultimo recurso de _recover(), si ni
+  # el mapa ni el VLM dieron un rumbo confiable). (afuera: 1.5 s).
 
   loop_period_s: 0.2
   # duracion MINIMA objetivo de cada iteracion del bucle (~5 Hz). Si _step()
@@ -248,7 +300,37 @@ safety:
   # _unstick() en vez de seguir girando en un loop inutil (afuera: 4).
 
   unstick_forward_s: 1.5
-  # cuanto avanza derecho _unstick() al desatascar (afuera: 2.5 s).
+  # cuanto avanza derecho _unstick() al desatascar (afuera: 2.5 s — mas
+  # corto aca a proposito: en un pasillo angosto un tramo largo sin evaluar
+  # nada es mas riesgoso que afuera).
+
+  # ------------------------------------------------------ obstaculo al frente
+  # FUSIONADO del compañero (faltaba en este archivo): cuantos frames
+  # SEGUIDOS de "OBSTACULO al frente" antes de evaluar un retroceso (no
+  # reaccionar a un bloqueo de un solo frame, p.ej. alguien que cruzo
+  # caminando).
+  obstacle_persist_frames: 4
+
+  # ------------------------------------------------------------- retroceso
+  # FUSIONADO del compañero, seccion COMPLETA nueva (no existia en este
+  # archivo). _recover() retrocede antes de girar: a corta distancia un
+  # obstaculo ocupa la mayor parte del campo visual y los caminos candidatos
+  # lo atraviesan giremos hacia donde giremos, porque la zona ciega gira con
+  # el robot. Retroceder es la unica accion que la aleja.
+  #
+  # VALORES MAS CONSERVADORES que afuera (frodobot_rover_compañero.yaml usa
+  # 0.6/0.2/-0.18): en un pasillo angosto conviene retroceder MENOS por vez
+  # y mas despacio — un tramo de reversa largo sin camara trasera es mas
+  # riesgoso cuanto menos margen lateral hay. Confirmar empiricamente con un
+  # dry-run real antes de una mision larga (ver Pendiente del doc del
+  # proyecto): estos numeros son un punto de partida, no una medicion.
+  retroceso_min_libre_pct: 55.0
+  retroceso_min_cobertura_pct: 30.0
+  retroceso_max_m: 0.35
+  retroceso_paso_m: 0.12
+  # Negativo = reversa. Confirmar a mano la primera vez, en dry-run y con
+  # espacio de sobra detras del robot.
+  retroceso_linear: -0.15
 
   # --- recuperacion informada (Bridge._recover) -----------------------------
   # Rumbos candidatos, en GRADOS relativos al rumbo actual, que _recover()
@@ -264,6 +346,21 @@ safety:
   # Cobertura minima (%) de la ventana de memoria en ese rumbo para que su
   # puntaje cuente. Por debajo, "no lo vi nunca" NO se toma como "esta libre".
   recovery_min_cobertura_pct: 25.0
+
+  # FUSIONADO del compañero (faltaban, recovery_headings_deg/
+  # recovery_min_cobertura_pct ya estaban pero sin sus tres acompañantes):
+  # el giro de recuperacion tardaba ~8s en dar media vuelta porque usaba
+  # turn_speed como si fuera rad/s. Mismos valores que afuera — el bug y el
+  # fix son del mismo mecanismo (Bridge._recover_informado), compartido con
+  # indoor.
+  recovery_turn_speed: 0.45
+  recovery_step_deg: 45.0
+  recovery_deg_per_s: 45.0
+  # Radio de la ventana del mapa persistente que se consulta por cada rumbo
+  # candidato. Muy grande diluye obstaculos chicos en el promedio y todo
+  # sale "libre"; muy chico decide con poquisimas celdas. Mismo valor que
+  # afuera: el mapa tiene la misma resolucion/tamaño en ambos configs.
+  heading_search_radius_m: 2.0
 
   # Confirmacion con VLM (Gemini) del rumbo de recuperacion. Requiere
   # GEMINI_API_KEY; si falla, da timeout o reporta poca confianza, _recover()
@@ -369,23 +466,77 @@ cone:
   # imagen. Ajustar al cono real que se use en la pista.
   real_height_m: 0.30
 
-  color:
-    # rango de color HSV que se considera "cono" (naranja tipico).
-    hsv_low: [5, 120, 120]
-    hsv_high: [18, 255, 255]
-    hsv_low2: null            # segundo rango HSV opcional (naranja que se corre a rojo)
-    hsv_high2: null           # (util si el naranja del cono "cruza" el 0/180
-                               # del circulo de matiz HSV y hace falta un
-                               # segundo rango para cubrirlo entero)
-    min_area_px: 250          # area minima en pixeles para no confundir
-                               # ruido/manchitas con un cono real.
-    min_aspect_ratio: 0.25    # relacion ancho/alto minima del blob detectado.
-    max_aspect_ratio: 1.3     # relacion ancho/alto maxima (filtra formas
-                               # muy alargadas o muy achatadas, no-cono).
-    min_fill_ratio: 0.35      # que tan "lleno" tiene que estar el bounding
-                               # box (filtra formas muy huecas/irregulares).
-    morph_kernel: 5           # tamano del kernel morfologico (limpieza de
-                               # la mascara de color antes de buscar blobs).
+color:
+
+  # ============================================================
+  # NARANJA
+  # Referencias:
+  #   #FE1800 -> HSV [3, 255, 254]
+  #   #F59203 -> HSV [18, 252, 245]
+  # ============================================================
+  orange:
+    hsv_low: [2, 180, 120]
+    hsv_high: [20, 255, 255]
+    hsv_low2: null
+    hsv_high2: null
+
+  # ============================================================
+  # ROJO
+  # Referencias:
+  #   #DF171A -> HSV [180, 229, 223]
+  #   #D71513 -> HSV [0, 233, 215]
+  #
+  # El rojo cruza el límite 0/180 del HSV,
+  # por eso utiliza dos rangos.
+  # ============================================================
+  red:
+    hsv_low: [0, 180, 120]
+    hsv_high: [5, 255, 255]
+    hsv_low2: [175, 180, 120]
+    hsv_high2: [179, 255, 255]
+
+  # ============================================================
+  # AZUL
+  # Referencias:
+  #   #243255 -> HSV [111, 147, 85]
+  #   #233158 -> HSV [112, 154, 88]
+  # ============================================================
+  blue:
+    hsv_low: [103, 100, 50]
+    hsv_high: [120, 255, 255]
+    hsv_low2: null
+    hsv_high2: null
+
+  # ============================================================
+  # VERDE
+  # Referencias:
+  #   #005244 -> HSV [85, 255, 82]
+  #   #004638 -> HSV [84, 255, 70]
+  # ============================================================
+  green:
+    hsv_low: [76, 180, 40]
+    hsv_high: [94, 255, 130]
+    hsv_low2: null
+    hsv_high2: null
+
+  # Area minima en pixeles para no confundir
+  # ruido/manchitas con un cono real.
+  min_area_px: 250
+
+  # Relacion ancho/alto minima del blob detectado.
+  min_aspect_ratio: 0.25
+
+  # Relacion ancho/alto maxima.
+  # Filtra formas muy alargadas o muy achatadas.
+  max_aspect_ratio: 1.3
+
+  # Que tan "lleno" tiene que estar el bounding box.
+  # Filtra formas muy huecas o irregulares.
+  min_fill_ratio: 0.35
+
+  # Tamano del kernel morfologico.
+  # Limpieza de la mascara de color antes de buscar blobs.
+  morph_kernel: 5
 
   yolo:
     # Config para el backend alternativo (si backend: "yolo" en vez de "color").
@@ -402,6 +553,8 @@ cone:
 # Ciclo: SEARCH -> NAVIGATE -> APPROACH -> VERIFY -> PHOTO -> (SEARCH de
 # nuevo, o STOP). Cada cono es un CHECKPOINT, no el fin de la mision: solo
 # termina cuando se agota la ruta/exploracion sin ningun cono enganchado.
+# (sin cambios respecto al archivo anterior — ConeMissionFSM no depende de
+# nada de lo que trajo la fusion del compañero)
 # ============================================================================
 mission:
   # "wander":    sin mapa ni waypoints, derecho adelante evitando obstaculos
