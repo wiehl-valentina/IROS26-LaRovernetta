@@ -294,7 +294,7 @@ class Bridge:
         elif (now - self._last_frame_change) > self.stale_frame_s:
             raise RoverError(
                 f"El frame no cambia desde hace {now - self._last_frame_change:.1f} s "
-                "(video congelado)"
+                "(video  congelado)"
             )
 
         telem = self.client.telemetry()

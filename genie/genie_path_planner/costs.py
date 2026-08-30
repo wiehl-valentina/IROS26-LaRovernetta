@@ -91,3 +91,4 @@ def pick_final_path(
         best_path = np.asarray(top[0][1], dtype=np.float32)
         return best_path[:, 0].astype(np.float32), best_path[:, 1].astype(np.float32)
     return final_rows, final_cols
+ 
