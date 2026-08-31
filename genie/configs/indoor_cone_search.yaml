@@ -18,6 +18,14 @@
 # son puntos de partida conservadores para interior, no una copia de
 # frodobot_rover_compañero.yaml — confirmalos con un dry-run real antes de
 # una mision larga (ver Pendiente en el doc del proyecto).
+#
+# ACTUALIZADO 31/08 (waypoints desde SLAM, ver guia-waypoints-desde-slam-28-08):
+# se activa mission.search_mode: "waypoints" apuntando a la ruta convertida
+# desde la sesion RTAB-Map grabada, se corrige waypoints_path (tenia un
+# "genie/" de mas — las rutas del config son relativas a donde se corre el
+# comando, normalmente genie/) y se agrega la seccion mapping.rtabmap_correction
+# que faltaba por completo: sin ella, aunque haya waypoints, el rover navega
+# con dead-reckoning puro y sin corregir contra el mapa grabado.
 
 # ============================================================================
 # ROVER: como hablarle al SDK (el servidor FastAPI que corre "hypercorn
@@ -406,6 +414,34 @@ odometry:
 
 
 # ============================================================================
+# MAPPING: correccion de pose contra una sesion de RTAB-Map grabada
+# previamente (relocalizacion). Con esto activo, en cada frame IndoorBridge
+# reemplaza la pose de dead-reckoning (rueda + giro) por la corregida via TF
+# `map -> base_link` que publica RTAB-Map, antes de integrar el delta del
+# frame -- es lo que hace que los waypoints de mission.waypoints_path caigan
+# donde tienen que caer, y lo que corrige desvios (patinada, empujon) en
+# cuanto la camara vuelve a reconocer donde esta.
+#
+# REQUISITO DE CODIGO: esto solo tiene efecto si ya aplicaste el fix de
+# fix-rtabmap-correction-mision-real-indoor-bridge a indoor_bridge.py. Antes
+# de ese parche, indoor_bridge.py (la mision real) ignoraba esta seccion en
+# silencio -- solo la leia map_session.py. Si no lo aplicaste, esto queda
+# sin efecto y el rover navega con dead-reckoning puro.
+#
+# REQUISITO DE CORRIDA: necesitas RTAB-Map corriendo en modo LOCALIZACION
+# (localization:=true) sobre el MISMO .db de donde salieron los waypoints
+# (ver guia-waypoints-desde-slam-28-08 / mapping-ros2 en el launcher, o el
+# modo "both" de indoor-run que ya levanta las dos cosas juntas).
+# ============================================================================
+mapping:
+  rtabmap_correction:
+    enabled: true
+    map_frame: "map"
+    base_frame: "base_link"
+    lookup_timeout_s: 0.2
+
+
+# ============================================================================
 # MEMORY: el PersistentMap — memoria espacial acumulada del entorno, anclada
 # SIEMPRE al marco de la odometria (nunca a GPS). Sin esto, el planner solo
 # ve una foto de 2x2 m que se descarta cada frame; con esto, "recuerda" el
@@ -439,11 +475,15 @@ memory:
   # indoor_bridge.py (medido a mano, una vez, con cinta en el piso). Si no
   # controlas la pose de arranque, dejar esto deshabilitado y usar en cambio
   # mapping.rtabmap_correction (relocalizacion automatica via RTAB-Map) —
-  # son dos estrategias alternativas, no activar las dos juntas.
+  # son dos estrategias alternativas, no activar las dos juntas. Como ya
+  # activamos mapping.rtabmap_correction arriba, esto se deja apagado.
   external_map:
-    enabled: false
-    yaml_path: "maps/sesion1.yaml"   # ruta relativa a donde se corre
-                                             # el comando (normalmente genie/)
+    enabled: true
+    yaml_path: "../maps/sesion1.yaml"   # ruta relativa a donde se corre el
+                                         # comando (normalmente genie/) --
+                                         # maps/ vive en la raiz del repo,
+                                         # un nivel arriba de genie/, por eso
+                                         # el "../"
     start_pose_map:
       x_m: 0.0      # posicion del robot AHORA, en el marco de ESE mapa
       y_m: 0.0
@@ -569,20 +609,23 @@ mission:
   # RECOMENDADO si ya tenes un mapeo previo del recorrido (ver
   # genie_rover.Indoor.map_session / configs/indoor_mapping.yaml): usar
   # "waypoints" con la ruta estimada de ese mapeo (waypoints_path) COMBINADO
-  # con memory.external_map (mas abajo) para arrancar con el mapa ya
-  # poblado en vez de vacio. Asi el rover sigue la ruta conocida en vez de
-  # explorar a ciegas, y en cuanto el detector engancha un cono (Fase 4,
-  # abajo) la maquina de estados abandona la ruta y va derecho al cono —
-  # el cono funciona como un checkpoint sobre/cerca de esa ruta, no como
-  # el unico mecanismo de navegacion.
+  # con mapping.rtabmap_correction (arriba) para que el rover se relocalice
+  # contra el mapa grabado en vez de arrancar siempre en (0,0,0) de
+  # odometria pura. Asi el rover sigue la ruta conocida en vez de explorar a
+  # ciegas, y en cuanto el detector engancha un cono (Fase 4, abajo) la
+  # maquina de estados abandona la ruta y va derecho al cono — el cono
+  # funciona como un checkpoint sobre/cerca de esa ruta, no como el unico
+  # mecanismo de navegacion.
   # "frontier" queda como fallback si el mapeo previo no cubre toda la
   # zona (explora la parte desconocida) y "wander" como ultimo recurso.
   #
   # Se puede pisar sin editar este archivo con:
   #   ./rover_launch.sh indoor-bridge --search-mode frontier
-  #   ./rover_launch.sh indoor-bridge --search-mode waypoints --waypoints-path configs/waypoints_example.yaml
-  search_mode: "wander"
-  waypoints_path: null          # ej. "configs/waypoints_example.yaml" (ruta estimada del mapeo previo)
+  #   ./rover_launch.sh indoor-bridge --search-mode waypoints --waypoints-path configs/waypoints_sesion1.yaml
+  search_mode: "waypoints"        # antes: "wander"
+  waypoints_path: "configs/waypoints_sesion1.yaml"    # antes tenia un "genie/" de mas:
+                                                        # las rutas son relativas a donde
+                                                        # corres el comando (normalmente genie/)
   waypoint_reach_radius_m: 0.6  # a que distancia de un waypoint se considera
                                  # "alcanzado" y pasa al siguiente.
   wander_forward_m: 3.0         # en modo wander, meta fija "derecho adelante"
@@ -666,3 +709,5 @@ mission:
   # OJO al ajustar esto: no debe ser mayor a la separacion real entre conos
   # de tu pista, o confundiria dos conos distintos con el mismo ya visitado
   # y se saltearia el segundo sin fotografiarlo.
+dashboard:
+  route_status_path: "/home/pablolube/IROS26-LaRovernetta/earth-rovers-sdk/static/genie_waypoints.json"

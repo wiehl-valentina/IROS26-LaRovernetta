@@ -65,7 +65,7 @@ from .rtabmap_pose_bridge import RtabmapPoseBridge
 from ..navigation import DriveCommand, front_is_blocked
 from ..odometry import Pose
 from ..sdk_client import RoverError
-
+from .route_status import RouteStatus
 
 class IndoorBridge(Bridge):
     # La mision de cono no usa checkpoints GPS en absoluto -- pisa el default
@@ -77,6 +77,12 @@ class IndoorBridge(Bridge):
     # test_indoor_mission_offline.py) sigue teniendo self._rtab is None en
     # vez de romper con AttributeError.
     _rtab = None
+
+    # Mismo motivo que _rtab: un IndoorBridge armado con __new__ saltando
+    # __init__ tiene igual un publicador APAGADO en vez de romper _step() con
+    # AttributeError. Al estar deshabilitado todos sus metodos salen temprano,
+    # asi que compartir la instancia entre esos casos es inerte.
+    _route_status = RouteStatus(None, enabled=False)
 
     def __init__(self, cfg: dict, dry_run: bool = True, debug_dir: str | None = None):
         super().__init__(cfg, dry_run=dry_run, debug_dir=debug_dir)
@@ -97,6 +103,31 @@ class IndoorBridge(Bridge):
         mission_cfg = MissionConfig.from_dict(cfg.get("mission", {}))
         self.mission_cfg = mission_cfg
         self.mission = ConeMissionFSM(mission_cfg)
+
+        # --- ruta dibujada en el dashboard del SDK (localhost:8000) ---------
+        # Publica el estado de la ruta a un JSON dentro de static/ del SDK,
+        # que map.js lee cada 1.5 s para dibujarla ENCIMA de su mapa. Se
+        # activa SOLO con search_mode "waypoints" Y dashboard.route_status_path
+        # en el config: sin eso queda apagado, no escribe nada y el dashboard
+        # queda exactamente como el original (no hay endpoint nuevo ni cambio
+        # en main.py del SDK -- el archivo ES el canal y el interruptor).
+        # La ruta vive en ConeMissionFSM._route (privado, y None cuando el
+        # modo no es "waypoints"), de ahi el getattr.
+        dash_cfg = cfg.get("dashboard", {}) or {}
+        route = getattr(self.mission, "_route", None)
+        self._route_status = RouteStatus(
+            dash_cfg.get("route_status_path"),
+            waypoints=getattr(route, "points", []),
+            enabled=(mission_cfg.search_mode == "waypoints"
+                     and bool(dash_cfg.get("route_status_path"))),
+            anchor=dash_cfg.get("anchor"),
+            reach_radius_m=mission_cfg.waypoint_reach_radius_m,
+            frame=("map" if self._rtab is not None else "odom"),
+        )
+        if self._route_status.enabled:
+            print(f"[indoor_bridge] ruta publicada al dashboard en "
+                  f"{dash_cfg['route_status_path']} "
+                  f"({len(self._route_status.waypoints)} waypoints)")
 
         # Estadisticas propias, ademas de las de LoopStats (heredadas).
         self.cone_frames_detected = 0
@@ -301,6 +332,21 @@ class IndoorBridge(Bridge):
         self._reporter.state_change(mission_goal.state, mission_goal.reason)
         self._reporter.checkpoint(self.mission.checkpoints_done, mission_goal.reason)
 
+        # Mismo estado que la fila de consola, pero para el dashboard. Va ACA,
+        # antes de las ramas de salida temprana (foto / mision cumplida /
+        # obstaculo / sin camino), asi el overlay se actualiza en todas y no
+        # se queda congelado justo cuando pasa algo interesante. Apagado
+        # (enabled=False) es un return inmediato; el throttle interno de 0.5 s
+        # evita castigar el disco a la frecuencia del loop.
+        self._route_status.publish(
+            pose,
+            current_index=getattr(getattr(self.mission, "_route", None), "idx", None),
+            checkpoints_done=self.mission.checkpoints_done,
+            state=str(getattr(self.mission.state, "value", self.mission.state)),
+            mission_done=mission_goal.mission_done,
+            pose_source=("rtabmap" if self._rtab is not None else "odometry"),
+        )
+
         cono_desc = (f"cono {cone.confidence:.2f}" if cone is not None else "sin cono")
 
         def _row(action: str) -> None:
@@ -312,6 +358,16 @@ class IndoorBridge(Bridge):
         if mission_goal.request_photo:
             self.send(DriveCommand(0.0, 0.0, mission_goal.reason), quiet=True)
             _row(f"foto: {mission_goal.reason}")
+            # Posicion MUNDO del cono que se esta dando por completado, para
+            # marcarla en el dashboard donde esta el cono y no donde freno el
+            # rover. cone_ground viene en el marco del robot (+x adelante,
+            # +y izquierda), misma convencion que odometry.py.
+            if cone_ground is not None:
+                cos_t, sin_t = math.cos(pose.theta), math.sin(pose.theta)
+                self._route_status.add_checkpoint(
+                    pose.x + cone_ground.x_forward_m * cos_t - cone_ground.y_left_m * sin_t,
+                    pose.y + cone_ground.x_forward_m * sin_t + cone_ground.y_left_m * cos_t,
+                )
             self._save_cone_photo(rgb, cone)
             self.mission.mark_photo_taken()
             return
@@ -404,12 +460,17 @@ class IndoorBridge(Bridge):
     def run(self, max_seconds: float | None = None) -> None:
         """Igual que Bridge.run(), pero ademas cierra el hilo/nodo ROS2 de
         RtabmapPoseBridge al terminar (fin normal, --max-seconds, Ctrl-C o
-        excepcion) -- Bridge.run() no sabe que self._rtab existe."""
+        excepcion) -- Bridge.run() no sabe que self._rtab existe.
+
+        Tambien apaga el overlay del dashboard: close() deja el JSON en
+        {"active": false} para que no quede una ruta vieja dibujada en
+        localhost:8000 despues de terminar la corrida."""
         try:
             super().run(max_seconds=max_seconds)
         finally:
             if self._rtab is not None:
                 self._rtab.shutdown()
+            self._route_status.close()
 
     # ------------------------------------------------------------------ foto
 

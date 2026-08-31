@@ -27,7 +27,7 @@
  "ros2-check": {},
  "doctor": {},
  "stack:record-run": {
-  "sdk": true,
+  "sdk": false,
   "slam": true,
   "map_out": "maps/sesion1",
   "db": "",
@@ -38,13 +38,13 @@
   "go": false
  },
  "stack:indoor-run": {
-  "mode": "map",
+  "mode": "both",
   "sdk": false,
-  "waypoints": "configs/waypoints_example.yaml",
-  "db": "/home/pablolube/IROS26-LaRovernetta/genie/maps/sesion1.db",
+  "waypoints": "/home/pablolube/IROS26-LaRovernetta/genie/configs/waypoints_sesion1.yaml",
+  "db": "/home/pablolube/IROS26-LaRovernetta/maps/sesion1.db",
   "config": "/home/pablolube/IROS26-LaRovernetta/genie/configs/indoor_cone_search.yaml",
   "max_seconds": "",
-  "debug_dir": "/home/pablolube/IROS26-LaRovernetta/genie/debug/casamia",
+  "debug_dir": "/home/pablolube/IROS26-LaRovernetta/genie/debug/debugslam",
   "go": true
  }
 }
