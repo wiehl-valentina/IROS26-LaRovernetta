@@ -49,3 +49,5 @@ docker-compose.yml
 # OS files
 .DS_Store
 Thumbs.db
+
+*:Zone.Identifier
