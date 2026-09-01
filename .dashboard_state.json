@@ -1,42 +1,33 @@
 {
+ "doctor": {},
  "sdk": {
   "port": "8000",
   "reload": true
  },
  "genie-bridge": {
   "debug-dir": "debub/run2_wuhan2",
-  "go": false
+  "start-mission": true,
+  "go": true
  },
  "indoor-bridge": {
   "config": "/home/pablolube/IROS26-LaRovernetta/genie/configs/indoor_cone_search.yaml",
   "debug-dir": "debug/cono2",
   "go": false
  },
- "map-session": {
-  "go": false
- },
  "traversability": {
   "level": "live"
  },
+ "waypoints": {},
+ "map-session": {
+  "go": false
+ },
  "mapping-ros2": {},
- "ros2-bridge": {},
- "sync-ros2": {},
  "sdk-client": {},
  "perception": {},
  "maps": {},
+ "ros2-bridge": {},
+ "sync-ros2": {},
  "ros2-check": {},
- "doctor": {},
- "stack:record-run": {
-  "sdk": false,
-  "slam": true,
-  "map_out": "maps/sesion1",
-  "db": "",
-  "config": "configs/indoor_mapping.yaml",
-  "export_every": "30",
-  "max_seconds": "",
-  "debug_dir": "",
-  "go": false
- },
  "stack:indoor-run": {
   "mode": "both",
   "sdk": false,
@@ -45,6 +36,19 @@
   "config": "/home/pablolube/IROS26-LaRovernetta/genie/configs/indoor_cone_search.yaml",
   "max_seconds": "",
   "debug_dir": "/home/pablolube/IROS26-LaRovernetta/genie/debug/debugslam",
-  "go": true
+  "go": false
+ },
+ "stack:record-run": {
+  "sdk": false,
+  "slam": false,
+  "map_out": "maps/sesion1",
+  "db": "",
+  "config": "configs/indoor_mapping.yaml",
+  "export_every": "30",
+  "max_seconds": "",
+  "debug_dir": "",
+  "gen_waypoints": true,
+  "waypoints_out": "",
+  "go": false
  }
 }

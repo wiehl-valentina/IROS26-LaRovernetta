@@ -834,6 +834,143 @@ cmd_ros2_check() {
     exec ros2 run demo_nodes_cpp talker
 }
 
+HELP_STOPROVER='stop-rover — FRENO DE EMERGENCIA: velocidad 0 al SDK, ya
+
+  ./rover_launch.sh stop-rover [--sdk-url http://localhost:8000] [--repeat N]
+
+NO mata ningun proceso y NO depende de que el bridge siga vivo: le pega
+directo al /control del SDK con {linear: 0, angular: 0}. Es lo unico que
+sirve cuando el bridge ya murio con el ultimo comando de movimiento
+enviado — un SIGKILL no alcanza a frenar nada, el rover se queda con la
+ultima velocidad hasta que el watchdog del SDK la caduque (si la caduca).
+
+  --repeat N   manda el freno N veces, 200 ms aparte (default 3), por si
+               alguna request se pierde. Frenar de mas no hace daño.'
+cmd_stop_rover() {
+    wants_help "$@" && show_help "$HELP_STOPROVER"
+    local sdk_url="http://localhost:8000" repeat="3"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --sdk-url) sdk_url="$2"; shift 2 ;;
+            --repeat)  repeat="$2"; shift 2 ;;
+            *) die "Opcion desconocida para stop-rover: $1 (--help para la lista)" ;;
+        esac
+    done
+    case "$repeat" in ''|*[!0-9]*) die "--repeat tiene que ser un entero: $repeat" ;; esac
+    [ "$repeat" -ge 1 ] || repeat=1
+
+    # A proposito NO usa use_venv/exec_py: el freno tiene que funcionar aunque
+    # el venv de genie este roto o a medio instalar. Solo stdlib y el python
+    # que haya en el PATH.
+    local py; py="$(command -v python3 || true)"
+    [ -n "$py" ] || die "No hay python3 en el PATH y lo necesito para frenar. Apaga el rover con el boton fisico."
+    c_yellow "==> FRENO DE EMERGENCIA: velocidad 0 -> $sdk_url/control ($repeat envio(s))"
+    exec "$py" - "$sdk_url" "$repeat" <<'PY_STOP_ROVER'
+import json
+import sys
+import time
+import urllib.error
+import urllib.request
+
+base, repeat = sys.argv[1].rstrip("/"), int(sys.argv[2])
+payload = json.dumps({"command": {"linear": 0.0, "angular": 0.0, "lamp": 0}}).encode()
+
+aceptados = 0
+for i in range(repeat):
+    req = urllib.request.Request(base + "/control", data=payload,
+                                 headers={"Content-Type": "application/json"},
+                                 method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            ok = 200 <= resp.status < 300
+    except (urllib.error.URLError, OSError) as exc:
+        print(f"  envio {i + 1}/{repeat}: FALLO ({exc})")
+    else:
+        aceptados += 1 if ok else 0
+        print(f"  envio {i + 1}/{repeat}: {'OK' if ok else 'rechazado'}")
+    if i + 1 < repeat:
+        time.sleep(0.2)
+
+if aceptados:
+    print(f"\nrover frenado ({aceptados}/{repeat} envios aceptados)")
+    raise SystemExit(0)
+print("\nNO pude frenar por el SDK: no respondio ninguno de los envios.")
+print("Si el rover se sigue moviendo, apagalo con el boton fisico.")
+raise SystemExit(1)
+PY_STOP_ROVER
+}
+
+HELP_WAYPOINTS='waypoints — poses de una sesion grabada -> yaml de ruta
+
+  ./rover_launch.sh waypoints (--poses ARCHIVO | --db BASE.db)
+                              [--out PATH] [--min-dist-m N]
+
+Es el paso que faltaba ENTRE "grabar recorrido" y "mision indoor": toma las
+poses de la sesion grabada y escribe el configs/waypoints_*.yaml que espera
+mission.waypoints_path. Antes habia que acordarse de correr
+genie/poses_to_waypoints.py a mano.
+
+  --poses ARCHIVO  poses en formato RGBD-SLAM/TUM (stamp x y z qx qy qz qw),
+                   que es lo que exporta el viewer con File -> Export poses...
+  --db BASE.db     base de RTAB-Map: intenta sacar las poses SOLO, con
+                   rtabmap-export. Es mejor esfuerzo — esa herramienta no
+                   siempre viene con el stack de ROS2; si no esta, te lo dice
+                   y te quedan las poses exportadas a mano con --poses.
+  --out PATH       yaml de salida (default: configs/waypoints_<nombre>.yaml,
+                   relativo a genie/)
+  --min-dist-m N   un waypoint cada N metros de recorrido (default 0.5)
+
+IMPORTANTE: los waypoints quedan en el marco "map" de ESA sesion de RTAB-Map.
+Para usarlos sin medir nada a mano, la mision tiene que correr con
+mapping.rtabmap_correction.enabled: true y RTAB-Map en modo localizacion
+sobre el mismo .db.'
+cmd_waypoints() {
+    wants_help "$@" && show_help "$HELP_WAYPOINTS"
+    local poses="" db="" out="" min_dist="0.5"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --poses)      poses="$(expand_path "$2")"; shift 2 ;;
+            --db)         db="$(expand_path "$2")"; shift 2 ;;
+            --out)        out="$2"; shift 2 ;;
+            --min-dist-m) min_dist="$2"; shift 2 ;;
+            *) die "Opcion desconocida para waypoints: $1 (--help para la lista)" ;;
+        esac
+    done
+    [ -n "$poses" ] || [ -n "$db" ] || \
+        die "Falta --poses ARCHIVO o --db BASE.db (--help para la lista)"
+
+    need_dir "$GENIE_DIR"
+    use_venv "$GENIE_VENV"
+    cd "$GENIE_DIR" || exit 1
+    need_file "poses_to_waypoints.py"
+
+    # --db: intento sacar las poses sin abrir el viewer.
+    if [ -z "$poses" ]; then
+        need_file "$db"
+        poses="${db%.db}_poses.txt"
+        if [ -f "$poses" ]; then
+            c_blue "==> reuso las poses ya exportadas: $(rel "$poses")"
+        elif command -v rtabmap-export >/dev/null 2>&1; then
+            c_blue "==> exportando poses de $(rel "$db") con rtabmap-export"
+            rtabmap-export --poses "$db" || true
+            [ -f "$poses" ] || die "rtabmap-export corrio pero no dejo $(rel "$poses"). Exportalas a mano: rtabmap-databaseViewer '$db' -> File -> Export poses... (formato RGBD-SLAM/TUM) y volve con --poses ARCHIVO."
+        else
+            die "No tengo rtabmap-export para sacar las poses de $(rel "$db") solo. Exportalas a mano: rtabmap-databaseViewer '$db' -> File -> Export poses... (formato RGBD-SLAM/TUM), guardalas, y volve con --poses ARCHIVO."
+        fi
+    fi
+    need_file "$poses"
+
+    if [ -z "$out" ]; then
+        local stem; stem="$(basename "$poses")"
+        stem="${stem%_poses.txt}"; stem="${stem%.txt}"
+        out="configs/waypoints_${stem}.yaml"
+    fi
+    out="$(ensure_parent_dir "$out")"
+
+    c_blue "==> poses_to_waypoints: $(rel "$poses") -> $(rel "$out")  (1 punto cada ${min_dist} m)"
+    exec_py poses_to_waypoints.py --poses "$poses" --out "$out" --min-dist-m "$min_dist"
+}
+
 HELP_MAPS='maps — lista los mapas y bases de datos de mapeo que hay en el disco
 
   ./rover_launch.sh maps [--dir CARPETA]'
@@ -1199,6 +1336,8 @@ Operacion
   genie-bridge       bridge outdoor con GPS  (genie_rover.bridge)
   indoor-bridge      tour de conos sin GPS   (genie_rover.Indoor.indoor_bridge)
   map-session        mapeo por frontera + export ROS (genie_rover.Indoor.map_session)
+  waypoints          poses de una sesion grabada -> configs/waypoints_*.yaml
+  stop-rover         FRENO DE EMERGENCIA: velocidad 0 al SDK, sin matar procesos
   traversability     stack rover_traversability: predict | live | drive | mission
                      | capture | policy-test | tune
 
@@ -1245,6 +1384,8 @@ case "$cmd" in
     genie-bridge)   cmd_genie_bridge "$@" ;;
     indoor-bridge)  cmd_indoor_bridge "$@" ;;
     map-session)    cmd_map_session "$@" ;;
+    waypoints)      cmd_waypoints "$@" ;;
+    stop-rover)     cmd_stop_rover "$@" ;;
     traversability) cmd_traversability "$@" ;;
     mapping-ros2)   cmd_mapping_ros2 "$@" ;;
     ros2-bridge)    cmd_ros2_bridge "$@" ;;
