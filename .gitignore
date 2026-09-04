@@ -1,12 +1,101 @@
-genie/debug/
-<<<<<<< HEAD
-traversability/testing/dataset
-=======
-.DS_Store
-.env
-.venv
+# Byte-compiled / optimized / DLL files
 __pycache__/
+*.py[cod]
+*.pyo
+
+# Installer metadata
+*.egg-info/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+*.pt
+trav_out/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# VSCode / PyCharm / general IDE
+.vscode/
+.idea/
 .vscode/
 .openclaw/
->>>>>>> 87630c7150ef138cfb8f1eabf49096ceceed7c2a
-Datasets/*.db
+
+# Environment & package managers
+.env
+.venv/
+*.env
+*.yml.lock
+*.conda
+*.bak
+venv/
+ENV/
+
+# Logs & cache
+*.log
+*.tmp
+.cache/
+temp/
+outputs/
+sam2_logs/
+*.pt
+*.pth
+stretch_example/stretch_capture.sh
+
+# Outputs / examples
+example/*.jpg
+example/*.jpeg
+example/*.png
+example/*.npy
+example/*.npz
+*.pdf
+
+# Docker
+*.dockerfile
+docker-compose.yml
+
+# OS files
+.DS_Store
+Thumbs.db
+genie\debug
+
+# Archivos binarios y multimedia
+*.tar
+*.mp4
+*.pt
+*.pth
+*.parquet
+
+# Datos pesados, metadatos masivos y checkpoints
+data/raw/
+data/frames/
+data/masks/
+frodobots_metadata/
+checkpoints/
+outputs/
+
+# otros
+data/
+checkpoints/
+external/
+*.pt
+*.tar
+__pycache__/
+node_modules/
+screenshots/*.png
+static/*.mp3
+static/*.wav
+.chrome-profile/
+/plans/
+
+
+# Openclaw workspace files (personal config — templates are in examples/openclaw/)
+/AGENTS.md
+/SOUL.md
+/IDENTITY.md
+/USER.md
+/TOOLS.md
+/HEARTBEAT.md
+/CLAUDE.md
+/MEMORY.md
+front.png
