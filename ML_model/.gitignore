@@ -26,3 +26,4 @@ external/
 *.tar
 __pycache__/
 venv/
+venv-data/

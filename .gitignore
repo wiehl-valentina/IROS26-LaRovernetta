@@ -10,3 +10,5 @@ __pycache__/
 .openclaw/
 >>>>>>> 87630c7150ef138cfb8f1eabf49096ceceed7c2a
 Datasets/
+ML_model/.venv-data/
+
