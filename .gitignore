@@ -12,3 +12,5 @@ __pycache__/
 Datasets/
 ML_model/.venv-data/
 
+ML_model/training/
+

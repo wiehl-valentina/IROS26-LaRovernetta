@@ -38,34 +38,34 @@ def load_metadata() -> pd.DataFrame:
 
 
 _COUNTRY_UTC_OFFSET_H = {
-    "China": 8, 
-    "Philippines": 8, 
-    "United States": -5,  
+    "China": 8,
+    "Philippines": 8,
+    "United States": -5,
     "Vietnam": 7,
-    "India": 5.5, 
-    "Kenya": 3, 
-    "Mexico": -6, 
-    "Taiwan": 8, 
+    "India": 5.5,
+    "Kenya": 3,
+    "Mexico": -6,
+    "Taiwan": 8,
     "New Zealand": 12,
-    "Panama": -5, 
-    "Canada": -5,         
-    "Costa Rica": -6, 
+    "Panama": -5,
+    "Canada": -5,
+    "Costa Rica": -6,
     "Malaysia": 8,
-    "United Kingdom": 0, 
-    "Germany": 1, 
-    "Botswana": 2, 
-    "Australia": 10,      
-    "Brazil": -3,         
-    "Mauritius": 4, 
-    "Indonesia": 7,       
-    "Sweden": 1, 
+    "United Kingdom": 0,
+    "Germany": 1,
+    "Botswana": 2,
+    "Australia": 10,
+    "Brazil": -3,
+    "Mauritius": 4,
+    "Indonesia": 7,
+    "Sweden": 1,
     "Turkey": 3,
-    "Nigeria": 1, 
-    "Chile": -4,          
-    "Argentina": -3, 
+    "Nigeria": 1,
+    "Chile": -4,
+    "Argentina": -3,
     "Estonia": 2,
-    "Netherlands": 1, 
-    "Singapore": 8, 
+    "Netherlands": 1,
+    "Singapore": 8,
     "Japan": 9,
 }
 
@@ -82,11 +82,11 @@ def is_night(start_utc: str, country: str) -> bool | None:
     return local_hour >= 20 or local_hour < 6
 
 
-def gps_cell(lat: float, lon: float, cell_size_m: float = 5.0) -> tuple[int, int] | None:
+def gps_cell(lat: float, lon: float, cell_size_m: float = 15.0) -> tuple[int, int] | None:
     if lat is None or lon is None:
         return None
     if abs(lat - 1000) < 1e-6 and abs(lon - 1000) < 1e-6:
-        return None  
+        return None
     m_per_deg_lat = 111_320.0
     m_per_deg_lon = 111_320.0 * math.cos(math.radians(lat))
     if m_per_deg_lon <= 1e-6:
@@ -218,7 +218,14 @@ def _read_ride_csvs(ride_dir: Path) -> dict[str, pd.DataFrame]:
     return out
 
 
-def clean_ride(ride_dir: Path, cell_size_m: float, target_step_m: float = 3.0) -> tuple[pd.DataFrame, dict]:
+def clean_ride(ride_dir: Path, cell_size_m: float, target_step_m: float = 0.5) -> tuple[pd.DataFrame, dict]:
+    """Sincroniza frame+GPS+control+IMU y re-muestrea espacialmente.
+
+    target_step_m: cada cuantos metros de movimiento real se guarda una foto
+    -- 5 m por default, que es la distancia a la que dos fotos del rover ya
+    dejan de verse practicamente identicas. No confundir con cell_size_m
+    (que es el tamaño de celda para el dedup de `curate`, otra cosa).
+    """
     data = _read_ride_csvs(ride_dir)
     if "gps" not in data or "front_ts" not in data:
         raise ValueError(f"{ride_dir.name}: faltan gps o front_camera_timestamps")
@@ -244,11 +251,11 @@ def clean_ride(ride_dir: Path, cell_size_m: float, target_step_m: float = 3.0) -
     synced = synced.dropna(subset=["latitude", "longitude"]).reset_index(drop=True)
 
     # ------------------------------------------------------------------
-    # 1. RE-MUESTREO ESPACIAL (Puntos distanciados ~3 metros)
+    # 1. RE-MUESTREO ESPACIAL (puntos distanciados target_step_m metros)
     # ------------------------------------------------------------------
     lat = synced["latitude"].to_numpy()
     lon = synced["longitude"].to_numpy()
-    
+
     selected_indices = [0]
     accumulated_dist = 0.0
     total_dist_m = 0.0
@@ -277,7 +284,7 @@ def clean_ride(ride_dir: Path, cell_size_m: float, target_step_m: float = 3.0) -
     # ------------------------------------------------------------------
     dia = pd.to_datetime(synced["epoch_ms"], unit="ms").dt.strftime("%Y-%m-%d")
     celda_espacial = [gps_cell(la, lo, cell_size_m) for la, lo in zip(synced["latitude"], synced["longitude"])]
-    
+
     # Convertimos la tupla directamente a string para evitar el ArrowTypeError
     synced["cell"] = [
         None if c is None else f"{d}_{c[0]}_{c[1]}" if isinstance(c, tuple) else f"{d}_{c}"
@@ -303,11 +310,12 @@ def cmd_clean(args: argparse.Namespace) -> None:
 
     ride_dirs = [p for p in raw_dir.iterdir() if p.is_dir()]
     print(f"[clean] {len(ride_dirs)} rides extraídos a limpiar")
+    print(f"[clean] espaciado entre fotos: {args.target_step_m} m -- tamaño de celda para dedup: {args.cell_size_m} m")
 
     rows = []
     for i, ride_dir in enumerate(ride_dirs, 1):
         try:
-            synced, stats = clean_ride(ride_dir, args.cell_size_m)
+            synced, stats = clean_ride(ride_dir, args.cell_size_m, args.target_step_m)
         except Exception as e:
             print(f"[clean]  ! {ride_dir.name}: {e}")
             continue
@@ -345,7 +353,7 @@ def cmd_curate(args: argparse.Namespace) -> None:
         best = remaining.pop(0)
         new_cells = best["cells"] - seen_cells
         if not new_cells and chosen:
-            break  
+            break
         seen_cells |= best["cells"]
         chosen.append(best)
         total_h += (best.get("db_dur_sec") or 0) / 3600
@@ -380,7 +388,10 @@ def main() -> None:
     c.add_argument("--raw-dir", default="raw")
     c.add_argument("--clean-dir", default="clean")
     c.add_argument("--index", default="cleaned_index.csv")
-    c.add_argument("--cell-size-m", type=float, default=5.0)
+    c.add_argument("--cell-size-m", type=float, default=15.0,
+                   help="tamaño de celda GPS para el dedup de `curate` (diversidad geografica)")
+    c.add_argument("--target-step-m", type=float, default=5.0,
+                   help="cada cuantos metros de movimiento real se guarda una foto (evita casi-duplicados)")
     c.set_defaults(func=cmd_clean)
 
     u = sub.add_parser("curate", help="dedup por celda GPS hasta llegar a N horas")
