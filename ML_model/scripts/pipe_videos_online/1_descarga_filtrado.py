@@ -218,7 +218,7 @@ def _read_ride_csvs(ride_dir: Path) -> dict[str, pd.DataFrame]:
     return out
 
 
-def clean_ride(ride_dir: Path, cell_size_m: float) -> tuple[pd.DataFrame, dict]:
+def clean_ride(ride_dir: Path, cell_size_m: float, target_step_m: float = 3.0) -> tuple[pd.DataFrame, dict]:
     data = _read_ride_csvs(ride_dir)
     if "gps" not in data or "front_ts" not in data:
         raise ValueError(f"{ride_dir.name}: faltan gps o front_camera_timestamps")
@@ -241,25 +241,57 @@ def clean_ride(ride_dir: Path, cell_size_m: float) -> tuple[pd.DataFrame, dict]:
         cols = [c for c in ["epoch_ms", "linear", "angular"] if c in ctl.columns]
         synced = pd.merge_asof(synced, ctl[cols], on="epoch_ms", direction="nearest", tolerance=500)
 
-    synced = synced.dropna(subset=["latitude", "longitude"])
-    synced["cell"] = [gps_cell(la, lo, cell_size_m) for la, lo in zip(synced["latitude"], synced["longitude"])]
-    synced = synced.dropna(subset=["cell"])
+    synced = synced.dropna(subset=["latitude", "longitude"]).reset_index(drop=True)
 
+    # ------------------------------------------------------------------
+    # 1. RE-MUESTREO ESPACIAL (Puntos distanciados ~3 metros)
+    # ------------------------------------------------------------------
     lat = synced["latitude"].to_numpy()
     lon = synced["longitude"].to_numpy()
-    dist_m = 0.0
+    
+    selected_indices = [0]
+    accumulated_dist = 0.0
+    total_dist_m = 0.0
+    last_idx = 0
+
     for i in range(1, len(lat)):
-        dlat = (lat[i] - lat[i - 1]) * 111_320.0
-        dlon = (lon[i] - lon[i - 1]) * 111_320.0 * math.cos(math.radians(lat[i]))
-        dist_m += math.hypot(dlat, dlon)
+        dlat = (lat[i] - lat[last_idx]) * 111_320.0
+        dlon = (lon[i] - lon[last_idx]) * 111_320.0 * math.cos(math.radians(lat[i]))
+        step_dist = math.hypot(dlat, dlon)
+
+        if step_dist < 0.2:  # Ignora micro-ruido con el rover detenido
+            continue
+
+        accumulated_dist += step_dist
+        total_dist_m += step_dist
+        last_idx = i
+
+        if accumulated_dist >= target_step_m:
+            selected_indices.append(i)
+            accumulated_dist = 0.0
+
+    synced = synced.iloc[selected_indices].reset_index(drop=True)
+
+    # ------------------------------------------------------------------
+    # 2. CÁLCULO DE CELDA TEMPORAL + ESPACIAL Y FIX PARA PYARROW
+    # ------------------------------------------------------------------
+    dia = pd.to_datetime(synced["epoch_ms"], unit="ms").dt.strftime("%Y-%m-%d")
+    celda_espacial = [gps_cell(la, lo, cell_size_m) for la, lo in zip(synced["latitude"], synced["longitude"])]
+    
+    # Convertimos la tupla directamente a string para evitar el ArrowTypeError
+    synced["cell"] = [
+        None if c is None else f"{d}_{c[0]}_{c[1]}" if isinstance(c, tuple) else f"{d}_{c}"
+        for c, d in zip(celda_espacial, dia)
+    ]
+    synced = synced.dropna(subset=["cell"]).astype({"cell": str})
 
     stats = {
         "ride_folder": ride_dir.name,
         "n_frames_synced": len(synced),
         "frac_valid_gps": round(frac_valid_gps, 4),
-        "dist_m": round(dist_m, 1),
+        "dist_m": round(total_dist_m, 1),
         "n_unique_cells": synced["cell"].nunique(),
-        "cells_json": json.dumps(list(map(str, synced["cell"].unique()))),
+        "cells_json": json.dumps(list(synced["cell"].unique())),
     }
     return synced, stats
 
@@ -348,7 +380,7 @@ def main() -> None:
     c.add_argument("--raw-dir", default="raw")
     c.add_argument("--clean-dir", default="clean")
     c.add_argument("--index", default="cleaned_index.csv")
-    c.add_argument("--cell-size-m", type=float, default=75.0)
+    c.add_argument("--cell-size-m", type=float, default=5.0)
     c.set_defaults(func=cmd_clean)
 
     u = sub.add_parser("curate", help="dedup por celda GPS hasta llegar a N horas")
