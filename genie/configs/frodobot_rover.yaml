@@ -73,7 +73,10 @@ navigation:
   # satura a los 57 grados, asi que en el rango normal responde proporcional
   # al error en vez de a todo o nada.
   kp_angular: 0.45
-  lookahead_m: 1.5
+  # 1.5 m en un corredor angosto apunta PASADO la curva: el punto de
+  # lookahead cae del otro lado del pasto y el follower corta el codo contra
+  # el borde. 1.0 m sigue siendo mas largo que el frenado y no zigzaguea.
+  lookahead_m: 1.0
   align_threshold_deg: 90.0
 
   goal_range_m: 3.5
@@ -104,10 +107,16 @@ navigation:
   # cacheado le queda menos de replan_min_remaining_m por delante. Entre
   # medio, el bridge sigue el ultimo camino calculado, reproyectado a la pose
   # actual (transform_path_xy en navigation.py) — asi el robot se sigue
-  # moviendo en vez de quedarse "pensando" cada frame. Un obstaculo al frente
-  # (front_is_blocked) sigue frenando de inmediato, cada frame, sin esperar
+  # moviendo en vez de quedarse "pensando" cada frame. El chequeo frontal
+  # (front_guard, ver safety.front) sigue corriendo cada frame, sin esperar
   # a que se cumpla esta distancia.
-  replan_every_m: 1.0
+  #
+  # 0.6 en vez de 1.0: en un corredor de pasto que dobla, el camino cacheado
+  # se desactualiza mucho mas rapido que en una vereda recta. El recorte del
+  # bridge (trim_path_xy) cubre el hueco, pero replanificar antes es mejor
+  # que recortar seguido -- si ves que el planner tarda y baja el Hz del
+  # bucle, subilo de vuelta a 0.8.
+  replan_every_m: 0.6
   replan_min_remaining_m: 0.4
   # Red de seguridad temporal: replanificar igual si pasaron estos segundos
   # desde el ultimo plan, aunque no se haya cumplido el disparo por distancia
@@ -119,7 +128,14 @@ navigation:
   # elegido, un error de rumbo mayor a align_threshold_deg hace CURVAR a esta
   # velocidad en vez de pivotear en el lugar (linear=0, que es avance neto
   # cero). Subila si el rover todavia se frena de mas al corregir rumbo.
-  min_linear_while_planned: 0.08
+  #
+  # 0.12 para Mexico: con 0.08 y el pasto pisado el rover manda el comando
+  # pero no vence la friccion -- "avanza" sin moverse, y la odometria de
+  # ruedas lo cuenta igual. Ojo que safety.front.min_speed_scale multiplica
+  # ESTE valor cuando el guard esta en SLOW (0.12 * 0.35 = 0.042); si en el
+  # dry-run ves comandos que no mueven al robot, subi min_speed_scale antes
+  # que este numero.
+  min_linear_while_planned: 0.12
 planner:
   grid_size: 240
   # Costo de una celda nunca observada. Una celda OBSERVADA cuesta
@@ -132,17 +148,64 @@ planner:
   # iguala o lo supera, el filtro de caminos (path_selection.py) descarta todo
   # camino que cruce >2% de celdas desconocidas, y como ~67% del mapa esta sin
   # observar, se quedaria sin ningun camino valido.
-  unknown_cost: 0.30
+  # SUBIDO de 0.30 a 0.45 para Mexico. El break-even es: una celda OBSERVADA
+  # cuesta (1 - transitabilidad), asi que con 0.30 el planner prefiere
+  # territorio que NUNCA vio antes que una senda de tierra con transitabilidad
+  # 0.55 (que cuesta 0.45). En el pasto mexicano SAM-TP saca justamente
+  # 0.4-0.6 en el camino bueno, asi que el planner se iba a lo desconocido
+  # teniendo la senda al lado. Con 0.45 el break-even baja a trav > 0.55.
+  #
+  # TECHO DURO: tiene que quedar por DEBAJO de threshold_cost. Si lo iguala,
+  # el filtro descarta todo camino que cruce celdas desconocidas y, como la
+  # mayor parte del mapa nunca se observo, no queda ningun camino valido.
+  unknown_cost: 0.45
   smooth_kernel: 3
   num_goals: 30
   num_mid_points_per_goal: 20
   path_num_samples: 100
-  footprint_px: 12        # ~0.30 m de ancho de robot. Medir el Mini y ajustar.
-  threshold_cost: 0.35
-  threshold_points_ratio: 0.02
+  # FOOTPRINT EN METROS (nuevo). footprint_px es fragil: un pixel del planner
+  # NO mide lo mismo a lo largo que a lo ancho, porque el BEV no es cuadrado y
+  # plan_on_bev lo reescala a un grid cuadrado. Con estas claves en metros,
+  # planner.py hace la conversion con la escala LATERAL real (que es la que
+  # decide si pasas por un hueco). Correr tools/check_bev_scales.py para ver
+  # a cuantos px equivalen con esta config.
+  #
+  # La separacion entre los dos es lo que deja pasar por corredores angostos
+  # SIN dejar de centrarse:
+  #   footprint_veto_m = ancho REAL del rover -> es lo unico que puede vetar
+  #                      un camino. Si el hueco entra, pasa.
+  #   footprint_m      = ancho + margen -> solo entra en el COSTO, asi que
+  #                      empuja al camino al medio del verde sin prohibir
+  #                      nada. Junto con center_weight es "centrarse en lo
+  #                      verde aunque tenga muy poco ancho".
+  footprint_m: 0.50
+  footprint_veto_m: 0.30    # MEDIR el Mini con una cinta y poner el numero real
+  footprint_px: 12          # solo se usa si footprint_m es null
+
+  # SUBIDO de 0.35 a 0.60, y es probablemente el cambio mas importante de
+  # todos. El costo de una celda es (1 - transitabilidad), asi que 0.35 vetaba
+  # toda celda con transitabilidad <= 0.65: en Mexico eso incluye la senda
+  # entera, que SAM-TP saca en 0.4-0.6. El planner no se quedaba sin caminos
+  # por el pasto, se quedaba sin caminos por el CAMINO. Con 0.60 se veta
+  # trav <= 0.40, que es pasto de verdad.
+  #
+  # Verificalo en tu propio dato antes de creerme: en el panel de
+  # 2c_evaluar_perception_bev.py, mira que valor tiene el BEV sobre la senda.
+  # Si tu checkpoint nuevo la saca en 0.8+, bajalo de vuelta a 0.45-0.50.
+  threshold_cost: 0.60
+  # 0.02 = 4 celdas de 169 alcanzaban para vetar un camino entero. En pasto
+  # con bordes difusos eso pasa en todos los caminos del banco a la vez ->
+  # filtered_paths vacio -> plan vacio -> recuperacion. 0.06 (~10 celdas)
+  # tolera el borde sin tolerar un obstaculo real, que ocupa el footprint
+  # entero, no el 6%.
+  threshold_points_ratio: 0.06
   number_of_points_to_filter: 60
   alpha: 1.0
-  best_k: 12
+  # 12 en un corredor angosto promedia caminos de los DOS lados del pasto y
+  # puede devolver uno que pasa por el medio del pasto (la mezcla de
+  # costs.pick_final_path es un promedio ponderado, no una eleccion). 6 deja
+  # la mezcla dentro de un mismo lado.
+  best_k: 6
   use_clustering: true    # el path fusion del paper
   max_clusters: 2
   cluster_angle_threshold_deg: 40.0
@@ -161,6 +224,36 @@ planner:
   # existen candidatos hacia cualquier direccion: eso se arregla aparte.
   goal_weight: 1.0
 
+  # ---- corredores angostos (genie_path_planner/narrow.py) ---------------
+  # Centrado: penaliza la ASIMETRIA lateral (cuanto verde hay a izquierda vs
+  # a derecha en la misma fila), no la angostura. Un corredor de 0.35 m no
+  # paga nada por ser angosto; solo se pide ir por su eje.
+  #   0.0  -> desactivado (comportamiento anterior exacto)
+  #   0.18 -> punto de partida
+  #   >0.3 -> empieza a competir con goal_weight y el rover deja de doblar
+  #           hacia el checkpoint. No subirlo sin mirar el debug.
+  center_weight: 0.18
+  # Hasta donde se busca el borde del corredor, en PIXELES DEL PLANNER. Si de
+  # un lado no hay pasto/pared dentro de esta distancia, no se considera
+  # corredor y la penalizacion es exactamente 0 (asi el campo abierto se
+  # comporta igual que antes). Con esta config son 2.5 cm por px, o sea que
+  # 24 px son 0.60 m por lado: se centra en corredores de hasta ~1.2 m de
+  # ancho total y no toca nada mas ancho que eso.
+  # tools/check_bev_scales.py imprime la conversion con TU config.
+  center_max_useful_px: 24
+
+  # Filtro por prefijo: en vez de descartar el camino entero apenas toca
+  # rojo, se mide cuantos METROS limpios tiene ANTES del primer punto malo y
+  # se conservan los que superen min_prefix_m. Esto es "el camino verde sirve
+  # aunque al final tenga un poco de rojo".
+  # Si con min_prefix_m no sobrevive ninguno se reintenta con el 60%
+  # (prefix_relax_ratio) y despues con hard_min_prefix_m; si tampoco, se
+  # queda con los de prefijo mas largo. NUNCA devuelve lista vacia si algun
+  # camino avanza algo -- frenar es tarea de safety.front, no del planner.
+  min_prefix_m: 1.0
+  prefix_relax_ratio: 0.6
+  hard_min_prefix_m: 0.25
+
 safety:
   stale_frame_s: 2.0
   max_consecutive_errors: 5
@@ -173,10 +266,47 @@ safety:
   vlm_recovery_timeout_s: 4.0
   vlm_recovery_min_confidence: 0.35
 
-  # Obstaculo persistente: cuantos frames SEGUIDOS de "OBSTACULO al frente"
-  # antes de evaluar un retroceso (no reaccionar a un bloqueo de un solo
-  # frame, p.ej. alguien que cruzo caminando).
-  obstacle_persist_frames: 4
+  # ---- chequeo frontal graduado (genie_rover/front_guard.py) ------------
+  # Reemplaza el bool de front_is_blocked, que con sus defaults promediaba
+  # una ventana de 0.60 m de ancho (el DOBLE del rover) entre 0.25 y 0.90 m:
+  # en una senda de 0.40 m entre pasto daba "bloqueado" en todos los frames
+  # aunque el rover entrara sobrado.
+  front:
+    # EL numero que decide si pasas por un hueco angosto: ancho_real/2 mas
+    # 0.05-0.08 m de margen. Con el Mini (~0.30 m) -> 0.15 + 0.07.
+    # Tiene que ser coherente con planner.footprint_veto_m: pide un corredor
+    # libre de 2*half_width_m = 0.40 m, contra los 0.30 m con que vetea el
+    # planner. Si la diferencia se va mucho mas alla de ~0.12 m, el guard
+    # frena caminos que el planner ya considero validos.
+    # tools/check_bev_scales.py chequea esto y avisa.
+    half_width_m: 0.20
+    near_m: 0.15          # antes de esto la camara no ve (zona ciega)
+    stop_m: 0.35          # por debajo de esta distancia libre se frena
+    clear_m: 1.20         # entre stop_m y clear_m la velocidad se escala
+    max_check_m: 1.50
+    # Alineado con el veto del planner: con planner.threshold_cost 0.60 el
+    # planner considera pasto todo lo que tenga transitabilidad <= 0.40, y
+    # este corte es el mismo. Si cambias uno, cambia el otro, o el guard va a
+    # frenar sobre celdas que el planner considero pisables (o al reves).
+    traversable_thresh: 0.40
+    min_free_ratio: 0.55  # fraccion de la FILA que tiene que ser pisable
+    blocked_rows_needed: 2
+    row_step_m: 0.05
+    persist_frames: 3     # frames seguidos < stop_m para declarar STOP
+    release_frames: 2     # frames seguidos libres para soltarlo
+    unknown_is_free: true # no frenar a ciegas donde nunca se observo
+    # Piso de velocidad en modo SLOW, como fraccion del comando del follower.
+    # Si el rover se queda trabado en el pasto avanzando lento, subilo a 0.5.
+    min_speed_scale: 0.35
+
+  # Obstaculo persistente: cuantos frames SEGUIDOS de STOP antes de evaluar
+  # un retroceso (regimen cercano).
+  #
+  # BAJADO de 4 a 2 A PROPOSITO: estos frames se cuentan ENCIMA de los
+  # front.persist_frames que el guard ya exigio para declarar STOP. Con
+  # 3 + 2 el regimen cercano entra a los 5 frames reales de bloqueo; dejarlo
+  # en 4 daria 7, casi 1.5 s con loop_period_s 0.2.
+  obstacle_persist_frames: 2
   # Umbrales sobre lo que dice la MEMORIA (PersistentMap, no una camara
   # trasera real) del rumbo "atras" para animarse a retroceder.
   retroceso_min_libre_pct: 55.0
@@ -233,5 +363,18 @@ memory:
   decay_per_s: 0.08
   recenter_margin_m: 1.5
   min_confidence: 0.15
+  # OJO, ver tools/check_bev_scales.py antes de tocar esto.
+  # plan_on_bev recibe UN solo bev_resolution_m, pero extract_bev recorta
+  # plan_forward_m de largo y 2*plan_side_m de ancho sobre una grilla con el
+  # mismo alto y ancho que el BEV de percepcion. Si plan_forward_m y
+  # plan_side_m no guardan la misma proporcion que ese alto/ancho, un pixel
+  # mide distinto a lo largo que a lo ancho y el planner no se entera: las
+  # distancias hacia adelante (y con ellas la meta y el largo de los caminos)
+  # quedan escaladas mal.
+  #
+  # Con el BEV de percepcion de esta config (alto = forward_range/res, ancho
+  # = 2*side_range/res, o sea ancho = 2*alto), la condicion es
+  # plan_forward_m == plan_side_m. Por eso 3.0 y 3.0 en vez de 3.0 y 2.0.
+  # El script de arriba te imprime la proporcion real y te avisa si no da.
   plan_forward_m: 3.0
-  plan_side_m: 2.0
+  plan_side_m: 3.0

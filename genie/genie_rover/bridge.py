@@ -34,8 +34,6 @@ from .navigation import (
     DriveCommand,
     HeadingEstimator,
     PathFollower,
-    front_clearance_m,
-    front_is_blocked,
     goal_from_gps,
     path_to_robot,
     path_to_world,
@@ -44,7 +42,8 @@ from .odometry import Odometry, OdometryConfig, Pose
 from .perception import PerceptionPipeline
 from .persistent_map import MapConfig, PersistentMap
 from .sdk_client import Checkpoint, RoverClient, RoverError
-
+from .front_guard import FrontGuard, FrontGuardConfig, FrontState
+from genie_path_planner.narrow import trim_path_xy
 
 @dataclass
 class LoopStats:
@@ -154,7 +153,7 @@ class Bridge:
         self.recovery_after_empty = int(safety.get("recovery_after_empty_plans", 3))
         self.recovery_turn_s = float(safety.get("recovery_turn_s", 1.5))
         self.loop_period_s = float(safety.get("loop_period_s", 0.0))
-
+        self.front_guard = FrontGuard(FrontGuardConfig.from_cfg(safety))
         # ---- regimen cercano ------------------------------------------------
         # Por debajo de ~0.6 m el BEV instantaneo deja de ser una fuente de
         # informacion valida (la proyeccion esta geometricamente degradada,
@@ -372,13 +371,27 @@ class Bridge:
         # El chequeo de colision usa SIEMPRE la observacion fresca: si algo se
         # cruzo recien, no queremos que el promedio del mapa lo diluya. Esto
         # corre cada frame, sin esperar al disparo espacial de mas abajo.
-        if front_is_blocked(res.traversability, self.resolution):
+        #
+        # front_guard.update() devuelve una distancia libre CONTINUA en vez de
+        # un bool, decidida fila por fila sobre un corredor del ancho real del
+        # rover (safety.front.half_width_m). Solo declara STOP despues de
+        # front.persist_frames frames seguidos por debajo de stop_m. Entre
+        # medio devuelve SLOW con un speed_scale < 1: en un corredor de pasto
+        # el rover pasa despacio en vez de frenar, que era el ciclo
+        # OBSTACULO -> sin avance -> giros -> OBSTACULO.
+        front = self.front_guard.update(res.traversability, self.resolution)
+        if front.is_stop:
             self.stats.blocked += 1
             self._consecutive_blocked += 1
+            # OJO con el doble conteo: front_guard ya exigio persist_frames
+            # frames para llegar hasta aca, asi que obstacle_persist_frames
+            # cuenta ENCIMA de eso. Con front.persist_frames: 3 y
+            # obstacle_persist_frames: 2 el regimen cercano entra a los 5
+            # frames reales de bloqueo. El valor viejo (4) daria 7.
             if self._consecutive_blocked >= self.obstacle_persist_frames and self.use_map:
                 self._retroceso_y_recover(res.traversability)
             else:
-                self.send(DriveCommand(0.0, 0.0, "OBSTACULO al frente"))
+                self.send(DriveCommand(0.0, 0.0, f"OBSTACULO: {front.reason}"))
             return
         self._consecutive_blocked = 0
 
@@ -425,7 +438,23 @@ class Bridge:
         else:
             path_robot = path_to_robot(self._plan_path_world, pose_now)
 
-        if self._send_path_command(path_robot):
+        # Recortar la cola del camino donde el corredor deja de estar libre en
+        # el BEV FRESCO. Esto es lo que hace utilizable un camino "verde con un
+        # poco de rojo al final": se sigue el tramo bueno y se replanifica
+        # antes de llegar al rojo, en vez de tirar el camino entero (que era lo
+        # que hacia el filtro del planner) o de recorrerlo hasta meterse.
+        #
+        # Aplica a las DOS ramas a proposito: el camino cacheado puede tener
+        # hasta replan_every_m de antiguedad y este recorte es la red que lo
+        # cubre. Los puntos que caen fuera del BEV fresco (mas alla de
+        # forward_range) no se evaluan: ahi manda la memoria del PersistentMap.
+        path_robot, util_m = trim_path_xy(
+            path_robot, res.traversability, self.resolution,
+            half_width_m=self.front_guard.cfg.half_width_m,
+            traversable_thresh=self.front_guard.cfg.traversable_thresh,
+            min_free_ratio=self.front_guard.cfg.min_free_ratio)
+
+        if self._send_path_command(path_robot, front):
             if plan is not None:
                 self._maybe_dump_debug(rgb, res, plan)
 
@@ -486,7 +515,8 @@ class Bridge:
         seg = np.linalg.norm(np.diff(ahead, axis=0), axis=1)
         return float(np.sum(seg))
 
-    def _send_path_command(self, path_robot: np.ndarray) -> bool:
+    def _send_path_command(self, path_robot: np.ndarray,
+                           front: FrontState | None = None) -> bool:
         """Arma el comando a partir de un camino en marco robot (recien
         planificado o reproyectado de un plan cacheado), aplica anti-titubeo
         y anti-bucle, y lo manda. Devuelve False si disparo _unstick(), que ya
@@ -495,6 +525,11 @@ class Bridge:
         Un comando con linear=0 y angular!=0 es "girar en el lugar". Si eso
         se repite, el robot esta atrapado: cada giro le muestra una escena
         que vuelve a pedir girar, y sin memoria no sale solo.
+
+        `front` es el estado del chequeo frontal de ESTA iteracion. Si viene
+        en SLOW, la velocidad lineal se escala por front.speed_scale: el rover
+        se mete al pasillo despacio en vez de frenar. El escalado se aplica
+        DESPUES de _apply_commit para no ensuciar la histeresis de lado.
         """
         cmd = self.follower.command(path_robot, committed=True)
         cmd = self._apply_commit(cmd, path_robot)
@@ -509,6 +544,10 @@ class Bridge:
             self._consecutive_turns = 0
             self._turn_sign_history.clear()
 
+        if front is not None and front.speed_scale < 1.0 and cmd.linear > 0.0:
+            cmd = DriveCommand(cmd.linear * front.speed_scale, cmd.angular,
+                               f"{cmd.reason} [{front.clearance_m:.2f} m libres]")
+
         self.send(cmd)
         return True
 
@@ -516,7 +555,7 @@ class Bridge:
         """Rompe el ciclo de giros sin avance.
 
         Avanza en linea recta un momento, ignorando el planner. Es seguro
-        porque front_is_blocked ya se evaluo en esta misma iteracion y dio
+        porque el chequeo frontal ya se evaluo en esta misma iteracion y dio
         libre: si hubiera algo delante, no habriamos llegado hasta aca.
         """
         self.stats.unstucks += 1
@@ -533,7 +572,7 @@ class Bridge:
             try:
                 rgb, _ = self.client.front_frame()
                 res = self.perception.process(rgb)
-                if front_is_blocked(res.traversability, self.resolution):
+                if self.front_guard.probe_blocked(res.traversability, self.resolution):
                     print("[bridge] obstaculo durante el avance forzado, corto")
                     break
             except Exception:
@@ -627,12 +666,12 @@ class Bridge:
         lejos -- para decidir si conviene retroceder y hacia donde girar.
 
         `bev` es la observacion fresca de la iteracion que disparo esto (la
-        misma que ya evaluo front_is_blocked), solo para el log de clearance.
+        misma que ya evaluo front_guard), solo para el log de clearance.
         """
         assert self.pmap is not None and self.odometry is not None
         self.stats.near_regime_activations += 1
         pose = self.odometry.pose
-        clearance = front_clearance_m(bev, self.resolution, max_check_m=1.2)
+        clearance = self.front_guard.probe(bev, self.resolution)
         print(f"[bridge] REGIMEN CERCANO: {self._consecutive_blocked} frames bloqueado "
               f"seguidos, clearance={clearance:.2f} m")
 
@@ -701,7 +740,7 @@ class Bridge:
             try:
                 rgb, _ = self.client.front_frame()
                 res = self.perception.process(rgb)
-                if not front_is_blocked(res.traversability, self.resolution):
+                if not self.front_guard.probe_blocked(res.traversability, self.resolution):
                     print(f"[bridge]   frente liberado tras retroceder {recorrido:.2f} m")
                     break
             except Exception:

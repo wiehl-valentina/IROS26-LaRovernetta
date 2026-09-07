@@ -16,7 +16,7 @@ from .path_selection import (
     merge_centroids_by_angle,
     select_best_group_by_closest_path_angle,
 )
-
+from .narrow import apply_centering_bonus, filter_paths_by_valid_prefix
 
 @dataclass
 class PlannerConfig:
@@ -49,6 +49,32 @@ class PlannerConfig:
     uniform_path_bank: bool = True
     fan_max_angle_deg: float = 75.0
     fan_num_headings: int = 31
+
+    # --- corredores angostos (ver narrow.py) ------------------------------
+    # Peso del termino de centrado en el corredor. 0.0 = comportamiento
+    # anterior. 0.15-0.25 es el rango util; por encima de ~0.3 el centrado
+    # compite con goal_weight y el rover deja de doblar hacia el checkpoint.
+    center_weight: float = 0.0
+    center_max_useful_px: int = 40
+
+    # FOOTPRINT EN METROS. Si no son None, pisan a footprint_px /
+    # footprint_veto_px: plan_on_bev los convierte con la escala LATERAL real
+    # del grid. footprint_px es fragil porque un pixel del planner no mide lo
+    # mismo a lo largo que a lo ancho (el BEV entra rectangular y se reescala
+    # a un grid cuadrado). Ver tools/check_bev_scales.py.
+    footprint_m: float | None = None
+    # Footprint SOLO para el veto (filtrado): el ancho REAL del rover.
+    # footprint_m queda mas ancho y actua solo en el COSTO, empujando al
+    # camino al centro del corredor sin prohibir el hueco angosto. Esa
+    # separacion es lo que deja pasar por huecos angostos sin perder el
+    # centrado.
+    footprint_veto_m: float | None = None
+    footprint_veto_px: int | None = None
+    # Metros limpios que tiene que tener un camino antes de su primer punto
+    # malo para sobrevivir al filtro.
+    min_prefix_m: float = 1.0
+    prefix_relax_ratio: float = 0.6
+    hard_min_prefix_m: float = 0.25
 
 
 @dataclass
@@ -253,6 +279,28 @@ def plan_on_bev(
     cost0 = _smooth_cost(cost0, int(cfg.smooth_kernel))
 
     planner_cost = _resize_float_map(cost0, int(cfg.grid_size))
+
+    # Un pixel del grid del planner NO mide lo mismo en las dos direcciones:
+    # el BEV entra rectangular (67x134 con la config del Mini) y se reescala a
+    # un grid cuadrado de grid_size x grid_size. La escala LATERAL es la que
+    # decide si el robot pasa por un hueco, asi que es la que convierte los
+    # footprints dados en metros.
+    m_px_lat = float(bev_resolution_m) * float(bev.shape[1]) / float(cfg.grid_size)
+    m_px_fwd = float(bev_resolution_m) * float(bev.shape[0]) / float(cfg.grid_size)
+    fp_cost_px = max(1, int(round(float(cfg.footprint_m) / m_px_lat))
+                     if cfg.footprint_m else int(cfg.footprint_px))
+    fp_veto_px = max(1, int(round(float(cfg.footprint_veto_m) / m_px_lat))
+                     if cfg.footprint_veto_m else
+                     int(cfg.footprint_veto_px or fp_cost_px))
+
+    # Centrado en el corredor. Va DESPUES del resize (para que
+    # center_max_useful_px este en px del planner, los mismos que el
+    # footprint) y ANTES del costo y del filtro, asi los tres ven el mismo
+    # mapa. No hace nada si center_weight es 0.
+    planner_cost = apply_centering_bonus(
+        planner_cost, threshold_cost=float(cfg.threshold_cost),
+        center_weight=float(cfg.center_weight),
+        max_useful_px=int(cfg.center_max_useful_px))
     planner_known = _resize_mask(known0, int(cfg.grid_size))
     planner_start = _resize_pixel(start0, bev.shape, int(cfg.grid_size))
     planner_goal = _resize_pixel(goal0, bev.shape, int(cfg.grid_size))
@@ -275,13 +323,20 @@ def plan_on_bev(
         raise RuntimeError("Path sampler returned no candidate paths")
 
     num_points_to_filter = int(min(max(1, int(cfg.number_of_points_to_filter)), int(cfg.path_num_samples) + 1))
-    filtered_paths = filter_paths_with_high_costs(
+    # La tupla (fila, columna) no es cosmetica: con un solo escalar el largo
+    # del prefijo se mide con hasta un 33% de error en esta config, y ese
+    # largo es justo lo que se compara contra min_prefix_m.
+    filtered_paths, filtered_prefix_m, prefix_meta = filter_paths_by_valid_prefix(
         candidate_paths,
         planner_cost,
         num_points=num_points_to_filter,
-        footprint_px=int(cfg.footprint_px),
+        footprint_px=fp_veto_px,
         threshold_points_ratio=float(cfg.threshold_points_ratio),
         threshold_cost=float(cfg.threshold_cost),
+        m_per_px=(m_px_fwd, m_px_lat),
+        min_prefix_m=float(cfg.min_prefix_m),
+        relax_ratio=float(cfg.prefix_relax_ratio),
+        hard_min_prefix_m=float(cfg.hard_min_prefix_m),
     )
     if len(filtered_paths) == 0:
         selected_paths: list[np.ndarray] = []
@@ -309,6 +364,7 @@ def plan_on_bev(
             selected_paths=selected_paths,
             metadata={
                 "status": "no_valid_paths_after_filtering",
+                **prefix_meta,
                 "candidate_paths": int(len(candidate_paths)),
                 "filtered_paths": 0,
                 "selected_paths": 0,
@@ -365,7 +421,7 @@ def plan_on_bev(
         selected_paths,
         planner_cost,
         alpha=float(cfg.alpha),
-        footprint_px=int(cfg.footprint_px),
+        footprint_px=fp_cost_px,
         goal_rc=planner_goal,
         goal_weight=float(cfg.goal_weight),
         grid_size=int(cfg.grid_size),
@@ -380,7 +436,7 @@ def plan_on_bev(
         num_samples=final_num_samples,
         cost_map=planner_cost,
         alpha=float(cfg.alpha),
-        footprint_px=int(cfg.footprint_px),
+        footprint_px=fp_cost_px,
         goal_rc=planner_goal,
         goal_weight=float(cfg.goal_weight),
         grid_size=int(cfg.grid_size),
@@ -417,6 +473,7 @@ def plan_on_bev(
             "start_row_col": [int(planner_start[0]), int(planner_start[1])],
             "goal_row_col": [int(planner_goal[0]), int(planner_goal[1])],
             "goal_x_y_m": [float(goal_x_m), float(goal_y_m)],
+            **prefix_meta,
             "best_k": int(min(max(1, int(cfg.best_k)), len(paths_costed))),
             "cost_stats": {
                 "min": float(costs.min()),
@@ -428,7 +485,12 @@ def plan_on_bev(
                 "grid_size": int(cfg.grid_size),
                 "unknown_cost": float(cfg.unknown_cost),
                 "smooth_kernel": int(cfg.smooth_kernel),
-                "footprint_px": int(cfg.footprint_px),
+                # Los que se USARON, no los del yaml: si footprint_m esta
+                # seteado, footprint_px del yaml no se mira.
+                "footprint_px": int(fp_cost_px),
+                "footprint_veto_px": int(fp_veto_px),
+                "m_per_planner_px_lat": float(m_px_lat),
+                "m_per_planner_px_fwd": float(m_px_fwd),
                 "threshold_cost": float(cfg.threshold_cost),
                 "threshold_points_ratio": float(cfg.threshold_points_ratio),
                 "number_of_points_to_filter": int(num_points_to_filter),
