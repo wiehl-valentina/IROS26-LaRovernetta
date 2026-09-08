@@ -43,8 +43,18 @@ from .perception import PerceptionPipeline
 from .persistent_map import MapConfig, PersistentMap
 from .sdk_client import Checkpoint, RoverClient, RoverError
 from .front_guard import FrontGuard, FrontGuardConfig, FrontState
+from .escape import (
+    EscapeChooser,
+    EscapeConfig,
+    Sector,
+    TurnConfig,
+    TurnController,
+    format_scores,
+)
 from genie_path_planner.narrow import trim_path_xy
-
+from .escape import (
+    EscapeChooser, EscapeConfig, Sector, TurnConfig, TurnController, format_scores,
+)
 @dataclass
 class LoopStats:
     iterations: int = 0
@@ -153,7 +163,16 @@ class Bridge:
         self.recovery_after_empty = int(safety.get("recovery_after_empty_plans", 3))
         self.recovery_turn_s = float(safety.get("recovery_turn_s", 1.5))
         self.loop_period_s = float(safety.get("loop_period_s", 0.0))
-        self.front_guard = FrontGuard(FrontGuardConfig.from_cfg(safety))
+        # near_m se DERIVA de camera.* (ver front_guard.min_ground_range_m): la
+        # camara del Mini no ve el suelo mas cerca de ~0.23 m, asi que evaluar
+        # filas a 0.15/0.21 m era leer el borde inferior del frame. En el log
+        # del 08/09 las 48 frenadas dieron clearance 0.21 o 0.27 y ninguna
+        # otra: todas salian de esas dos filas.
+        self.front_guard = FrontGuard(FrontGuardConfig.from_cfg(
+            safety, camera=cfg.get("camera"), resolution_m=self.resolution))
+        print(f"[bridge] front guard: near_m={self.front_guard.cfg.near_m:.2f} "
+              f"stop_m={self.front_guard.cfg.stop_m:.2f} "
+              f"(paso de fila {self.front_guard.cfg.row_step_m:.2f} m)")
         # ---- regimen cercano ------------------------------------------------
         # Por debajo de ~0.6 m el BEV instantaneo deja de ser una fuente de
         # informacion valida (la proyeccion esta geometricamente degradada,
@@ -162,20 +181,22 @@ class Bridge:
         # cuando el obstaculo estaba mas lejos -- para decidir si conviene
         # retroceder y hacia donde girar despues. Requiere memory.enabled.
         self.obstacle_persist_frames = int(safety.get("obstacle_persist_frames", 4))
+        # Avance acumulado por debajo del cual se considera que el rover esta
+        # realmente trabado (y no simplemente frenando mientras se mueve).
+        self.near_regime_max_progress_m = float(
+            safety.get("near_regime_max_progress_m", 0.10))
         self.retroceso_min_libre_pct = float(safety.get("retroceso_min_libre_pct", 55.0))
         self.retroceso_min_cobertura_pct = float(safety.get("retroceso_min_cobertura_pct", 30.0))
         self.retroceso_max_m = float(safety.get("retroceso_max_m", 0.6))
         self.retroceso_paso_m = float(safety.get("retroceso_paso_m", 0.2))
         self.retroceso_linear = float(safety.get("retroceso_linear", -0.18))
-        # Giro de recuperacion. Separado de follower.turn_speed a proposito:
-        # aca conviene girar rapido (el robot esta parado esperando) mientras
-        # que en el seguimiento de camino turn_speed es una velocidad de
-        # maniobra. recovery_deg_per_s es la tasa REAL de giro del robot y es
-        # lo que fija cuanto dura cada paso; medila cronometrando un giro de
-        # 180 grados y ajustala si el robot se pasa o se queda corto.
-        self.recovery_turn_speed = float(safety.get("recovery_turn_speed", 0.45))
-        self.recovery_step_deg = float(safety.get("recovery_step_deg", 45.0))
-        self.recovery_deg_per_s = float(safety.get("recovery_deg_per_s", 45.0))
+        # OBSOLETOS: el giro de recuperacion pasa por TurnController, que
+        # cierra el lazo contra pose.theta en vez de cronometrar. Se siguen
+        # leyendo del yaml solo para avisar si quedaron puestos.
+        for _viejo in ("recovery_turn_speed", "recovery_step_deg", "recovery_deg_per_s"):
+            if _viejo in safety:
+                print(f"[bridge] safety.{_viejo} ya no se usa (giro a lazo cerrado, "
+                      "ver safety.turn)")
         self.recovery_headings_deg = list(safety.get("recovery_headings_deg", [0.0, 90.0, -90.0, 180.0]))
         self.recovery_min_cobertura_pct = float(safety.get("recovery_min_cobertura_pct", 25.0))
         self.heading_search_radius_m = float(safety.get("heading_search_radius_m", 2.0))
@@ -187,6 +208,15 @@ class Bridge:
         self.vlm_recovery_timeout_s = float(safety.get("vlm_recovery_timeout_s", 4.0))
         self.vlm_recovery_min_confidence = float(safety.get("vlm_recovery_min_confidence", 0.35))
         self._consecutive_blocked = 0
+        # ---- eleccion de rumbo y giro ---------------------------------------
+        # EscapeChooser reemplaza el "filtro por cobertura + max libre_pct" que
+        # hacia _recover_informado: la cobertura pasa a ser un PESO, no un
+        # filtro eliminatorio. TurnConfig gobierna el giro a lazo cerrado que
+        # reemplaza al lazo abierto de _girar_hacia.
+        self.escape = EscapeChooser(EscapeConfig(**(safety.get("escape") or {})))
+        self.turn_cfg = TurnConfig(**(safety.get("turn") or {}))
+        self._goal_rel_deg: float | None = None
+        self._dist_at_block = 0.0
 
         self.stats = LoopStats()
         # Muestras de (rumbo_gps - rumbo_brujula) para diagnosticar si el
@@ -326,9 +356,11 @@ class Bridge:
                           f"pero rechazado: {msg}")
             goal_desc = (f"cp#{target.sequence} a {goal.distance_m:.0f} m, "
                          f"rel {goal.relative_bearing_deg:+.0f} grados")
+            self._goal_rel_deg = float(goal.relative_bearing_deg)
         else:
             goal = type("G", (), {"x_right_m": 0.0, "y_forward_m": self.goal_range_m})()
             goal_desc = "derecho adelante (sin meta GPS)"
+            self._goal_rel_deg = None
 
         res = self.perception.process(rgb)
 
@@ -383,16 +415,32 @@ class Bridge:
         if front.is_stop:
             self.stats.blocked += 1
             self._consecutive_blocked += 1
+            if self._consecutive_blocked == 1 and self.odometry is not None:
+                self._dist_at_block = self.odometry.distance_travelled
+
             # OJO con el doble conteo: front_guard ya exigio persist_frames
             # frames para llegar hasta aca, asi que obstacle_persist_frames
             # cuenta ENCIMA de eso. Con front.persist_frames: 3 y
-            # obstacle_persist_frames: 2 el regimen cercano entra a los 5
-            # frames reales de bloqueo. El valor viejo (4) daria 7.
-            if self._consecutive_blocked >= self.obstacle_persist_frames and self.use_map:
+            # obstacle_persist_frames: 4 el regimen cercano entra a los 7
+            # frames reales de bloqueo.
+            #
+            # Y ademas se exige que el rover NO haya avanzado: con solo el
+            # conteo de frames, el regimen cercano entro 48 veces en 216
+            # iteraciones, varias de ellas mientras el robot todavia se movia.
+            sin_avance = True
+            if self.odometry is not None:
+                sin_avance = (self.odometry.distance_travelled
+                              - self._dist_at_block) < self.near_regime_max_progress_m
+
+            if (self._consecutive_blocked >= self.obstacle_persist_frames
+                    and sin_avance and self.use_map):
                 self._retroceso_y_recover(res.traversability)
             else:
                 self.send(DriveCommand(0.0, 0.0, f"OBSTACULO: {front.reason}"))
             return
+        if self._consecutive_blocked:
+            # Volvimos a avanzar: la memoria de rumbos ya intentados caduca.
+            self.escape.note_progress()
         self._consecutive_blocked = 0
 
         # ---- disparo espacial: solo llamar a GeNIE si hace falta ----------
@@ -752,22 +800,40 @@ class Bridge:
         """Elige un rumbo de escape en tres pasos, del mas barato al mas caro:
         mapa persistente (sin red, sin latencia) -> VLM (si el mapa no dio un
         candidato confiable) -> barrido ciego (ultimo recurso).
+
+        La cobertura del mapa entra como PESO, no como filtro eliminatorio.
+        La version anterior hacia:
+
+            if cobertura_pct >= recovery_min_cobertura_pct and libre_pct > mejor_libre
+
+        y como adelante es lo unico que la camara mira, adelante siempre tenia
+        cobertura alta y siempre competia, mientras los costados quedaban
+        afuera. Medido sobre el log del 08/09: de 50 decisiones, 43 no
+        eligieron el sector mas libre y 37 eligieron +0 grados, o sea el rumbo
+        que acababa de bloquearse. Ver escape.EscapeChooser.
         """
         assert self.pmap is not None and self.odometry is not None
         pose = self.odometry.pose
 
-        mejor_heading, mejor_libre = None, -1.0
+        sectores: dict[float, Sector] = {}
         for h in self.recovery_headings_deg:
-            libre_pct, cobertura_pct = self._map_free_and_coverage(pose, float(h), self.heading_search_radius_m)
-            print(f"[bridge]   rumbo {h:+.0f} grados: libre={libre_pct:.0f}% cobertura={cobertura_pct:.0f}%")
-            if cobertura_pct >= self.recovery_min_cobertura_pct and libre_pct > mejor_libre:
-                mejor_heading, mejor_libre = float(h), libre_pct
+            libre_pct, cobertura_pct = self._map_free_and_coverage(
+                pose, float(h), self.heading_search_radius_m)
+            sectores[float(h)] = Sector.from_pct(libre_pct, cobertura_pct)
 
-        if mejor_heading is not None:
-            print(f"[bridge]   elijo rumbo {mejor_heading:+.0f} grados por mapa (libre={mejor_libre:.0f}%)")
+        heading, scores = self.escape.choose(
+            sectores, blocked_heading=0.0, goal_rel_deg=self._goal_rel_deg)
+        for linea in format_scores(sectores, scores):
+            print(f"[bridge]   {linea}")
+
+        if heading is not None:
+            print(f"[bridge]   elijo rumbo {heading:+.0f} grados "
+                  f"(puntaje {scores[heading]:.2f})")
             self.stats.recoveries_por_mapa += 1
-            self._girar_hacia(mejor_heading)
+            self._girar_hacia(heading)
             return
+
+        print("[bridge]   ningun rumbo confiable por mapa")
 
         if self.use_vlm_recovery:
             decision = self._preguntar_vlm()
@@ -793,38 +859,70 @@ class Bridge:
                                     timeout_s=self.vlm_recovery_timeout_s)
 
     def _girar_hacia(self, heading_rel_deg: float, step_deg: float | None = None) -> None:
-        """Gira en pasos hacia heading_rel_deg (relativo al rumbo del robot al
-        momento de llamar), re-verificando con el mapa despues de cada paso.
-        Nunca se compromete de una sola vez a un angulo grande calculado de
-        antemano, porque para el final del giro esos datos ya pueden estar
-        viejos.
+        """Gira hacia heading_rel_deg a lazo CERRADO contra pose.theta.
 
-        La duracion de cada paso sale de recovery_deg_per_s, que es la tasa de
-        giro REAL del robot en grados por segundo. Antes se calculaba como
-        radianes/turn_speed, mezclando unidades: turn_speed es un comando
-        normalizado en -1..1, no una velocidad angular, asi que el tiempo por
-        paso no tenia relacion con lo que el robot efectivamente giraba.
+        La version anterior era lazo abierto: mandaba `angular` durante
+        `step_deg / recovery_deg_per_s` segundos y ASUMIA que el robot habia
+        girado esa cantidad. Con los defaults (45 grados a 45 grados/s) eso
+        daba 1 s por paso, o sea 2 comandos para un giro de 90 grados -- que
+        es exactamente lo que se ve en el log del 08/09. Giro real medido
+        sobre esos 13 intentos: mediana ~2 grados. El comando 0.45 no vence
+        el rozamiento estatico en pasto, y como nadie miraba el rumbo, el
+        lazo declaraba el giro completo y volvia a mirar la misma pared.
+
+        TurnController cierra el lazo: compara el rumbo actual contra el
+        objetivo, sube la magnitud angular cuando detecta que el robot no
+        responde (banda muerta), gira en ARCO si hay lugar adelante -- un poco
+        de traccion longitudinal rompe el rozamiento mucho mejor que el giro
+        puro -- y aborta a los max_ticks en vez de colgarse.
+
+        Se usa pose.theta y no la brujula a proposito: es la misma fuente que
+        alimenta al PersistentMap, asi que al terminar el giro el mapa y el
+        planner coinciden sobre hacia donde mira el robot.
+
+        `step_deg` queda por compatibilidad de firma; ya no se usa.
         """
         assert self.odometry is not None
         if abs(heading_rel_deg) < 1e-6:
             return
-        step_deg = float(self.recovery_step_deg if step_deg is None else step_deg)
-        ang = self.follower.angular_sign * math.copysign(self.recovery_turn_speed, heading_rel_deg)
-        ang = float(np.clip(ang, -self.follower.max_angular, self.follower.max_angular))
-        paso_s = step_deg / max(self.recovery_deg_per_s, 1e-3)
 
-        girado = 0.0
-        while abs(girado) < abs(heading_rel_deg) and not self._stop_requested:
-            self.send(DriveCommand(0.0, ang, f"girando hacia {heading_rel_deg:+.0f} grados (regimen cercano)"))
-            t0 = time.time()
-            while time.time() - t0 < paso_s and not self._stop_requested:
-                time.sleep(0.1)
-            girado += math.copysign(step_deg, heading_rel_deg)
+        theta0 = math.degrees(self.odometry.pose.theta)
+        turn = TurnController(
+            float(heading_rel_deg), theta0,
+            angular_sign=self.follower.angular_sign,
+            max_angular=self.follower.max_angular,
+            cfg=self.turn_cfg,
+        )
 
+        while not self._stop_requested:
             pose = self.odometry.update(self.client.telemetry().raw)
-            libre_pct, cobertura_pct = self._map_free_and_coverage(pose, 0.0, self.heading_search_radius_m)
-            if cobertura_pct >= self.recovery_min_cobertura_pct and libre_pct >= self.retroceso_min_libre_pct:
-                print(f"[bridge]   frente libre por mapa tras girar {girado:+.0f} grados, corto")
+            theta = math.degrees(pose.theta)
+
+            # El clearance solo decide si el giro puede ser en arco. Si el
+            # frame falla, giramos en el lugar: es la opcion conservadora.
+            clearance = 0.0
+            try:
+                rgb, _ = self.client.front_frame()
+                clearance = self.front_guard.probe(
+                    self.perception.process(rgb).traversability, self.resolution)
+            except Exception:
+                pass
+
+            cmd = turn.step(theta, clearance_m=clearance)
+            if cmd.done:
+                print(f"[bridge]   {cmd.reason}, giro real {turn.progress_deg:.0f} grados")
+                break
+
+            self.send(DriveCommand(cmd.linear, cmd.angular,
+                                   f"{cmd.reason} (regimen cercano)"))
+            time.sleep(self.turn_cfg.tick_s)
+
+            libre_pct, cobertura_pct = self._map_free_and_coverage(
+                pose, 0.0, self.heading_search_radius_m)
+            if (cobertura_pct >= self.recovery_min_cobertura_pct
+                    and libre_pct >= self.retroceso_min_libre_pct):
+                print(f"[bridge]   frente libre por mapa tras girar "
+                      f"{turn.progress_deg:.0f} grados, corto")
                 break
 
         self.send(DriveCommand(0.0, 0.0, "fin del giro"))

@@ -46,6 +46,7 @@ CONVENCIONES DEL BEV (iguales a navigation.front_is_blocked)
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -53,6 +54,46 @@ import numpy as np
 CLEAR = "CLEAR"
 SLOW = "SLOW"
 STOP = "STOP"
+
+
+def min_ground_range_m(camera: dict, safety_margin: float = 1.6) -> float:
+    """Primera distancia al suelo que la camara puede ver de verdad.
+
+    LA CUENTA QUE FALTABA. Con la calibracion real del Mini (fy=924.6,
+    cy=528.4, imagen 1080 px de alto, camara a 0.150 m, pitch 1.85 grados
+    hacia abajo) el rayo de la ultima fila de la imagen cae al suelo a 0.23 m.
+    Todo lo que este mas cerca que eso NO EXISTE para la camara.
+
+    Y las filas apenas por encima de ese limite son las peores del frame:
+    incidencia rasante contra el suelo (32 grados), distorsion de barril
+    maxima (k1=-0.26), y encima ahi abajo suele aparecer la nariz del propio
+    rover, que SAM-TP marca -- correctamente -- como no transitable.
+
+    El default viejo era `near_m=0.15`, con `row_step_m=0.05` que sobre una
+    resolucion de 0.03 m/px se redondea a un paso de 0.06 m. O sea que las
+    filas evaluadas eran 0.15, 0.21, 0.27, 0.33 ... y el veredicto de frenar
+    salia SIEMPRE de las dos primeras. En el log del 08/09 las 48 frenadas
+    dieron clearance 0.21 (19 veces) o 0.27 (24 veces): ninguna otra. No es
+    que hubiera una pared; es que el guard estaba leyendo el borde inferior
+    de la imagen.
+
+    `safety_margin` multiplica el limite geometrico para quedarse en filas
+    donde la proyeccion todavia sirve. 1.6 sobre 0.23 m da ~0.37 m.
+    """
+    K = camera.get("intrinsics")
+    size = camera.get("image_size")
+    h_cam = float(camera.get("height_m", 0.15))
+    pitch = float(camera.get("pitch_down_deg", 0.0))
+    if not K or not size:
+        return 0.40
+    fy = float(K[1][1])
+    cy = float(K[1][2])
+    v_bottom = float(size[1]) - 1.0
+    ang = math.degrees(math.atan((v_bottom - cy) / fy)) + pitch
+    if ang <= 1e-3:
+        return 0.40
+    d_min = h_cam / math.tan(math.radians(ang))
+    return float(d_min * safety_margin)
 
 
 @dataclass
@@ -68,13 +109,18 @@ class FrontGuardConfig:
     # 0.05-0.08 m de margen. Con el Mini (~0.30 m) -> 0.15 + 0.07 = 0.22.
     # Este es EL numero que decide si pasas por un hueco angosto o no.
     half_width_m: float = 0.22
-    # Primera fila que se mira. Mas cerca que esto la camara no ve (zona
-    # ciega) y la proyeccion a BEV es puro ruido de lente.
-    near_m: float = 0.15
-    # Por debajo de esta distancia libre se frena de verdad.
-    stop_m: float = 0.35
+    # Primera fila que se mira. Mas cerca que esto la camara NO VE: el limite
+    # lo fija la geometria (ver min_ground_range_m), no el gusto. Si dejas
+    # esto por debajo del limite real, el guard decide sobre filas
+    # inobservables o sobre la nariz del rover, y frena siempre.
+    # Se sobreescribe automaticamente desde el yaml en from_cfg(safety, camera).
+    near_m: float = 0.40
+    # Por debajo de esta distancia libre se frena de verdad. TIENE que ser
+    # mayor que near_m: si no, la condicion es inalcanzable y el guard no
+    # frena nunca. La regla es stop_m ~ near_m + un paso de fila.
+    stop_m: float = 0.50
     # Entre stop_m y clear_m la velocidad se escala linealmente.
-    clear_m: float = 1.20
+    clear_m: float = 1.40
     # Hasta donde se busca. Mas alla de esto no cambia nada la decision.
     max_check_m: float = 1.50
     # Una celda cuenta como pisable si supera esto. BAJO a proposito: en
@@ -101,8 +147,14 @@ class FrontGuardConfig:
     min_speed_scale: float = 0.35
 
     @classmethod
-    def from_cfg(cls, safety: dict) -> "FrontGuardConfig":
-        """Lee `safety.front` del yaml; las claves ausentes usan el default."""
+    def from_cfg(cls, safety: dict, camera: dict | None = None,
+                 resolution_m: float | None = None) -> "FrontGuardConfig":
+        """Lee `safety.front` del yaml; las claves ausentes usan el default.
+
+        Si se pasa `camera`, `near_m` se DERIVA de la calibracion salvo que el
+        yaml lo fije explicitamente. Es la unica forma de que este numero siga
+        siendo correcto cuando alguien cambie la altura o el pitch.
+        """
         front = safety.get("front", {}) or {}
         base = cls()
         known = {f: getattr(base, f) for f in base.__dataclass_fields__}
@@ -111,6 +163,24 @@ class FrontGuardConfig:
             v = front.get(k, default)
             vals[k] = int(v) if isinstance(default, int) and not isinstance(default, bool) else (
                 bool(v) if isinstance(default, bool) else float(v))
+
+        if camera is not None and "near_m" not in front:
+            vals["near_m"] = round(min_ground_range_m(camera), 2)
+
+        # El paso de fila se redondea a celdas enteras: pedir 0.05 m sobre una
+        # resolucion de 0.03 da 0.06. Dejarlo implicito fue parte del problema,
+        # asi que aca se hace explicito.
+        if resolution_m:
+            paso = max(1, int(round(vals["row_step_m"] / resolution_m))) * resolution_m
+            vals["row_step_m"] = paso
+
+        # Invariantes. Cualquiera de las dos rotas deja el guard inutil, y sin
+        # este chequeo la unica senal es un rover que no se mueve.
+        if vals["stop_m"] <= vals["near_m"]:
+            vals["stop_m"] = vals["near_m"] + max(vals["row_step_m"], 0.06)
+            print(f"[front_guard] stop_m <= near_m: lo subo a {vals['stop_m']:.2f} m")
+        if vals["clear_m"] <= vals["stop_m"]:
+            vals["clear_m"] = vals["stop_m"] + 0.60
         # A proposito NO se hereda safety.obstacle_persist_frames: esa clave
         # gobierna el disparo del REGIMEN CERCANO, que en bridge.py cuenta
         # frames que YA pasaron por este guard. Si las dos fueran el mismo
@@ -297,6 +367,43 @@ def _self_test() -> None:
         st = g4.update(libre, res)
     print(f"  y despues 2 frames libres-> {st.level}")
     assert st.level == CLEAR
+
+    # EL CASO DEL LOG DEL 08/09: las filas de 0.15 a 0.33 m dan no
+    # transitable (nariz del rover / suelo a incidencia rasante / distorsion
+    # de barril en el borde inferior del frame) y de 0.40 m en adelante el
+    # corredor esta perfectamente libre. Con near_m=0.15 el guard frena para
+    # siempre; con near_m derivado de la calibracion, pasa.
+    fantasma = np.ones((h, w), dtype=np.float32)
+    fantasma[h - 1 - int(0.35 / res):, :] = 0.02
+    viejo = FrontGuard(FrontGuardConfig(near_m=0.15, stop_m=0.35))
+    niveles_viejo = [viejo.update(fantasma, res).level for _ in range(4)]
+    cl_viejo = viejo.probe(fantasma, res)
+    print(f"  pared fantasma <0.35 m   -> viejo (near_m=0.15): {niveles_viejo[-1]} "
+          f"clearance={cl_viejo:.2f}")
+    assert niveles_viejo[-1] == STOP, "asi se veia el bug"
+    assert abs(cl_viejo - 0.21) < 0.07, "y con el clearance que aparecia en el log"
+
+    nuevo = FrontGuard(FrontGuardConfig())  # near_m=0.40
+    niveles_nuevo = [nuevo.update(fantasma, res).level for _ in range(4)]
+    print(f"                           -> nuevo (near_m=0.40): {niveles_nuevo[-1]} "
+          f"clearance={nuevo.probe(fantasma, res):.2f}")
+    assert STOP not in niveles_nuevo, "con el campo cercano ignorado tiene que pasar"
+
+    # La calibracion real del Mini.
+    cam = {"intrinsics": [[925.27, 0.0, 962.31], [0.0, 924.63, 528.39], [0.0, 0.0, 1.0]],
+           "image_size": [1920, 1080], "height_m": 0.150, "pitch_down_deg": 1.85}
+    d = min_ground_range_m(cam, safety_margin=1.0)
+    print(f"  min_ground_range_m(Mini) -> {d:.2f} m (con margen 1.6: "
+          f"{min_ground_range_m(cam):.2f} m)")
+    assert 0.20 < d < 0.27, d
+    cfg_auto = FrontGuardConfig.from_cfg({"front": {}}, camera=cam, resolution_m=res)
+    assert cfg_auto.near_m >= 0.30 and cfg_auto.stop_m > cfg_auto.near_m
+    assert abs(cfg_auto.row_step_m - 0.06) < 1e-9, cfg_auto.row_step_m
+
+    # El yaml manda si lo escribis a mano, pero los invariantes se respetan.
+    cfg_manual = FrontGuardConfig.from_cfg(
+        {"front": {"near_m": 0.45, "stop_m": 0.40}}, camera=cam, resolution_m=res)
+    assert cfg_manual.near_m == 0.45 and cfg_manual.stop_m > 0.45
 
     # Nunca observado: no frena a ciegas.
     desconocido = np.full((h, w), -1.0, dtype=np.float32)

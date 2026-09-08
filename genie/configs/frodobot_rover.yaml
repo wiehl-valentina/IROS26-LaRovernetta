@@ -260,101 +260,60 @@ safety:
   recovery_after_empty_plans: 3
   recovery_turn_s: 1.5
   loop_period_s: 0.2
-  max_consecutive_turns: 4
-  unstick_forward_s: 2.5
-  use_vlm_recovery: true
-  vlm_recovery_timeout_s: 4.0
-  vlm_recovery_min_confidence: 0.35
 
-  # ---- chequeo frontal graduado (genie_rover/front_guard.py) ------------
-  # Reemplaza el bool de front_is_blocked, que con sus defaults promediaba
-  # una ventana de 0.60 m de ancho (el DOBLE del rover) entre 0.25 y 0.90 m:
-  # en una senda de 0.40 m entre pasto daba "bloqueado" en todos los frames
-  # aunque el rover entrara sobrado.
+  # Régimen cercano. Cuenta ENCIMA de front.persist_frames, y ahora además
+  # exige que el rover no haya avanzado 0.10 m. Con 2 entraba 48 veces en 216
+  # iteraciones.
+  obstacle_persist_frames: 4
+
   front:
-    # EL numero que decide si pasas por un hueco angosto: ancho_real/2 mas
-    # 0.05-0.08 m de margen. Con el Mini (~0.30 m) -> 0.15 + 0.07.
-    # Tiene que ser coherente con planner.footprint_veto_m: pide un corredor
-    # libre de 2*half_width_m = 0.40 m, contra los 0.30 m con que vetea el
-    # planner. Si la diferencia se va mucho mas alla de ~0.12 m, el guard
-    # frena caminos que el planner ya considero validos.
-    # tools/check_bev_scales.py chequea esto y avisa.
-    half_width_m: 0.20
-    near_m: 0.15          # antes de esto la camara no ve (zona ciega)
-    stop_m: 0.35          # por debajo de esta distancia libre se frena
-    clear_m: 1.20         # entre stop_m y clear_m la velocidad se escala
-    max_check_m: 1.50
-    # Alineado con el veto del planner: con planner.threshold_cost 0.60 el
-    # planner considera pasto todo lo que tenga transitabilidad <= 0.40, y
-    # este corte es el mismo. Si cambias uno, cambia el otro, o el guard va a
-    # frenar sobre celdas que el planner considero pisables (o al reves).
-    traversable_thresh: 0.40
-    min_free_ratio: 0.55  # fraccion de la FILA que tiene que ser pisable
+    # near_m se deriva de camera.* si no lo ponés acá. Con la calibración
+    # actual del Mini da ~0.37 m. Ponelo a mano sólo si medís otra cosa.
+    # near_m: 0.40
+    half_width_m: 0.22        # 0.30/2 + 0.07 de margen
+    stop_m: 0.50
+    clear_m: 1.40
+    traversable_thresh: 0.30
+    min_free_ratio: 0.55
     blocked_rows_needed: 2
-    row_step_m: 0.05
-    persist_frames: 3     # frames seguidos < stop_m para declarar STOP
-    release_frames: 2     # frames seguidos libres para soltarlo
-    unknown_is_free: true # no frenar a ciegas donde nunca se observo
-    # Piso de velocidad en modo SLOW, como fraccion del comando del follower.
-    # Si el rover se queda trabado en el pasto avanzando lento, subilo a 0.5.
+    persist_frames: 3
+    release_frames: 2
     min_speed_scale: 0.35
+    unknown_is_free: true
 
-  # Obstaculo persistente: cuantos frames SEGUIDOS de STOP antes de evaluar
-  # un retroceso (regimen cercano).
-  #
-  # BAJADO de 4 a 2 A PROPOSITO: estos frames se cuentan ENCIMA de los
-  # front.persist_frames que el guard ya exigio para declarar STOP. Con
-  # 3 + 2 el regimen cercano entra a los 5 frames reales de bloqueo; dejarlo
-  # en 4 daria 7, casi 1.5 s con loop_period_s 0.2.
-  obstacle_persist_frames: 2
-  # Umbrales sobre lo que dice la MEMORIA (PersistentMap, no una camara
-  # trasera real) del rumbo "atras" para animarse a retroceder.
+  escape:
+    prior_free: 0.15          # cuánto vale "no sé" en fracción libre
+    prior_weight: 0.30
+    unblock_free: 0.35
+    repeat_penalty: 0.12
+    repeat_memory: 4
+    goal_bonus: 0.06
+    min_score: 0.10
+
+  turn:
+    tolerance_deg: 15.0
+    angular_start: 0.50
+    angular_max: 1.00         # subilo si el rover sigue sin rotar en pasto
+    angular_step: 0.15
+    stall_ticks: 2
+    stall_deg: 3.0
+    max_ticks: 40
+    arc_min_clearance_m: 0.55
+    arc_linear: 0.12
+    tick_s: 0.35
+
+  # Estos siguen usándose para el retroceso.
   retroceso_min_libre_pct: 55.0
   retroceso_min_cobertura_pct: 30.0
   retroceso_max_m: 0.6
   retroceso_paso_m: 0.2
-  # Negativo = reversa. Sin verificar empiricamente todavia (no hay un
-  # tools/ equivalente a check_angular_sign.py para esto) — confirmalo a
-  # mano la primera vez, con espacio de sobra detras del robot.
   retroceso_linear: -0.18
 
-  # Recuperacion informada por memoria: rumbos candidatos (grados relativos
-  # al actual) que _recover() evalua con el mapa antes de girar. 0=adelante
-  # (por si el bloqueo ya se disolvio), 180=atras.
-  # Giro de recuperacion (el "girando hacia +180 grados"). Antes tardaba ~8 s
-  # en dar media vuelta: usaba turn_speed (0.40) como si fuera rad/s, y son
-  # unidades distintas -- turn_speed es un comando normalizado en -1..1.
-  #   recovery_turn_speed : comando angular durante el giro
-  #   recovery_step_deg   : cuanto gira entre verificacion y verificacion
-  #                         (pasos mas grandes = menos pausas = mas rapido)
-  #   recovery_deg_per_s  : tasa REAL de giro del robot, en grados por segundo.
-  #                         Es lo que fija la duracion de cada paso. Medila
-  #                         cronometrando media vuelta: si el robot se pasa,
-  #                         subila; si se queda corto, bajala.
-  # Con estos valores media vuelta son 4 pasos de 1 s en vez de 9 de 0.87 s.
-  recovery_turn_speed: 0.45
-  recovery_step_deg: 45.0
-  recovery_deg_per_s: 45.0
+  # Ya NO se usan: el giro es a lazo cerrado.
+  #   recovery_turn_speed / recovery_step_deg / recovery_deg_per_s
   recovery_headings_deg: [0.0, 90.0, -90.0, 180.0]
   recovery_min_cobertura_pct: 25.0
-  # Radio de la ventana del mapa persistente que se consulta por cada rumbo
-  # candidato. Muy grande diluye obstaculos chicos en el promedio y todo sale
-  # "libre"; muy chico decide con poquisimas celdas.
   heading_search_radius_m: 2.0
-
-
-odometry:
-  wheel_radius_m: 0.0527
-  track_width_m: 0.15
-  left_rpm_indices: [0, 2]
-  right_rpm_indices: [1, 3]
-  # El firmware del Mini invierte la convencion diferencial estandar:
-  # rueda izquierda adelante + derecha atras = giro a la IZQUIERDA.
-  # Verificado con el control manual el 2026-08-01.
-  rotation_sign:  1.0
-  use_gyro_for_rotation: true
-  gps_correction: true
-  min_gps_displacement_m: 1.0
 
 memory:
   enabled: true
