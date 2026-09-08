@@ -181,12 +181,12 @@ safety:
   # trasera real) del rumbo "atras" para animarse a retroceder.
   retroceso_min_libre_pct: 55.0
   retroceso_min_cobertura_pct: 30.0
-  retroceso_max_m: 0.6
-  retroceso_paso_m: 0.2
+  retroceso_max_m: 0.5
+  retroceso_paso_m: 0.5
   # Negativo = reversa. Sin verificar empiricamente todavia (no hay un
   # tools/ equivalente a check_angular_sign.py para esto) — confirmalo a
   # mano la primera vez, con espacio de sobra detras del robot.
-  retroceso_linear: -0.18
+  retroceso_linear: -0.30
 
   # Recuperacion informada por memoria: rumbos candidatos (grados relativos
   # al actual) que _recover() evalua con el mapa antes de girar. 0=adelante
