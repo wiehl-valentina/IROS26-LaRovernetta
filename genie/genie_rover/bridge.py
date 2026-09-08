@@ -609,10 +609,37 @@ class Bridge:
         """Girar en el lugar sin evaluar nada: el ultimo recurso cuando no
         hay mapa, ni el mapa ni el VLM dieron un rumbo confiable."""
         self.stats.recoveries_ciegas += 1
-        print("[bridge]   barrido ciego")
-        self.send(DriveCommand(0.0, self.follower.angular_sign * self.follower.turn_speed,
-                               "barrido de recuperacion"))
-        time.sleep(self.recovery_turn_s)
+        print("[bridge]   barrido condicional...")
+        
+        # Evaluar la mitad con mas espacio libre para elegir lado de giro
+        signo = self.follower.angular_sign
+        try:
+            rgb, _ = self.client.front_frame()
+            res = self.perception.process(rgb)
+            bev = res.traversability
+            h, w = bev.shape
+            left_half = bev[:, :w//2]
+            right_half = bev[:, w//2:]
+            left_free = (left_half > 0.4).sum()
+            right_free = (right_half > 0.4).sum()
+            
+            # angular_sign: -1 significa giro a la izquierda con angulo positivo
+            if left_free > right_free:
+                signo = -1.0 if self.follower.angular_sign < 0 else 1.0
+                print(f"[bridge]     mas espacio a la IZQUIERDA ({left_free} vs {right_free}), girando izq")
+            else:
+                signo = 1.0 if self.follower.angular_sign < 0 else -1.0
+                print(f"[bridge]     mas espacio a la DERECHA ({right_free} vs {left_free}), girando der")
+        except Exception as e:
+            pass
+            
+        cmd = DriveCommand(0.0, signo * self.follower.turn_speed, "barrido condicional")
+        self.send(cmd)
+        
+        t0 = time.time()
+        while time.time() - t0 < self.recovery_turn_s and not self._stop_requested:
+            time.sleep(0.1)
+            
         self.send(DriveCommand(0.0, 0.0, "fin del barrido"))
 
     # ---------------------------------------------------------- regimen cercano
@@ -638,6 +665,24 @@ class Bridge:
 
         libre_pct, cobertura_pct = self._map_free_and_coverage(
             pose, heading_rel_deg=180.0, radius_m=self.retroceso_max_m)
+            
+        if cobertura_pct < self.retroceso_min_cobertura_pct:
+            print("[bridge]   cobertura insuficiente detras, tomando foto de camara trasera para mapear...")
+            try:
+                rgb_rear, _ = self.client.rear_frame()
+                res_rear = self.perception.process(rgb_rear)
+                
+                # Crear pose virtual mirando hacia atras
+                rear_pose = Pose(pose.x, pose.y, pose.theta + math.pi)
+                
+                self.pmap.integrate(res_rear.traversability, res_rear.observed, rear_pose,
+                                    self.forward_range, self.side_range, t=time.time())
+                                    
+                libre_pct, cobertura_pct = self._map_free_and_coverage(
+                    pose, heading_rel_deg=180.0, radius_m=self.retroceso_max_m)
+                print(f"[bridge]   mapa actualizado detras: libre={libre_pct:.0f}% cobertura={cobertura_pct:.0f}%")
+            except Exception as e:
+                print(f"[bridge]   error usando camara trasera: {e}")
         print(f"[bridge]   mapa detras del robot: libre={libre_pct:.0f}% cobertura={cobertura_pct:.0f}%")
         if libre_pct >= self.retroceso_min_libre_pct and cobertura_pct >= self.retroceso_min_cobertura_pct:
             self._retroceder()
@@ -686,10 +731,15 @@ class Bridge:
               f"en pasos de {self.retroceso_paso_m:.2f} m")
         start = self.odometry.pose
         start_pose = Pose(start.x, start.y, start.theta)
-        step_s = self.retroceso_paso_m / max(abs(self.retroceso_linear), 1e-3)
         recorrido = 0.0
 
         while recorrido < self.retroceso_max_m and not self._stop_requested:
+            falta_m = self.retroceso_max_m - recorrido
+            step_m = min(self.retroceso_paso_m, falta_m)
+            if step_m < 0.05:
+                break
+            step_s = step_m / max(abs(self.retroceso_linear), 1e-3)
+            
             self.send(DriveCommand(self.retroceso_linear, 0.0, "retroceso (regimen cercano)"))
             t0 = time.time()
             while time.time() - t0 < step_s and not self._stop_requested:
@@ -701,6 +751,12 @@ class Bridge:
             try:
                 rgb, _ = self.client.front_frame()
                 res = self.perception.process(rgb)
+                
+                # Integrar la foto nueva al mapa para que _recover_informado tenga datos frescos
+                if self.use_map and self.pmap is not None:
+                    self.pmap.integrate(res.traversability, res.observed, pose,
+                                        self.forward_range, self.side_range, t=time.time())
+                
                 if not front_is_blocked(res.traversability, self.resolution):
                     print(f"[bridge]   frente liberado tras retroceder {recorrido:.2f} m")
                     break
