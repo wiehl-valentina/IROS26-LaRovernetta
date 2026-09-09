@@ -44,84 +44,307 @@ def wrap_deg(angle: float) -> float:
     return (angle + 180.0) % 360.0 - 180.0
 
 
+# -------------------------------------------------------------------- calidad GPS
+
+def gps_quality(hdop: float | None = None,
+                fix_quality: int | None = None,
+                gps_signal: float | None = None,
+                hdop_nominal: float = 0.025,
+                hdop_reject: float = 0.080) -> float:
+    """Devuelve un factor de confianza del GPS en [0.0, 1.0].
+
+    Arquitectura de validación (Fase 1):
+    1. Gate primario: fix_quality (estándar NMEA).
+       - 0 = sin fix / inválido -> 0.0 (descartar)
+       - 1 = autónomo (SPS) -> 0.35 (confianza media, no RTK)
+       - 2 = DGPS / SBAS -> 0.70 (alta)
+       - 4 = RTK Fix -> 1.00 (máxima precisión centimétrica)
+       - 5 = RTK Float -> 0.60 (precisión intermedia)
+       Si fix_quality no está disponible (None o <= 0), se usa gps_signal como fallback:
+       - gps_signal <= 0 -> 0.0
+       - gps_signal > 0 -> min(1.0, gps_signal / 50.0) * 0.7
+       Si no hay metadata de fix ni señal, asume 0.5 de base.
+
+    2. Modulador secundario: hdop (dilución geométrica / métrica de dispersión).
+       - hdop <= hdop_nominal -> multiplicador 1.0
+       - hdop >= hdop_reject -> multiplicador 0.0 (rechazo por alta dispersión)
+       - En (hdop_nominal, hdop_reject) -> decaimiento lineal a 0.0.
+
+    NOTA DE CALIBRACIÓN: Los umbrales por defecto hdop_nominal=0.025 y hdop_reject=0.080
+    son provisorios (no validados contra datos degradados reales en campo). Recalibrar
+    en la primera corrida con GPS pobre.
+    """
+    if gps_signal is not None and gps_signal <= 0:
+        return 0.0
+
+    # 1. Gate primario: fix_quality
+    if fix_quality is not None:
+        if fix_quality <= 0:
+            return 0.0
+        elif fix_quality == 4:
+            base_weight = 1.00
+        elif fix_quality == 2:
+            base_weight = 0.70
+        elif fix_quality == 5:
+            base_weight = 0.60
+        elif fix_quality == 1:
+            base_weight = 0.35
+        else:
+            base_weight = 0.30
+    else:
+        if gps_signal is not None and gps_signal > 0:
+            base_weight = float(np.clip(gps_signal / 50.0 * 0.70, 0.1, 0.70))
+        else:
+            base_weight = 0.50
+
+    # 2. Modulador secundario: hdop
+    hdop_factor = 1.0
+    if hdop is not None and hdop > 0.0:
+        if hdop <= hdop_nominal:
+            hdop_factor = 1.0
+        elif hdop >= hdop_reject:
+            hdop_factor = 0.0
+        else:
+            hdop_factor = (hdop_reject - hdop) / max(hdop_reject - hdop_nominal, 1e-6)
+            hdop_factor = float(np.clip(hdop_factor, 0.0, 1.0))
+
+    return float(np.clip(base_weight * hdop_factor, 0.0, 1.0))
+
+
 # -------------------------------------------------------------------- rumbo
 
 class HeadingEstimator:
-    """Estima el rumbo del rover.
+    """Estima el rumbo del rover mediante fusión circular ponderada por incertidumbre.
 
-    El magnetometro de un robot chico va montado al lado de los motores, asi que
-    su lectura suele ser poco confiable. La fuente primaria aca es el rumbo
-    derivado del propio desplazamiento GPS (course over ground), que es ruidoso
-    pero no tiene sesgo sistematico. El campo 'orientation' del SDK se usa como
-    respaldo cuando el robot esta quieto, con offset y signo configurables.
+    Fuentes fusionadas:
+      * Compás (orientation del SDK): incertidumbre base fija configurable (~15°).
+      * GPS track (course-over-ground): incertidumbre angular ~ atan(σ_pos / d) / calidad.
+      * Giróscopo integrado: incertidumbre acumulativa σ(t) = sqrt(σ_base² + q²·Δt).
+
+    Fusión circular ponderada por w_i = 1/σ_i²:
+      S_x = sum(w_i * cos(rad(θ_i)))
+      S_y = sum(w_i * sin(rad(θ_i)))
+      θ_fused = deg(atan2(S_y, S_x)) % 360
+      σ_fused = 1 / sqrt(sum(w_i))
     """
 
     def __init__(self, min_displacement_m: float = 1.5, history: int = 12,
                  orientation_offset_deg: float = 0.0, orientation_sign: float = 1.0,
-                 trust_orientation: bool = False):
+                 trust_orientation: bool = False,
+                 compass_sigma_deg: float = 15.0,
+                 gyro_drift_rate_dps_per_sqrt_s: float = 0.5,
+                 hdop_nominal: float = 0.025,
+                 hdop_reject: float = 0.080,
+                 use_ekf_udp: bool = True,
+                 ekf_staleness_s: float = 1.5,
+                 ekf_weight: float = 1.0):
         self.min_disp = float(min_displacement_m)
-        self.buf: deque[tuple[float, float, float]] = deque(maxlen=int(history))
+        self.buf: deque[tuple[float, float, float, float]] = deque(maxlen=int(history))
         self.offset = float(orientation_offset_deg)
         self.sign = float(orientation_sign)
         self.trust_orientation = bool(trust_orientation)
+        self.compass_sigma = float(compass_sigma_deg)
+        self.gyro_drift_rate = float(gyro_drift_rate_dps_per_sqrt_s)
+        self.hdop_nominal = float(hdop_nominal)
+        self.hdop_reject = float(hdop_reject)
+        self.use_ekf_udp = bool(use_ekf_udp)
+        self.ekf_staleness_s = float(ekf_staleness_s)
+        self.ekf_weight = float(ekf_weight)
+
         self._heading: float | None = None
+        self._uncertainty: float | None = None
         self._source = "none"
         self.last_gps_heading: float | None = None
         self.last_orientation_heading: float | None = None
+        self.last_ekf_heading: float | None = None
+        self.last_ekf_time: float | None = None
 
-    def update(self, lat: float, lon: float, orientation: float, t: float) -> float | None:
-        self.buf.append((lat, lon, t))
+        # Estado del giróscopo integrado
+        self._last_t: float | None = None
+        self._gyro_heading: float | None = None
+        self._gyro_sigma: float = float(compass_sigma_deg)
 
+    def update(self, lat: float, lon: float, orientation: float, t: float,
+               hdop: float | None = None, fix_quality: int | None = None,
+               gps_signal: float | None = None,
+               gyro_dps: float | None = None,
+               ekf_heading: float | None = None,
+               ekf_timestamp: float | None = None) -> float | None:
+        """Actualiza el estimador con un nuevo conjunto de mediciones."""
+        import time as _time
+
+        # 0. Evaluar validez y frescura del heading UDP (EKF de ROS 2)
+        ekf_valid = False
+        if self.use_ekf_udp and ekf_heading is not None:
+            self.last_ekf_heading = float(ekf_heading)
+            if ekf_timestamp is not None:
+                self.last_ekf_time = float(ekf_timestamp)
+                age = _time.time() - self.last_ekf_time
+            else:
+                age = 0.0
+            if age <= self.ekf_staleness_s:
+                ekf_valid = True
+
+        # 1. Evaluar calidad GPS
+        q_gps = gps_quality(hdop=hdop, fix_quality=fix_quality, gps_signal=gps_signal,
+                            hdop_nominal=self.hdop_nominal, hdop_reject=self.hdop_reject)
+        if abs(lat) <= 90 and abs(lon) <= 180 and q_gps > 0.0:
+            self.buf.append((lat, lon, t, q_gps))
+
+        # 2. Medición del compás
         compass = wrap_deg(self.sign * orientation + self.offset) % 360.0
         self.last_orientation_heading = compass
+        sigma_compass = self.compass_sigma
 
-        gps_heading = self._heading_from_track()
-        if gps_heading is not None:
+        # 3. Medición de GPS course-over-ground
+        gps_track_res = self._heading_from_track()
+        gps_heading: float | None = None
+        sigma_gps: float | None = None
+        if gps_track_res is not None:
+            gps_heading, sigma_gps = gps_track_res
             self.last_gps_heading = gps_heading
 
+        # 4. Propagación del giróscopo integrado
+        dt = 0.0
+        if self._last_t is not None and t > self._last_t:
+            dt = t - self._last_t
+        self._last_t = t
+
+        if gyro_dps is not None and dt > 0 and dt < 1.0:
+            if self._gyro_heading is not None:
+                self._gyro_heading = (self._gyro_heading + gyro_dps * dt) % 360.0
+                self._gyro_sigma = math.sqrt(self._gyro_sigma**2 + (self.gyro_drift_rate**2) * dt)
+            elif self._heading is not None:
+                self._gyro_heading = (self._heading + gyro_dps * dt) % 360.0
+                self._gyro_sigma = math.sqrt((self._uncertainty or self.compass_sigma)**2 + (self.gyro_drift_rate**2) * dt)
+
+        # 5. Modo EKF puro si está disponible y fresco
+        if ekf_valid and self.last_ekf_heading is not None and self.ekf_weight >= 1.0:
+            self._heading = wrap_deg(self.last_ekf_heading) % 360.0
+            self._uncertainty = 2.0
+            self._source = "ekf_udp"
+            self._gyro_heading = self._heading
+            self._gyro_sigma = 2.0
+            return self._heading
+
+        # 6. Override manual si trust_orientation está activo
         if self.trust_orientation:
-            self._heading, self._source = compass, "orientation"
-        elif gps_heading is not None:
-            self._heading, self._source = gps_heading, "gps_track"
+            self._heading = compass
+            self._uncertainty = sigma_compass
+            self._source = "orientation"
+            self._gyro_heading = compass
+            self._gyro_sigma = sigma_compass
+            return self._heading
+
+        # 7. Fusión circular ponderada por 1 / sigma^2
+        sources: list[tuple[float, float, str]] = []  # (angle_deg, sigma_deg, name)
+
+        # Si hay EKF válido con blend parcial (< 1.0)
+        if ekf_valid and self.last_ekf_heading is not None and self.ekf_weight > 0.0:
+            sigma_ekf = 2.0 / max(self.ekf_weight, 0.05)
+            sources.append((wrap_deg(self.last_ekf_heading) % 360.0, sigma_ekf, "ekf_udp"))
+
+        # Compás siempre disponible
+        sources.append((compass, sigma_compass, "compass"))
+
+        # GPS track si superó el umbral y es válido
+        if gps_heading is not None and sigma_gps is not None and sigma_gps < 60.0:
+            sources.append((gps_heading, sigma_gps, "gps"))
+
+        # Giróscopo si está activo y su sigma es razonable (< 45°)
+        if self._gyro_heading is not None and self._gyro_sigma < 45.0 and gyro_dps is not None:
+            sources.append((self._gyro_heading, self._gyro_sigma, "gyro"))
+
+        # Promedio circular vectorial
+        sx = 0.0
+        sy = 0.0
+        sum_w = 0.0
+        names_used = []
+
+        for angle_deg, sigma_deg, name in sources:
+            w = 1.0 / max(sigma_deg**2, 1e-4)
+            rad = math.radians(angle_deg)
+            sx += w * math.cos(rad)
+            sy += w * math.sin(rad)
+            sum_w += w
+            names_used.append(name)
+
+        if sum_w > 0:
+            fused_heading = math.degrees(math.atan2(sy, sx)) % 360.0
+            fused_sigma = 1.0 / math.sqrt(sum_w)
         else:
-            # Sin rumbo por GPS: seguir la brujula. Es ruidosa y con offset
-            # variable, pero SIGUE las rotaciones, que es lo unico que hace
-            # falta para que el lazo de navegacion cierre.
-            #
-            # Antes esta rama era "elif self._heading is None", asi que solo
-            # corria en el PRIMER frame: despues el rumbo quedaba congelado en
-            # ese valor inicial aunque el robot girara. goal_from_gps calcula
-            # el rumbo relativo al checkpoint como (bearing - heading), asi que
-            # con heading muerto la direccion de la meta giraba junto con el
-            # robot y nunca se podia apuntar: giraba en el lugar o describia
-            # arcos hacia una direccion equivocada.
-            self._heading, self._source = compass, "orientation(fallback)"
+            fused_heading = compass
+            fused_sigma = sigma_compass
+            names_used = ["compass"]
+
+        self._heading = fused_heading
+        self._uncertainty = fused_sigma
+        if len(names_used) > 1:
+            self._source = f"fused({'+'.join(names_used)})"
+        elif "gps" in names_used:
+            self._source = "gps_track"
+        else:
+            is_stale = (self.use_ekf_udp and self.last_ekf_heading is not None)
+            self._source = "orientation(stale_fallback)" if is_stale else "orientation(fallback)"
+
+        # Re-anclar giróscopo al rumbo fusionado
+        self._gyro_heading = fused_heading
+        self._gyro_sigma = fused_sigma
+
         return self._heading
 
-    def _heading_from_track(self) -> float | None:
+    def _heading_from_track(self) -> tuple[float, float] | None:
+        """Devuelve (heading_deg, sigma_deg) si el desplazamiento supera el umbral."""
         if len(self.buf) < 2:
             return None
-        lat0, lon0, _ = self.buf[0]
-        lat1, lon1, _ = self.buf[-1]
-        north, east = latlon_to_local_ne(lat0, lon0, lat1, lon1)
-        if math.hypot(north, east) < self.min_disp:
+        lat0, lon0, _, q0 = self.buf[0]
+        lat1, lon1, _, q1 = self.buf[-1]
+        q_eff = min(q0, q1)
+        if q_eff <= 0.0:
             return None
-        return math.degrees(math.atan2(east, north)) % 360.0
+
+        north, east = latlon_to_local_ne(lat0, lon0, lat1, lon1)
+        disp = math.hypot(north, east)
+
+        # Escalar min_displacement_m inversamente con la calidad GPS
+        min_disp_eff = self.min_disp / max(q_eff, 0.25)
+        if disp < min_disp_eff:
+            return None
+
+        heading_deg = math.degrees(math.atan2(east, north)) % 360.0
+        # Incertidumbre angular: atan(sigma_pos / disp) en grados
+        sigma_pos_m = 0.020 / max(q_eff, 0.1)
+        sigma_rad = math.atan2(sigma_pos_m, disp)
+        sigma_deg = float(np.clip(math.degrees(sigma_rad), 1.0, 90.0))
+        return heading_deg, sigma_deg
 
     def reset_track(self) -> None:
         """Llamar despues de girar en el lugar: el track viejo ya no aplica."""
         self.buf.clear()
+        if self._heading is not None:
+            self._gyro_heading = self._heading
+            self._gyro_sigma = self._uncertainty or self.compass_sigma
 
     @property
     def heading(self) -> float | None:
         return self._heading
 
     @property
+    def uncertainty(self) -> float | None:
+        return self._uncertainty
+
+    @property
+    def heading_uncertainty_deg(self) -> float | None:
+        return self._uncertainty
+
+    @property
     def source(self) -> str:
         return self._source
 
     def disagreement_deg(self) -> float | None:
-        """Cuanto difieren GPS y magnetometro. Util para calibrar el offset."""
+        """Cuanto difieren las estimaciones primarias de la brujula cruda."""
+        if "ekf_udp" in self._source and self.last_ekf_heading is not None and self.last_orientation_heading is not None:
+            return wrap_deg(self.last_ekf_heading - self.last_orientation_heading)
         if self.last_gps_heading is None or self.last_orientation_heading is None:
             return None
         return wrap_deg(self.last_gps_heading - self.last_orientation_heading)

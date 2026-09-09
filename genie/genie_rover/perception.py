@@ -48,6 +48,42 @@ def camera_pose_from_height_pitch(height_m: float, pitch_down_deg: float) -> np.
     return pose
 
 
+def camera_pose_with_tilt(base_camera_pose: np.ndarray, roll_rad: float, pitch_rad: float) -> np.ndarray:
+    """Aplica la inclinacion (roll y pitch) del chasis sobre la pose base de la camara.
+
+    Convenciones (identicas a odometry.py::estimate_roll_pitch):
+      * x adelante (+X), y izquierda (+Y), z arriba (+Z).
+      * pitch_rad: rotacion sobre el eje Y (positivo = morro hacia arriba, ax < 0).
+      * roll_rad:  rotacion sobre el eje X (positivo = chasis cae a la derecha, ay > 0).
+
+    La rotacion de actitud del chasis respecto al plano horizontal nivelado es:
+      R_tilt = R_y(pitch) @ R_x(roll)
+    y la transformacion homogenea resultante es:
+      T_world_cam = T_tilt @ base_camera_pose
+    donde el chasis pivota sobre su huella en el suelo (0, 0, 0).
+    Con roll=0 y pitch=0, devuelve exactamente una copia de base_camera_pose.
+    """
+    base = np.asarray(base_camera_pose, dtype=np.float64).reshape(4, 4)
+    if abs(roll_rad) < 1e-9 and abs(pitch_rad) < 1e-9:
+        return base.copy()
+
+    cr, sr = math.cos(float(roll_rad)), math.sin(float(roll_rad))
+    cp, sp = math.cos(float(pitch_rad)), math.sin(float(pitch_rad))
+
+    r_tilt = np.array([
+        [cp,  sp * sr,  sp * cr],
+        [0.0, cr,      -sr],
+        [-sp, cp * sr,  cp * cr],
+    ], dtype=np.float64)
+
+    tilted = np.empty((4, 4), dtype=np.float64)
+    tilted[:3, :3] = r_tilt @ base[:3, :3]
+    tilted[:3, 3] = r_tilt @ base[:3, 3]
+    tilted[3, :3] = 0.0
+    tilted[3, 3] = 1.0
+    return tilted
+
+
 # ------------------------------------------------------------------- distorsion
 
 class Undistorter:
@@ -208,11 +244,15 @@ class PerceptionPipeline:
         self._warned_sizes: set[tuple[int, int]] = set()
 
         if "pose" in cam and cam["pose"] is not None:
-            self.camera_pose = np.asarray(cam["pose"], dtype=np.float64).reshape(4, 4)
+            self.base_camera_pose = np.asarray(cam["pose"], dtype=np.float64).reshape(4, 4)
         else:
-            self.camera_pose = camera_pose_from_height_pitch(
+            self.base_camera_pose = camera_pose_from_height_pitch(
                 cam["height_m"], cam["pitch_down_deg"]
             )
+        self.camera_pose = self.base_camera_pose.copy()
+        self.tilt_threshold_rad = math.radians(float(cam.get("tilt_threshold_deg", 0.5)))
+        self._cached_roll: float | None = None
+        self._cached_pitch: float | None = None
 
         self.ground_z = float(proj.get("ground_z", 0.0))
         self.resolution = float(proj["resolution_m_per_px"])
@@ -269,12 +309,30 @@ class PerceptionPipeline:
         self._rectifiers[size] = rect
         return rect
 
-    def process(self, rgb: np.ndarray) -> BevResult:
+    def process(self, rgb: np.ndarray,
+                roll_rad: float | None = None,
+                pitch_rad: float | None = None) -> BevResult:
         h, w = rgb.shape[:2]
         rect = self._rectifier_for((w, h))
 
         rectified = rect(rgb)
         trav_img = self.runner.traversability(rectified)
+
+        # Actualizar pose dinamica de camara si hay medicion de tilt
+        if roll_rad is not None and pitch_rad is not None:
+            r = float(roll_rad)
+            p = float(pitch_rad)
+            if (self._cached_roll is None or self._cached_pitch is None
+                    or abs(r - self._cached_roll) >= self.tilt_threshold_rad
+                    or abs(p - self._cached_pitch) >= self.tilt_threshold_rad):
+                self.camera_pose = camera_pose_with_tilt(self.base_camera_pose, r, p)
+                self._cached_roll = r
+                self._cached_pitch = p
+        else:
+            if self._cached_roll is not None or self._cached_pitch is not None:
+                self.camera_pose = self.base_camera_pose.copy()
+                self._cached_roll = None
+                self._cached_pitch = None
 
         score, k = trav_img, rect.k
         d = self.projection_downscale
@@ -296,6 +354,9 @@ class PerceptionPipeline:
             bev_side_range_m=self.side_range,
             max_ray_distance_m=self.max_ray,
         )
+        if self._cached_roll is not None and self._cached_pitch is not None:
+            stats["roll_deg"] = math.degrees(self._cached_roll)
+            stats["pitch_deg"] = math.degrees(self._cached_pitch)
         return BevResult(bev, observed, trav_img, stats)
 
 
@@ -340,8 +401,13 @@ def _self_test(config_path: str, image_path: str, out_dir: str) -> None:
         pipe.process(rgb)
     dt = (_time.perf_counter() - t0) / n
     print(f"\nInferencia + proyeccion: {dt * 1000:.0f} ms por frame ({1 / dt:.1f} Hz)")
-    print(f"Celdas observadas en el BEV: {res.stats['bev_observed_cells']:.0f} "
+    print(f"Celdas observadas en el BEV (nivelado): {res.stats['bev_observed_cells']:.0f} "
           f"de {res.traversability.size}")
+
+    # Prueba con tilt dinamico
+    res_tilt = pipe.process(rgb, roll_rad=math.radians(5.0), pitch_rad=math.radians(10.0))
+    print(f"Celdas observadas con tilt (+5° roll, +10° pitch): {res_tilt.stats['bev_observed_cells']:.0f} "
+          f"de {res_tilt.traversability.size}")
     print("\nQue mirar: el suelo transitable delante del robot tiene que aparecer "
           "verde en el BEV, con forma de abanico que se abre hacia adelante. Si "
           "sale torcido o comprimido, revisa height_m y pitch_down_deg.")

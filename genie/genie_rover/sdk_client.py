@@ -12,6 +12,8 @@ from __future__ import annotations
 import atexit
 import base64
 import io
+import socket
+import struct
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -35,6 +37,10 @@ class Telemetry:
     gps_signal: float
     timestamp: float
     raw: dict[str, Any]
+    hdop: float = 0.0
+    fix_quality: int = 0
+    ekf_heading: float | None = None
+    ekf_heading_time: float | None = None
 
 
 @dataclass
@@ -52,6 +58,19 @@ class RoverClient:
         self.timeout = float(timeout)
         self.session = requests.Session()
         self._sent_motion = False
+
+        # Setup UDP Listener para el Heading del EKF de ROS 2
+        self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Bind a todos los interfaces para recibir desde Docker
+        try:
+            self.udp_sock.bind(('0.0.0.0', 9876))
+            self.udp_sock.setblocking(False)
+        except Exception as exc:
+            print(f"[sdk_client] Advertencia: no se pudo bindear socket UDP 9876 ({exc})")
+        self.ekf_heading = None
+        self.ekf_heading_time = None
+
         if stop_on_exit:
             # El SDK mantiene el ultimo comando indefinidamente: si el proceso
             # muere sin frenar, el rover se sigue moviendo solo. Esto cubre los
@@ -59,6 +78,10 @@ class RoverClient:
             atexit.register(self._stop_quietly)
 
     def _stop_quietly(self) -> None:
+        try:
+            self.udp_sock.close()
+        except Exception:
+            pass
         if not self._sent_motion:
             return
         for _ in range(2):
@@ -71,6 +94,18 @@ class RoverClient:
                 pass
 
     # ---------------------------------------------------------------- camara
+
+    def rear_frame(self) -> tuple[np.ndarray, float]:
+        """Devuelve (imagen RGB HxWx3 uint8, timestamp unix)."""
+        r = self.session.get(f"{self.base_url}/feed?view=rear", timeout=self.timeout)
+        r.raise_for_status()
+        import cv2
+        arr = np.frombuffer(r.content, np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is None:
+            raise RoverError("Frame trasero corrupto")
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        return img_rgb, time.time()
 
     def front_frame(self) -> tuple[np.ndarray, float]:
         """Devuelve (imagen RGB HxWx3 uint8, timestamp unix)."""
@@ -88,15 +123,35 @@ class RoverClient:
         r = self.session.get(f"{self.base_url}/data", timeout=self.timeout)
         r.raise_for_status()
         d = r.json()
+        hdop_val = float(d.get("hdop", 0.0))
+        fix_q_val = int(d.get("fix_quality", 0))
+
+        # 1. Vaciar el buffer UDP para quedarse siempre con el último dato
+        try:
+            while True:
+                udp_data, _ = self.udp_sock.recvfrom(1024)
+                # Desempaquetar el float (little-endian)
+                self.ekf_heading = struct.unpack('<f', udp_data)[0]
+                self.ekf_heading_time = time.time()
+        except (BlockingIOError, socket.error):
+            pass  # No hay datos nuevos en este ciclo
+
+        # Orientation cruda de la brújula/magnetómetro del SDK
+        raw_orientation = float(d.get("orientation", 0.0))
+
         return Telemetry(
             latitude=float(d.get("latitude", 0.0)),
             longitude=float(d.get("longitude", 0.0)),
-            orientation=float(d.get("orientation", 0.0)),
+            orientation=raw_orientation,
             speed=float(d.get("speed", 0.0)),
             battery=float(d.get("battery", 0.0)),
             gps_signal=float(d.get("gps_signal", 0.0)),
             timestamp=float(d.get("timestamp", time.time())),
             raw=d,
+            hdop=hdop_val,
+            fix_quality=fix_q_val,
+            ekf_heading=self.ekf_heading,
+            ekf_heading_time=self.ekf_heading_time,
         )
 
     # ---------------------------------------------------------------- control

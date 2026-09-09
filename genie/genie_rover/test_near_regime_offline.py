@@ -57,6 +57,14 @@ def _build_stub(pmap: PersistentMap):
     # "libre" de entrada -- no probaria nada. Con un radio del orden del
     # obstaculo, el bloqueo pesa lo suficiente como para que el test discrimine.
     stub.heading_search_radius_m = 0.5
+    stub.recovery_turn_speed = 0.50
+    stub.recovery_deg_per_s = 60.0
+    stub.recovery_step_deg = 30.0
+    stub.front_near_m = 0.32
+    stub.front_half_width_m = 0.22
+    stub.front_traversable_thresh = 0.28
+    stub.front_min_free_ratio = 0.40
+    stub.allow_reverse = True
     stub.use_vlm_recovery = False
     stub.stats = types.SimpleNamespace(
         retrocesos=0, recoveries_por_mapa=0, recoveries_por_vlm=0,
@@ -81,8 +89,11 @@ def _build_stub(pmap: PersistentMap):
         def pose(self):
             return pose_holder["pose"]
 
-        def update(self, _raw):
+        def update(self, _raw, *a, **kw):
             return pose_holder["pose"]
+
+        def current_roll_pitch(self, *a, **kw):
+            return None
 
     stub.odometry = _Odo()
 
@@ -100,7 +111,7 @@ def _build_stub(pmap: PersistentMap):
     stub.client = _Client()
 
     class _Perception:
-        def process(self, _rgb):
+        def process(self, _rgb, *a, **kw):
             # BEV totalmente libre: simula que, tras retroceder o girar, la
             # camara ya deja de ver el obstaculo.
             return types.SimpleNamespace(traversability=np.ones((16, 16), dtype=np.float32))
