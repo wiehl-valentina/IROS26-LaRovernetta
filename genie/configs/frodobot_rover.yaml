@@ -10,7 +10,7 @@
 
 rover:
   base_url: "http://localhost:8000"
-  timeout_s: 5.0
+  timeout_s: 8.0  # Origen: marian (era 5.0). Timeout incrementado para robustez ante latencia de red.
 
 samtp:
   config_path: "sam2/configs/sam2.1_inference_tiny/sam2.1_custom2.yaml"
@@ -45,6 +45,11 @@ camera:
     - [-0.009684345, -0.999429288, -0.032362186, 0.150244633]
     - [0.000000000, 0.000000000, 0.000000000, 1.000000000]
 
+  # Correccion dinamica de pose de camara por roll/pitch del rover.
+  # Umbral minimo en grados para actualizar la pose dinamica y filtrar jitter (0.0 = recalcula siempre).
+  # Origen: marian (habilita IPM dinámico según inclinación medida).
+  tilt_threshold_deg: 0.5
+
 projection:
   ground_z: 0.0
   resolution_m_per_px: 0.03
@@ -62,9 +67,9 @@ navigation:
   #   +1.0  si angular positivo hace girar a la DERECHA
   angular_sign: -1.0
 
-  max_linear: 1.0       # maximo de la escala -1..1 (NO m/s).
-  max_angular: 0.45
-  turn_speed: 0.40
+  max_linear: 0.70       # Origen: marian (era 1.0). Velocidad acotada para mayor control en pendiente.
+  max_angular: 0.60      # Origen: marian (era 0.45). Mayor autoridad angular.
+  turn_speed: 0.50       # Origen: marian (era 0.40). Giro nominal calibrado.
   # Ganancia del giro: angular = kp_angular * radianes(error). Con 0.9 el
   # comando saturaba en max_angular apenas el error pasaba los 29 grados, y
   # como el planner devuelve tipicamente 40-70 grados, giraba SIEMPRE al
@@ -94,6 +99,12 @@ navigation:
   trust_orientation: true
   orientation_offset_deg: 0.0
   orientation_sign: 1.0
+
+  # Estimacion de rumbo EKF (bypass UDP desde ROS 2 mini_plus_localization en puerto 9876)
+  # Origen: marian. Fusión multi-fuente circular de rumbo.
+  use_ekf_udp: true
+  ekf_staleness_s: 1.5
+  ekf_weight: 1.0       # 1.0 = 100% EKF; < 1.0 = fusion circular ponderada con brujula
   commit_hold_s: 2.0
   commit_min_deg: 8.0
   commit_override_deg: 30.0
@@ -107,7 +118,10 @@ navigation:
   # moviendo en vez de quedarse "pensando" cada frame. Un obstaculo al frente
   # (front_is_blocked) sigue frenando de inmediato, cada frame, sin esperar
   # a que se cumpla esta distancia.
-  replan_every_m: 1.0
+  # Origen: marian (era 1.0). Disparo espacial a 0.1 m necesario en pendientes para
+  # corregir la trayectoria ante deformaciones de terreno. El compromiso anti-titubeo
+  # permanece protegido temporalmente por commit_hold_s (2.0 s).
+  replan_every_m: 0.1
   replan_min_remaining_m: 0.4
   # Red de seguridad temporal: replanificar igual si pasaron estos segundos
   # desde el ultimo plan, aunque no se haya cumplido el disparo por distancia
@@ -118,28 +132,24 @@ navigation:
   # Es la perilla principal contra el patron avanza-frena-avanza: con un plan
   # elegido, un error de rumbo mayor a align_threshold_deg hace CURVAR a esta
   # velocidad en vez de pivotear en el lugar (linear=0, que es avance neto
-  # cero). Subila si el rover todavia se frena de mas al corregir rumbo.
-  min_linear_while_planned: 0.08
+  # cero).
+  # Origen: marian (era 0.08). Subido a 0.45 para superar pendientes sin perder torque.
+  min_linear_while_planned: 0.45
 planner:
   grid_size: 240
   # Costo de una celda nunca observada. Una celda OBSERVADA cuesta
-  # (1 - transitabilidad), asi que este numero define el break-even: con 0.2,
-  # el piso observado necesitaba transitabilidad > 0.80 para que el planner lo
-  # prefiriera sobre territorio que nunca vio -> tiraba hacia lo desconocido
-  # teniendo verde al lado. Con 0.30 el break-even baja a 0.70.
+  # (1 - transitabilidad), asi que este numero define el break-even.
   #
-  # TECHO DURO: tiene que quedar por DEBAJO de threshold_cost (0.35). Si lo
-  # iguala o lo supera, el filtro de caminos (path_selection.py) descarta todo
-  # camino que cruce >2% de celdas desconocidas, y como ~67% del mapa esta sin
-  # observar, se quedaria sin ningun camino valido.
-  unknown_cost: 0.30
+  # TECHO DURO: tiene que quedar por DEBAJO de threshold_cost (0.52).
+  # Origen: marian (era 0.30). Permite tolerar celdas desconocidas sin descartar trayectorias viables.
+  unknown_cost: 0.35
   smooth_kernel: 3
   num_goals: 30
   num_mid_points_per_goal: 20
   path_num_samples: 100
   footprint_px: 12        # ~0.30 m de ancho de robot. Medir el Mini y ajustar.
-  threshold_cost: 0.35
-  threshold_points_ratio: 0.02
+  threshold_cost: 0.52    # Origen: marian (era 0.35). Umbral de costo adaptado a pendientes.
+  threshold_points_ratio: 0.08 # Origen: marian (era 0.02).
   number_of_points_to_filter: 60
   alpha: 1.0
   best_k: 12
@@ -173,44 +183,56 @@ safety:
   vlm_recovery_timeout_s: 4.0
   vlm_recovery_min_confidence: 0.35
 
-  # Obstaculo persistente: cuantos frames SEGUIDOS de "OBSTACULO al frente"
-  # antes de evaluar un retroceso (no reaccionar a un bloqueo de un solo
-  # frame, p.ej. alguien que cruzo caminando).
-  obstacle_persist_frames: 4
-  # Umbrales sobre lo que dice la MEMORIA (PersistentMap, no una camara
-  # trasera real) del rumbo "atras" para animarse a retroceder.
+  # Obstaculo persistente: frames seguidos de bloqueo antes de evaluar retroceso/recovery.
+  # Origen: marian (era 4). Subido a 7 para filtrar falsos positivos transitorios causados
+  # por oscilaciones / cabeceo de camara en rampa.
+  obstacle_persist_frames: 7
+
+  # Chequeo frontal calibrado para pendientes (evita falsos obstaculos por deformacion IPM):
+  # Origen: marian.
+  front_near_m: 0.32
+  front_far_m: 0.85
+  front_half_width_m: 0.22
+  front_traversable_thresh: 0.28
+  front_min_free_ratio: 0.40
+
+  # Habilitacion nominal de retroceso:
+  # Origen: reconciliacion marian + companero.
+  # Marian lo puso en false para pendiente por riesgo de vuelco. El companero usa retroceso activo.
+  # Se deja en true a nivel nominal para permitir retroceso en plano, y en Capa 3 se impone el veto
+  # dinamico por pitch/roll para cancelarlo si hay rampa pronunciada.
+  allow_reverse: true
+
+  # Parametros de retroceso (regimen cercano):
+  # Origen: companero (valores optimizados para maniobra rapida y con par suficiente).
   retroceso_min_libre_pct: 55.0
   retroceso_min_cobertura_pct: 30.0
-  retroceso_max_m: 0.6
-  retroceso_paso_m: 0.2
-  # Negativo = reversa. Sin verificar empiricamente todavia (no hay un
-  # tools/ equivalente a check_angular_sign.py para esto) — confirmalo a
-  # mano la primera vez, con espacio de sobra detras del robot.
-  retroceso_linear: -0.18
+  retroceso_max_m: 0.5         # Origen: companero (era 0.6)
+  retroceso_paso_m: 0.5        # Origen: companero (era 0.2, retrocede en un paso firme)
+  retroceso_linear: -0.30      # Origen: companero (era -0.18, mayor torque de retroceso)
 
-  # Recuperacion informada por memoria: rumbos candidatos (grados relativos
-  # al actual) que _recover() evalua con el mapa antes de girar. 0=adelante
-  # (por si el bloqueo ya se disolvio), 180=atras.
-  # Giro de recuperacion (el "girando hacia +180 grados"). Antes tardaba ~8 s
-  # en dar media vuelta: usaba turn_speed (0.40) como si fuera rad/s, y son
-  # unidades distintas -- turn_speed es un comando normalizado en -1..1.
-  #   recovery_turn_speed : comando angular durante el giro
-  #   recovery_step_deg   : cuanto gira entre verificacion y verificacion
-  #                         (pasos mas grandes = menos pausas = mas rapido)
-  #   recovery_deg_per_s  : tasa REAL de giro del robot, en grados por segundo.
-  #                         Es lo que fija la duracion de cada paso. Medila
-  #                         cronometrando media vuelta: si el robot se pasa,
-  #                         subila; si se queda corto, bajala.
-  # Con estos valores media vuelta son 4 pasos de 1 s en vez de 9 de 0.87 s.
+  # Recuperacion y giros:
   recovery_turn_speed: 0.45
   recovery_step_deg: 45.0
-  recovery_deg_per_s: 45.0
+  # recovery_deg_per_s: tasa REAL de giro en grados por segundo.
+  # Origen: RECALCULADO segun medicion experimental de hardware.
+  # Medido: a turn_throttle = 0.70 el rover gira ~17.0 deg/s.
+  # Escalado a recovery_turn_speed = 0.45: 17.0 * (0.45 / 0.70) = 10.93 deg/s -> 11.0 deg/s.
+  # El valor anterior (45.0) era 4 veces mayor al real y provocaba giros incompletos.
+  recovery_deg_per_s: 11.0
   recovery_headings_deg: [0.0, 90.0, -90.0, 180.0]
   recovery_min_cobertura_pct: 25.0
-  # Radio de la ventana del mapa persistente que se consulta por cada rumbo
-  # candidato. Muy grande diluye obstaculos chicos en el promedio y todo sale
-  # "libre"; muy chico decide con poquisimas celdas.
   heading_search_radius_m: 2.0
+
+  # Umbral de inclinacion para veto de maniobras de alto riesgo (giro 180° y retroceso lineal):
+  # Origen: Reconciliacion Capa 3. Superado este umbral en roll o pitch, se bloquean
+  # maniobras con riesgo de vuelco.
+  recovery_tilt_veto_deg: 8.0
+
+  # Control de llamadas al VLM: limite de reintentos consecutivos y cooldown para evitar loops caros.
+  # Origen: Reconciliacion Capa 3.
+  vlm_recovery_max_retries: 2
+  vlm_recovery_cooldown_s: 10.0
 
 
 odometry:
@@ -225,6 +247,40 @@ odometry:
   use_gyro_for_rotation: true
   gps_correction: true
   min_gps_displacement_m: 1.0
+
+  # Calibracion de guiñada del giroscopo (IMU cruda del SDK, eje Z / indice 2).
+  # Medido en reposo con el rover completamente quieto (speed=0, vibration=0)
+  # durante 60 segundos el 2026-09-08 (590 muestras a ~10 Hz):
+  #   Axis 0 (X): mean=+0.0831 dps, std=0.0526 dps
+  #   Axis 1 (Y): mean=-0.0098 dps, std=0.0533 dps
+  #   Axis 2 (Z): mean=+1.2784 dps, std=0.0551 dps
+  # En ROS 2 el bias reportado es menor (~0.16 dps) debido al filtrado interno de
+  # imu_filter_madgwick / robot_localization; en el SDK leemos el sensor sin filtrar.
+  # Origen: marian.
+  gyro_yaw_index: 2
+  gyro_sign: 1.0
+  gyro_yaw_bias_dps: 1.2784
+  gyro_deadband_dps: 0.5
+
+  # Re-anclaje estructural de pose.theta hacia el heading EKF (UDP puerto 9876).
+  # Corrige la deriva residual de forma suave (blend circular) sin saltos en el mapa.
+  # Origen: marian.
+  ekf_heading_correction: true
+  ekf_heading_max_age_s: 1.5
+  heading_blend: 0.3
+
+  # Estimacion de roll/pitch por acelerometro y proyeccion horizontal de guiñada:
+  # En reposo nivelado |a| = 1.0403g (std=0.0038g), por lo que gate_norm_tol=0.08 y std=0.06 abren limpiamente.
+  # Origen: marian.
+  use_tilt_projection: true
+  accel_gate_norm_tol: 0.08    # tolerancia de norma respecto a 1g (|norm - 1g| < 0.08)
+  accel_gate_std_tol: 0.06     # tolerancia de dispersion (|a| std < 0.06)
+  gyro_bias_x_dps: 0.0831      # bias medido en reposo el 2026-09-08
+  gyro_bias_y_dps: -0.0098     # bias medido en reposo el 2026-09-08
+  # Degradacion de confianza EKF en rampa (derivada del error de magnetometro no compensado en pendiente:
+  # 8.6° a 5°, 16.7° a 10°, 28.2° a 18°):
+  tilt_blend_start_deg: 5.0    # por debajo de 5° de inclinacion, confianza 100% (blend nominal)
+  tilt_blend_max_deg: 20.0     # a partir de 20°, confianza 0% (se desactiva re-anclaje EKF en pendiente extrema)
 
 memory:
   enabled: true
