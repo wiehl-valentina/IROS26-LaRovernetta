@@ -40,7 +40,7 @@ from .navigation import (
     path_to_robot,
     path_to_world,
 )
-from .odometry import Odometry, OdometryConfig, Pose
+from .odometry import Odometry, OdometryConfig, Pose, estimate_roll_pitch
 from .perception import PerceptionPipeline
 from .persistent_map import MapConfig, PersistentMap
 from .sdk_client import Checkpoint, RoverClient, RoverError
@@ -78,6 +78,9 @@ class Bridge:
             orientation_offset_deg=nav.get("orientation_offset_deg", 0.0),
             orientation_sign=nav.get("orientation_sign", 1.0),
             trust_orientation=nav.get("trust_orientation", False),
+            use_ekf_udp=nav.get("use_ekf_udp", True),
+            ekf_staleness_s=nav.get("ekf_staleness_s", 1.5),
+            ekf_weight=nav.get("ekf_weight", 1.0),
         )
         self.follower = PathFollower(
             lookahead_m=nav.get("lookahead_m", 1.0),
@@ -135,7 +138,21 @@ class Bridge:
                 min_gps_displacement_m=float(odo_cfg.get("min_gps_displacement_m", 1.0)),
                 gyro_yaw_index=int(odo_cfg.get("gyro_yaw_index", 2)),
                 gyro_sign=float(odo_cfg.get("gyro_sign", 1.0)),
+                gyro_yaw_bias_dps=float(odo_cfg.get("gyro_yaw_bias_dps", 1.2784)),
+                gyro_deadband_dps=float(odo_cfg.get("gyro_deadband_dps", 0.5)),
+                ekf_heading_correction=bool(odo_cfg.get("ekf_heading_correction", True)),
+                ekf_heading_max_age_s=float(odo_cfg.get("ekf_heading_max_age_s", 1.5)),
+                heading_blend=float(odo_cfg.get("heading_blend", 0.3)),
+                accel_gate_norm_tol=float(odo_cfg.get("accel_gate_norm_tol", 0.08)),
+                accel_gate_std_tol=float(odo_cfg.get("accel_gate_std_tol", 0.06)),
+                gyro_bias_x_dps=float(odo_cfg.get("gyro_bias_x_dps", 0.0831)),
+                gyro_bias_y_dps=float(odo_cfg.get("gyro_bias_y_dps", -0.0098)),
+                use_tilt_projection=bool(odo_cfg.get("use_tilt_projection", True)),
+                tilt_blend_start_deg=float(odo_cfg.get("tilt_blend_start_deg", 5.0)),
+                tilt_blend_max_deg=float(odo_cfg.get("tilt_blend_max_deg", 20.0)),
             ))
+
+
             self.pmap = PersistentMap(MapConfig(
                 size_m=float(mem.get("map_size_m", 8.0)),
                 resolution_m_per_px=self.resolution,
@@ -154,6 +171,14 @@ class Bridge:
         self.recovery_after_empty = int(safety.get("recovery_after_empty_plans", 3))
         self.recovery_turn_s = float(safety.get("recovery_turn_s", 1.5))
         self.loop_period_s = float(safety.get("loop_period_s", 0.0))
+
+        # ---- chequeo frontal configurable (modo pendiente / falso obstaculo) ----
+        self.front_near_m = float(safety.get("front_near_m", 0.32))
+        self.front_far_m = float(safety.get("front_far_m", 0.85))
+        self.front_half_width_m = float(safety.get("front_half_width_m", 0.22))
+        self.front_traversable_thresh = float(safety.get("front_traversable_thresh", 0.28))
+        self.front_min_free_ratio = float(safety.get("front_min_free_ratio", 0.40))
+        self.allow_reverse = bool(safety.get("allow_reverse", False))
 
         # ---- regimen cercano ------------------------------------------------
         # Por debajo de ~0.6 m el BEV instantaneo deja de ser una fuente de
@@ -187,6 +212,11 @@ class Bridge:
         self.use_vlm_recovery = bool(safety.get("use_vlm_recovery", False))
         self.vlm_recovery_timeout_s = float(safety.get("vlm_recovery_timeout_s", 4.0))
         self.vlm_recovery_min_confidence = float(safety.get("vlm_recovery_min_confidence", 0.35))
+        self.recovery_tilt_veto_deg = float(safety.get("recovery_tilt_veto_deg", 8.0))
+        self.vlm_recovery_max_retries = int(safety.get("vlm_recovery_max_retries", 2))
+        self.vlm_recovery_cooldown_s = float(safety.get("vlm_recovery_cooldown_s", 10.0))
+        self._vlm_consecutive_calls = 0
+        self._last_vlm_call_time = 0.0
         self._consecutive_blocked = 0
 
         self.stats = LoopStats()
@@ -223,6 +253,17 @@ class Bridge:
         self.commit_override_deg = float(nav.get("commit_override_deg", 30.0))
 
     # ------------------------------------------------------------------ ciclo
+
+    def _is_front_blocked(self, bev: np.ndarray) -> bool:
+        return front_is_blocked(
+            bev,
+            self.resolution,
+            near_m=self.front_near_m,
+            far_m=self.front_far_m,
+            half_width_m=self.front_half_width_m,
+            traversable_thresh=self.front_traversable_thresh,
+            min_free_ratio=self.front_min_free_ratio,
+        )
 
     def request_stop(self, *_a) -> None:
         print("\n[bridge] parada solicitada, frenando ...")
@@ -310,8 +351,14 @@ class Bridge:
             )
 
         telem = self.client.telemetry()
-        heading = self.heading_est.update(telem.latitude, telem.longitude,
-                                          telem.orientation, telem.timestamp)
+        heading = self.heading_est.update(
+            telem.latitude,
+            telem.longitude,
+            telem.orientation,
+            telem.timestamp,
+            ekf_heading=getattr(telem, "ekf_heading", None),
+            ekf_timestamp=getattr(telem, "ekf_heading_time", None),
+        )
 
         target = self.current_target()
         if target is not None and heading is not None:
@@ -331,7 +378,26 @@ class Bridge:
             goal = type("G", (), {"x_right_m": 0.0, "y_forward_m": self.goal_range_m})()
             goal_desc = "derecho adelante (sin meta GPS)"
 
-        res = self.perception.process(rgb)
+        # Actualizar odometria antes de la percepcion para alimentar camera_pose
+        # con la estimacion mas fresca posible de roll y pitch.
+        pose_now: Pose | None = None
+        roll_pitch: tuple[float, float] | None = None
+        if self.odometry is not None:
+            pose_now = self.odometry.update(
+                telem.raw,
+                ekf_heading=getattr(telem, "ekf_heading", None),
+                ekf_timestamp=getattr(telem, "ekf_heading_time", None),
+                now=now,
+            )
+            roll_pitch = self.odometry.current_roll_pitch(now=now)
+        elif "accels" in telem.raw:
+            tilt_res = estimate_roll_pitch(telem.raw.get("accels", []))
+            if tilt_res is not None:
+                roll_pitch = (tilt_res[0], tilt_res[1])
+
+        roll = roll_pitch[0] if roll_pitch is not None else None
+        pitch = roll_pitch[1] if roll_pitch is not None else None
+        res = self.perception.process(rgb, roll_rad=roll, pitch_rad=pitch)
 
         # Integrar en el mapa persistente y planificar sobre el acumulado.
         # Esto corre SIEMPRE, a la frecuencia del frame: es lo que permite
@@ -340,9 +406,7 @@ class Bridge:
         plan_bev, plan_obs = res.traversability, res.observed
         fwd, side = self.forward_range, self.side_range
         nota_mapa = ""
-        pose_now: Pose | None = None
-        if self.use_map and self.odometry is not None and self.pmap is not None:
-            pose_now = self.odometry.update(telem.raw)
+        if self.use_map and self.odometry is not None and self.pmap is not None and pose_now is not None:
             self.pmap.integrate(res.traversability, res.observed, pose_now,
                                 self.forward_range, self.side_range, t=now)
             h, w = res.traversability.shape
@@ -361,18 +425,33 @@ class Bridge:
         # que restarlos daria un numero contaminado por la rotacion.
         nota_desac = ""
         desacuerdo = self.heading_est.disagreement_deg()
-        if desacuerdo is not None and self.heading_est.source == "gps_track":
+        if desacuerdo is not None and ("gps_track" in self.heading_est.source or "ekf_udp" in self.heading_est.source):
             self._disagreements.append(float(desacuerdo))
             nota_desac = f"  desacuerdo={desacuerdo:+.0f}gr"
+        nota_tilt = ""
+
+        if self.odometry is not None and self.odometry.last_pitch is not None:
+            p_deg = math.degrees(self.odometry.last_pitch)
+            r_deg = math.degrees(self.odometry.last_roll) if self.odometry.last_roll is not None else 0.0
+            if not self.odometry.tilt_gate_open:
+                norm_str = f"{self.odometry.last_accel_norm:.2f}g" if self.odometry.last_accel_norm is not None else "?g"
+                nota_tilt = f"  tilt=GATE_CLOSED(|a|={norm_str})"
+            elif abs(p_deg) >= 3.0 or abs(r_deg) >= 3.0 or self.odometry.last_blend_effective < (self.odometry.cfg.heading_blend - 1e-4):
+                nota_tilt = f"  tilt={p_deg:+.1f}°p/{r_deg:+.1f}°r(blend={self.odometry.last_blend_effective:.2f})"
+
+        nota_bev_tilt = ""
+        if "pitch_deg" in res.stats and "roll_deg" in res.stats:
+            nota_bev_tilt = f" [cam_tilt={res.stats['pitch_deg']:+.1f}°p/{res.stats['roll_deg']:+.1f}°r]"
 
         print(f"[{self.stats.iterations:04d}] rumbo={heading if heading is None else round(heading)} "
               f"({self.heading_est.source})  meta: {goal_desc}  "
-              f"celdas BEV={res.stats['bev_observed_cells']:.0f}{nota_mapa}{nota_desac}")
+              f"celdas BEV={res.stats['bev_observed_cells']:.0f}{nota_bev_tilt}{nota_mapa}{nota_desac}{nota_tilt}")
+
 
         # El chequeo de colision usa SIEMPRE la observacion fresca: si algo se
         # cruzo recien, no queremos que el promedio del mapa lo diluya. Esto
         # corre cada frame, sin esperar al disparo espacial de mas abajo.
-        if front_is_blocked(res.traversability, self.resolution):
+        if self._is_front_blocked(res.traversability):
             self.stats.blocked += 1
             self._consecutive_blocked += 1
             if self._consecutive_blocked >= self.obstacle_persist_frames and self.use_map:
@@ -508,6 +587,7 @@ class Bridge:
         else:
             self._consecutive_turns = 0
             self._turn_sign_history.clear()
+            self._vlm_consecutive_calls = 0
 
         self.send(cmd)
         return True
@@ -532,8 +612,11 @@ class Bridge:
             time.sleep(0.15)
             try:
                 rgb, _ = self.client.front_frame()
-                res = self.perception.process(rgb)
-                if front_is_blocked(res.traversability, self.resolution):
+                roll_pitch = self.odometry.current_roll_pitch() if self.odometry is not None else None
+                r = roll_pitch[0] if roll_pitch is not None else None
+                p = roll_pitch[1] if roll_pitch is not None else None
+                res = self.perception.process(rgb, roll_rad=r, pitch_rad=p)
+                if self._is_front_blocked(res.traversability):
                     print("[bridge] obstaculo durante el avance forzado, corto")
                     break
             except Exception:
@@ -605,14 +688,77 @@ class Bridge:
         self.heading_est.reset_track()  # el track GPS previo ya no dice el rumbo
         self._consecutive_empty = 0
 
+    def _get_estimated_tilt_deg(self) -> tuple[float, float] | None:
+        """Devuelve (|pitch_deg|, |roll_deg|) si hay estimacion vigente, o None."""
+        if self.odometry is None:
+            return None
+        if hasattr(self.odometry, "current_roll_pitch"):
+            try:
+                rp = self.odometry.current_roll_pitch()
+                if rp is not None:
+                    return abs(math.degrees(rp[1])), abs(math.degrees(rp[0]))
+            except Exception:
+                pass
+        last_pitch = getattr(self.odometry, "last_pitch", None)
+        if last_pitch is not None:
+            p = abs(math.degrees(last_pitch))
+            last_roll = getattr(self.odometry, "last_roll", None)
+            r = abs(math.degrees(last_roll)) if last_roll is not None else 0.0
+            return p, r
+        return None
+
+    def _is_tilt_too_steep_for_recovery(self) -> tuple[bool, str]:
+        """Verifica si la inclinacion del rover supera el umbral seguro para
+        maniobras de alto riesgo (giro de 180° o retroceso lineal)."""
+        tilt = self._get_estimated_tilt_deg()
+        if tilt is None:
+            return False, "sin datos de inclinacion (asumo nivelado)"
+        p_deg, r_deg = tilt
+        thresh = getattr(self, "recovery_tilt_veto_deg", 8.0)
+        if p_deg >= thresh or r_deg >= thresh:
+            return True, (f"inclinacion excesiva (pitch={p_deg:.1f}°, roll={r_deg:.1f}° >= "
+                          f"umbral {thresh:.1f}°)")
+        return False, f"inclinacion segura (pitch={p_deg:.1f}°, roll={r_deg:.1f}°)"
+
     def _barrido_ciego(self) -> None:
-        """Girar en el lugar sin evaluar nada: el ultimo recurso cuando no
-        hay mapa, ni el mapa ni el VLM dieron un rumbo confiable."""
+        """Girar en el lugar: el ultimo recurso cuando no hay mapa, o ni el
+        mapa ni el VLM dieron un rumbo confiable. Evalua la mitad del BEV con
+        mas espacio libre para elegir lado de giro (barrido condicional)."""
         self.stats.recoveries_ciegas += 1
-        print("[bridge]   barrido ciego")
-        self.send(DriveCommand(0.0, self.follower.angular_sign * self.follower.turn_speed,
-                               "barrido de recuperacion"))
-        time.sleep(self.recovery_turn_s)
+        print("[bridge]   barrido condicional...")
+
+        # Evaluar la mitad con mas espacio libre para elegir lado de giro
+        signo = self.follower.angular_sign
+        try:
+            rgb, _ = self.client.front_frame()
+            roll_pitch = self.odometry.current_roll_pitch() if self.odometry is not None else None
+            r = roll_pitch[0] if roll_pitch is not None else None
+            p = roll_pitch[1] if roll_pitch is not None else None
+            res = self.perception.process(rgb, roll_rad=r, pitch_rad=p)
+            bev = res.traversability
+            h, w = bev.shape
+            left_half = bev[:, :w // 2]
+            right_half = bev[:, w // 2:]
+            left_free = (left_half > 0.4).sum()
+            right_free = (right_half > 0.4).sum()
+
+            # angular_sign: -1 significa giro a la izquierda con angulo positivo
+            if left_free > right_free:
+                signo = -1.0 if self.follower.angular_sign < 0 else 1.0
+                print(f"[bridge]     mas espacio a la IZQUIERDA ({left_free} vs {right_free}), girando izq")
+            else:
+                signo = 1.0 if self.follower.angular_sign < 0 else -1.0
+                print(f"[bridge]     mas espacio a la DERECHA ({right_free} vs {left_free}), girando der")
+        except Exception as e:
+            print(f"[bridge]     error en barrido condicional ({e}), usando signo por defecto")
+
+        cmd = DriveCommand(0.0, signo * self.follower.turn_speed, "barrido condicional")
+        self.send(cmd)
+
+        t0 = time.time()
+        while time.time() - t0 < self.recovery_turn_s and not self._stop_requested:
+            time.sleep(0.1)
+
         self.send(DriveCommand(0.0, 0.0, "fin del barrido"))
 
     # ---------------------------------------------------------- regimen cercano
@@ -632,17 +778,56 @@ class Bridge:
         assert self.pmap is not None and self.odometry is not None
         self.stats.near_regime_activations += 1
         pose = self.odometry.pose
-        clearance = front_clearance_m(bev, self.resolution, max_check_m=1.2)
+        clearance = front_clearance_m(
+            bev,
+            self.resolution,
+            near_m=self.front_near_m,
+            max_check_m=1.2,
+            half_width_m=self.front_half_width_m,
+            traversable_thresh=self.front_traversable_thresh,
+            min_free_ratio=self.front_min_free_ratio,
+        )
         print(f"[bridge] REGIMEN CERCANO: {self._consecutive_blocked} frames bloqueado "
               f"seguidos, clearance={clearance:.2f} m")
 
+        veto_tilt, razon_tilt = self._is_tilt_too_steep_for_recovery()
+
         libre_pct, cobertura_pct = self._map_free_and_coverage(
             pose, heading_rel_deg=180.0, radius_m=self.retroceso_max_m)
+
+        # Si la cobertura trasera es baja y no estamos vetados por pendiente/config,
+        # consultamos la camara trasera para actualizar el mapa detras del robot
+        if self.allow_reverse and not veto_tilt and cobertura_pct < self.retroceso_min_cobertura_pct:
+            print("[bridge]   cobertura insuficiente detras, tomando foto de camara trasera para mapear...")
+            try:
+                rgb_rear, _ = self.client.rear_frame()
+                roll_pitch = self.odometry.current_roll_pitch() if self.odometry is not None else None
+                # Mirando hacia atras: pitch y roll se invierten respecto a los ejes de camara frontal
+                r_rear = -roll_pitch[0] if roll_pitch is not None else None
+                p_rear = -roll_pitch[1] if roll_pitch is not None else None
+                res_rear = self.perception.process(rgb_rear, roll_rad=r_rear, pitch_rad=p_rear)
+
+                # Pose virtual mirando hacia atras (+pi)
+                rear_pose = Pose(pose.x, pose.y, pose.theta + math.pi)
+                self.pmap.integrate(res_rear.traversability, res_rear.observed, rear_pose,
+                                    self.forward_range, self.side_range, t=time.time())
+
+                libre_pct, cobertura_pct = self._map_free_and_coverage(
+                    pose, heading_rel_deg=180.0, radius_m=self.retroceso_max_m)
+                print(f"[bridge]   mapa actualizado detras con camara trasera: libre={libre_pct:.0f}% cobertura={cobertura_pct:.0f}%")
+            except Exception as e:
+                print(f"[bridge]   error usando camara trasera: {e}")
+
         print(f"[bridge]   mapa detras del robot: libre={libre_pct:.0f}% cobertura={cobertura_pct:.0f}%")
-        if libre_pct >= self.retroceso_min_libre_pct and cobertura_pct >= self.retroceso_min_cobertura_pct:
+
+        if not self.allow_reverse:
+            print("[bridge]   retroceso desactivado por configuracion (allow_reverse=false), salteo")
+        elif veto_tilt:
+            print(f"[bridge]   VETO DE RETROCESO POR PENDIENTE: {razon_tilt}, salteo el retroceso")
+        elif libre_pct >= self.retroceso_min_libre_pct and cobertura_pct >= self.retroceso_min_cobertura_pct:
             self._retroceder()
         else:
-            print("[bridge]   detras no parece seguro (o sin datos todavia), salteo el retroceso")
+            print("[bridge]   detras no parece seguro (o sin datos suficientes), salteo el retroceso")
 
         self._recover_informado()
 
@@ -681,27 +866,59 @@ class Bridge:
         reduce la ocupacion angular de un obstaculo pegado al frente (girar
         en el lugar no alcanza, la zona ciega gira con el robot)."""
         assert self.odometry is not None
+
+        veto_tilt, razon_tilt = self._is_tilt_too_steep_for_recovery()
+        if veto_tilt:
+            print(f"[bridge]   BLOQUEO DEFENSIVO: aborto retroceso por {razon_tilt}")
+            return
+
         self.stats.retrocesos += 1
         print(f"[bridge]   retrocediendo hasta {self.retroceso_max_m:.2f} m "
-              f"en pasos de {self.retroceso_paso_m:.2f} m")
+              f"en pasos de hasta {self.retroceso_paso_m:.2f} m")
         start = self.odometry.pose
         start_pose = Pose(start.x, start.y, start.theta)
-        step_s = self.retroceso_paso_m / max(abs(self.retroceso_linear), 1e-3)
         recorrido = 0.0
 
         while recorrido < self.retroceso_max_m and not self._stop_requested:
+            falta_m = self.retroceso_max_m - recorrido
+            step_m = min(self.retroceso_paso_m, falta_m)
+            if step_m < 0.05:
+                break
+            step_s = step_m / max(abs(self.retroceso_linear), 1e-3)
+
+            # Chequeo continuo de inclinacion durante retroceso
+            veto_tilt, razon_tilt = self._is_tilt_too_steep_for_recovery()
+            if veto_tilt:
+                print(f"[bridge]   inclinacion peligrosa detectada durante retroceso ({razon_tilt}), corto maniobra")
+                break
+
             self.send(DriveCommand(self.retroceso_linear, 0.0, "retroceso (regimen cercano)"))
             t0 = time.time()
             while time.time() - t0 < step_s and not self._stop_requested:
                 time.sleep(0.1)
             self.send(DriveCommand(0.0, 0.0, "pausa de retroceso"))
 
-            pose = self.odometry.update(self.client.telemetry().raw)
+            t_telem = self.client.telemetry()
+            pose = self.odometry.update(
+                t_telem.raw,
+                ekf_heading=getattr(t_telem, "ekf_heading", None),
+                ekf_timestamp=getattr(t_telem, "ekf_heading_time", None),
+            )
+
             recorrido = math.hypot(pose.x - start_pose.x, pose.y - start_pose.y)
             try:
                 rgb, _ = self.client.front_frame()
-                res = self.perception.process(rgb)
-                if not front_is_blocked(res.traversability, self.resolution):
+                roll_pitch = self.odometry.current_roll_pitch() if self.odometry is not None else None
+                r = roll_pitch[0] if roll_pitch is not None else None
+                p = roll_pitch[1] if roll_pitch is not None else None
+                res = self.perception.process(rgb, roll_rad=r, pitch_rad=p)
+
+                # Integrar foto nueva al mapa para datos frescos
+                if self.use_map and self.pmap is not None:
+                    self.pmap.integrate(res.traversability, res.observed, pose,
+                                        self.forward_range, self.side_range, t=time.time())
+
+                if not self._is_front_blocked(res.traversability):
                     print(f"[bridge]   frente liberado tras retroceder {recorrido:.2f} m")
                     break
             except Exception:
@@ -717,8 +934,15 @@ class Bridge:
         assert self.pmap is not None and self.odometry is not None
         pose = self.odometry.pose
 
+        veto_tilt, razon_tilt = self._is_tilt_too_steep_for_recovery()
+
         mejor_heading, mejor_libre = None, -1.0
         for h in self.recovery_headings_deg:
+            # Si hay inclinacion peligrosa, vetamos el rumbo 180° (atras) por riesgo de vuelco
+            if veto_tilt and abs(abs(float(h)) - 180.0) < 1.0:
+                print(f"[bridge]   rumbo 180° VETADO por pendiente ({razon_tilt})")
+                continue
+
             libre_pct, cobertura_pct = self._map_free_and_coverage(pose, float(h), self.heading_search_radius_m)
             print(f"[bridge]   rumbo {h:+.0f} grados: libre={libre_pct:.0f}% cobertura={cobertura_pct:.0f}%")
             if cobertura_pct >= self.recovery_min_cobertura_pct and libre_pct > mejor_libre:
@@ -733,8 +957,27 @@ class Bridge:
         if self.use_vlm_recovery:
             decision = self._preguntar_vlm()
             if decision is not None:
+                # Regla semantica on_road:
+                # Si on_road=False y sugiere ir de frente ('adelante'), es una contradiccion directa
+                # con la presencia de obstaculos/foso/escaleras enfrente: se descarta.
+                if not decision.on_road and decision.heading == "adelante":
+                    print(f"[bridge]   VLM sugiere 'adelante' pero on_road=false ({decision.reason}), "
+                          "inconsistente: descarto sugerencia frontal")
+                    decision = None
+                elif not decision.on_road:
+                    print(f"[bridge]   ALERTA VLM: rover off-road ({decision.reason}), ejecutando escape hacia '{decision.heading}'")
+
+            if decision is not None:
                 heading_deg = {"izquierda": -75.0, "derecha": 75.0,
                                "adelante": 0.0, "atras": 180.0}[decision.heading]
+
+                # Veto de 180° ("atras") por inclinacion
+                if veto_tilt and abs(heading_deg - 180.0) < 1.0:
+                    print(f"[bridge]   VLM sugiere 'atras' (180°), pero fue VETADO por pendiente ({razon_tilt}). "
+                          "Alternativa: recurro a barrido condicional acotado")
+                    self._barrido_ciego()
+                    return
+
                 print(f"[bridge]   VLM sugiere '{decision.heading}' "
                       f"(confianza {decision.confidence:.2f}): {decision.reason}")
                 self.stats.recoveries_por_vlm += 1
@@ -744,11 +987,27 @@ class Bridge:
         self._barrido_ciego()
 
     def _preguntar_vlm(self):
+        now = time.time()
+        # Cooldown y limite de reintentos consecutivos para evitar bucle de llamadas caras
+        if self._vlm_consecutive_calls >= self.vlm_recovery_max_retries:
+            tiempo_espera = now - self._last_vlm_call_time
+            if tiempo_espera < self.vlm_recovery_cooldown_s:
+                print(f"[bridge]   VLM en cooldown ({tiempo_espera:.1f}s < {self.vlm_recovery_cooldown_s:.1f}s, "
+                      f"{self._vlm_consecutive_calls} llamadas consecutivas), salteo llamada a Gemini")
+                return None
+            else:
+                self._vlm_consecutive_calls = 0
+
         try:
             from .vlm_recovery import ask_recovery_heading
         except Exception as exc:
             print(f"[bridge]   vlm_recovery no disponible ({exc}), sigo sin VLM")
             return None
+
+        print("[bridge]   consultando VLM (Gemini) para orientacion de escape...")
+        self._last_vlm_call_time = now
+        self._vlm_consecutive_calls += 1
+
         rgb, _ = self.client.front_frame()
         return ask_recovery_heading(rgb, min_confidence=self.vlm_recovery_min_confidence,
                                     timeout_s=self.vlm_recovery_timeout_s)
@@ -761,14 +1020,19 @@ class Bridge:
         viejos.
 
         La duracion de cada paso sale de recovery_deg_per_s, que es la tasa de
-        giro REAL del robot en grados por segundo. Antes se calculaba como
-        radianes/turn_speed, mezclando unidades: turn_speed es un comando
-        normalizado en -1..1, no una velocidad angular, asi que el tiempo por
-        paso no tenia relacion con lo que el robot efectivamente giraba.
+        giro REAL del robot en grados por segundo.
         """
         assert self.odometry is not None
         if abs(heading_rel_deg) < 1e-6:
             return
+
+        # Veto defensivo de giro 180° si la inclinacion supera el umbral
+        if abs(abs(heading_rel_deg) - 180.0) < 1.0:
+            veto_tilt, razon_tilt = self._is_tilt_too_steep_for_recovery()
+            if veto_tilt:
+                print(f"[bridge]   BLOQUEO DEFENSIVO: intento de giro 180° cancelado por {razon_tilt}")
+                return
+
         step_deg = float(self.recovery_step_deg if step_deg is None else step_deg)
         ang = self.follower.angular_sign * math.copysign(self.recovery_turn_speed, heading_rel_deg)
         ang = float(np.clip(ang, -self.follower.max_angular, self.follower.max_angular))
@@ -782,7 +1046,13 @@ class Bridge:
                 time.sleep(0.1)
             girado += math.copysign(step_deg, heading_rel_deg)
 
-            pose = self.odometry.update(self.client.telemetry().raw)
+            t_telem = self.client.telemetry()
+            pose = self.odometry.update(
+                t_telem.raw,
+                ekf_heading=getattr(t_telem, "ekf_heading", None),
+                ekf_timestamp=getattr(t_telem, "ekf_heading_time", None),
+            )
+
             libre_pct, cobertura_pct = self._map_free_and_coverage(pose, 0.0, self.heading_search_radius_m)
             if cobertura_pct >= self.recovery_min_cobertura_pct and libre_pct >= self.retroceso_min_libre_pct:
                 print(f"[bridge]   frente libre por mapa tras girar {girado:+.0f} grados, corto")
@@ -827,6 +1097,13 @@ class Bridge:
                   f"{math.degrees(p.theta):+.0f} grados")
             print(f"  distancia recorrida:    {self.odometry.distance_travelled:.2f} m")
             print(f"  correcciones GPS:       {self.odometry.gps_corrections}")
+            print(f"  correcciones EKF:       {self.odometry.heading_corrections}")
+            if self.odometry.last_pitch is not None:
+                p_deg = math.degrees(self.odometry.last_pitch)
+                r_deg = math.degrees(self.odometry.last_roll) if self.odometry.last_roll is not None else 0.0
+                print(f"  inclinacion final:      pitch={p_deg:+.1f}°, roll={r_deg:+.1f}° (blend={self.odometry.last_blend_effective:.2f})")
+
+
         print(f"  errores:                {s.errors}")
         self._print_heading_diagnosis()
 

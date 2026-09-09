@@ -122,10 +122,13 @@ def _build_stub(pmap: PersistentMap):
     # self (self._map_free_and_coverage, self._girar_hacia, etc). El stub no
     # es una instancia real de Bridge, asi que hay que atarlos a mano para
     # que esas llamadas cruzadas encuentren algo.
+    stub.recovery_tilt_veto_deg = 8.0
     for name in ("_map_free_and_coverage", "_girar_hacia", "_barrido_ciego",
-                "_preguntar_vlm", "_retroceder", "_recover_informado",
-                "_retroceso_y_recover"):
-        setattr(stub, name, types.MethodType(getattr(Bridge, name), stub))
+                 "_preguntar_vlm", "_retroceder", "_recover_informado",
+                 "_retroceso_y_recover", "_is_tilt_too_steep_for_recovery",
+                 "_get_estimated_tilt_deg", "_is_front_blocked"):
+        if hasattr(Bridge, name):
+            setattr(stub, name, types.MethodType(getattr(Bridge, name), stub))
 
     return stub
 
