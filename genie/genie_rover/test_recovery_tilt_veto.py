@@ -86,7 +86,8 @@ def _build_test_stub(tilt_pitch_deg: float = 0.0, tilt_roll_deg: float = 0.0):
     stub._plan_path_world = np.zeros((5, 2))
     stub._plan_pose = Pose(0.0, 0.0, 0.0)
 
-    pose_holder = {"pose": Pose(0.0, 0.0, 0.0)}
+    stub.forward_range = 2.0
+    stub.side_range = 1.0
 
     class _MockOdometry:
         def __init__(self, pitch_deg: float, roll_deg: float):
@@ -94,13 +95,18 @@ def _build_test_stub(tilt_pitch_deg: float = 0.0, tilt_roll_deg: float = 0.0):
             self.roll_rad = math.radians(roll_deg)
             self.last_pitch = self.pitch_rad
             self.last_roll = self.roll_rad
+            self.pose_val = Pose(0.0, 0.0, 0.0)
 
         @property
         def pose(self):
-            return pose_holder["pose"]
+            return self.pose_val
+
+        @pose.setter
+        def pose(self, val):
+            self.pose_val = val
 
         def update(self, _raw, *a, **kw):
-            return pose_holder["pose"]
+            return self.pose_val
 
         def current_roll_pitch(self, *a, **kw):
             return (self.roll_rad, self.pitch_rad)
@@ -294,6 +300,70 @@ class TestRecoveryTiltVeto(unittest.TestCase):
         self.assertIsNotNone(res4, "Despues del cooldown debe volver a consultar")
         self.assertEqual(call_count[0], 3)
         self.assertEqual(stub._vlm_consecutive_calls, 1)
+
+    def test_rear_camera_tilt_and_pose_inversion(self):
+        """Verifica que al consultar la camara trasera en regimen cercano:
+        1. roll_rear = -roll, pitch_rear = -pitch (inversion de ejes de camara mirando hacia atras).
+        2. La pose virtual para integrar al pmap tenga x=pose.x, y=pose.y, theta = pose.theta + pi.
+        3. Se prueban valores no triviales de pitch (+4.5°), roll (-3.2°) y pose inicial (1.45, -0.68, 0.75 rad).
+        """
+        pitch_deg = 4.5
+        roll_deg = -3.2
+        pose_x = 1.45
+        pose_y = -0.68
+        pose_theta = 0.75
+
+        stub = _build_test_stub(tilt_pitch_deg=pitch_deg, tilt_roll_deg=roll_deg)
+        stub.odometry.pose = Pose(pose_x, pose_y, pose_theta)
+
+        # Forzamos que la cobertura trasera sea 0% para disparar la captura trasera
+        stub.pmap.conf[:] = 0.0
+
+        captured_args = {}
+
+        def mock_process(rgb, *args, **kwargs):
+            captured_args["roll_rad"] = kwargs.get("roll_rad")
+            captured_args["pitch_rad"] = kwargs.get("pitch_rad")
+            return types.SimpleNamespace(
+                traversability=np.ones((16, 16), dtype=np.float32),
+                observed=np.ones((16, 16), dtype=np.float32),
+            )
+
+        stub.perception.process = mock_process
+
+        orig_integrate = stub.pmap.integrate
+        def mock_integrate(trav, obs, pose, *args, **kwargs):
+            captured_args["rear_pose"] = pose
+            orig_integrate(trav, obs, pose, *args, **kwargs)
+
+        stub.pmap.integrate = mock_integrate
+
+        # Evitamos ejecutar retroceso y recovery completos durante este test unitario
+        stub._retroceder = lambda: None
+        stub._recover_informado = lambda: None
+
+        stub._retroceso_y_recover(np.ones((16, 16), dtype=np.float32))
+
+        # 1. Verificar captura de argumentos de inclinacion invertida
+        self.assertIn("roll_rad", captured_args, "La camara trasera debio procesarse")
+        self.assertIn("pitch_rad", captured_args, "La camara trasera debio procesarse")
+        self.assertIn("rear_pose", captured_args, "La camara trasera debio integrarse al pmap")
+
+        expected_roll_rear = -math.radians(roll_deg)
+        expected_pitch_rear = -math.radians(pitch_deg)
+
+        self.assertAlmostEqual(captured_args["roll_rad"], expected_roll_rear, places=5,
+                               msg=f"roll_rear debio ser -roll ({expected_roll_rear}), pero fue {captured_args['roll_rad']}")
+        self.assertAlmostEqual(captured_args["pitch_rad"], expected_pitch_rear, places=5,
+                               msg=f"pitch_rear debio ser -pitch ({expected_pitch_rear}), pero fue {captured_args['pitch_rad']}")
+
+        # 2. Verificar pose virtual de la camara trasera
+        rear_pose = captured_args["rear_pose"]
+        self.assertAlmostEqual(rear_pose.x, pose_x, places=5)
+        self.assertAlmostEqual(rear_pose.y, pose_y, places=5)
+        expected_theta = pose_theta + math.pi
+        self.assertAlmostEqual(rear_pose.theta, expected_theta, places=5,
+                               msg=f"theta de camara trasera debio ser theta + pi ({expected_theta}), pero fue {rear_pose.theta}")
 
 
 if __name__ == "__main__":
