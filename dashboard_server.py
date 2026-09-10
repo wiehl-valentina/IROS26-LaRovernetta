@@ -259,6 +259,7 @@ COMMANDS = [
             _txt("sdk-url", "URL del SDK", "http://localhost:8000"),
             _txt("feed-fps", "FPS del feed", "15"),
             _bool("raw", "--raw (usar los defaults del launch, no derivar del config)"),
+            _bool("localization", "--localization (relocalizar sobre el .db, NO lo borra)"),
         ],
     },
     {
@@ -569,9 +570,16 @@ STACKS = [
         ],
         "steps": [
             _step("sdk", "SDK (:8000)", when={"field": "sdk", "truthy": True}),
-            _step("mapping-ros2", "RTAB-Map (correccion de pose)",
-                  opts={"db": _from("db")},
-                  when={"field": "mode", "in": ["map", "both"]},
+            # Con base previa: RELOCALIZA (localization:=true, no la borra).
+            _step("mapping-ros2", "RTAB-Map (relocalizacion sobre el .db)",
+                  opts={"db": _from("db"), "localization": _const(True)},
+                  when={"all": [{"field": "mode", "in": ["map", "both"]},
+                                {"field": "db", "truthy": True}]},
+                  wait_port=SDK_PORT),
+            # B sin base previa: mapea de cero en maps/sesion_<fecha>.db.
+            _step("mapping-ros2", "RTAB-Map (mapeo nuevo, sin base previa)",
+                  when={"all": [{"field": "mode", "equals": "map"},
+                                {"field": "db", "falsy": True}]},
                   wait_port=SDK_PORT),
             # A y C: ruta pregrabada
             _step("indoor-bridge", "Mision sobre la ruta pregrabada",
@@ -629,6 +637,8 @@ def _cond_ok(cond: dict | None, form: dict) -> bool:
         return str(value) == str(cond["equals"])
     if cond.get("truthy"):
         return bool(value) and value not in ("0", "false", "no")
+    if cond.get("falsy"):
+        return not (bool(value) and value not in ("0", "false", "no"))
     return True
 
 
@@ -689,6 +699,14 @@ def _resolve(path_str: str) -> Path:
     corre los modulos (hace `cd "$GENIE_DIR"` antes de armar el argv)."""
     p = Path(os.path.expanduser(str(path_str).strip()))
     return p if p.is_absolute() else (GENIE_DIR / p)
+
+
+def _resolve_db(path_str: str) -> Path:
+    """Un --db del formulario -> path real. A diferencia de _resolve, relativo
+    al REPO: mapping-ros2 / waypoints lo resuelven contra su cwd, que es la
+    raiz del repo (el dashboard no les cambia el cwd), no contra genie/."""
+    p = Path(os.path.expanduser(str(path_str).strip()))
+    return p if p.is_absolute() else (REPO_DIR / p)
 
 
 def _yaml_flag(path: Path, dotted_key: str) -> bool | None:
@@ -804,10 +822,17 @@ def _preflight_impl(stack_id: str, form: dict) -> list[dict]:
     # --- el .db del mapeo previo ------------------------------------------
     if stack_id == "indoor-run" and modo in ("map", "both"):
         db_raw = str(form.get("db", "") or "").strip()
-        if db_raw and not _resolve(db_raw).is_file():
-            out.append(_check("warn",
-                              f"no existe {db_raw}: RTAB-Map va a arrancar una base "
-                              "nueva en vez de relocalizar contra el mapeo previo."))
+        if not db_raw and modo == "map":
+            out.append(_check("warn", "sin .db previo: RTAB-Map va a mapear de cero "
+                                      "en maps/sesion_<fecha>.db"))
+        elif not db_raw or not _resolve_db(db_raw).is_file():
+            out.append(_check("error",
+                              f"no existe {db_raw or '(vacio)'}: para relocalizar hace "
+                              "falta la base del mapeo previo. Grabala con 'Grabar "
+                              "recorrido (SLAM)'" + (", o deja el campo vacio para "
+                              "mapear de cero." if modo == "map" else " o usa el modo A.")))
+        else:
+            out.append(_check("ok", f"{db_raw} se abre en LOCALIZACION (no se borra)"))
 
     # --- pisar un mapa ya grabado -----------------------------------------
     # El export de map_session escribe <prefijo>_final.yaml y <prefijo>_NNN.yaml
@@ -822,10 +847,10 @@ def _preflight_impl(stack_id: str, form: dict) -> list[dict]:
                                   f"ya existe {prefijo}_final.yaml — esta corrida lo "
                                   "va a pisar. Cambia el prefijo si querés conservarlo."))
         db_raw = str(form.get("db", "") or "").strip()
-        if db_raw and _resolve(db_raw).is_file():
+        if db_raw and _resolve_db(db_raw).is_file():
             out.append(_check("warn",
-                              f"ya existe {db_raw} — RTAB-Map va a seguir grabando "
-                              "sobre esa misma base."))
+                              f"ya existe {db_raw} — el mapeo arranca la base vacia; "
+                              "el launcher la respalda antes como *_bak_<fecha>.db."))
 
     # --- simulacro vs modo real -------------------------------------------
     if form.get("go"):

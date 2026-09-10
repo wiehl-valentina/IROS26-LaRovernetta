@@ -11,6 +11,8 @@
  },
  "indoor-bridge": {
   "config": "/home/pablolube/IROS26-LaRovernetta/genie/configs/indoor_cone_search.yaml",
+  "search-mode": "waypoints",
+  "waypoints-path": "/home/pablolube/IROS26-LaRovernetta/genie/configs/waypoints_poses.yaml",
   "debug-dir": "debug/cono2",
   "go": false
  },
@@ -19,13 +21,16 @@
  },
  "waypoints": {
   "db": "/home/pablolube/IROS26-LaRovernetta/maps/sesion1.db",
-  "min-dist-m": "0.5"
+  "poses": "/home/pablolube/IROS26-LaRovernetta/maps/poses2.txt",
+  "min-dist-m": "0"
  },
  "map-session": {
   "go": false
  },
  "mapping-ros2": {
-  "db": "maps/poses.txt"
+  "db": "/home/pablolube/IROS26-LaRovernetta/maps/poses2.txt",
+  "feed-fps": "0",
+  "raw": true
  },
  "sdk-client": {},
  "perception": {},
@@ -35,8 +40,8 @@
  "ros2-check": {},
  "stack:indoor-run": {
   "mode": "both",
-  "sdk": false,
-  "waypoints": "/home/pablolube/IROS26-LaRovernetta/genie/configs/waypoints_sesion1.yaml",
+  "sdk": true,
+  "waypoints": "/home/pablolube/IROS26-LaRovernetta/genie/configs/waypoints_poses.yaml",
   "db": "/home/pablolube/IROS26-LaRovernetta/maps/sesion1.db",
   "config": "/home/pablolube/IROS26-LaRovernetta/genie/configs/indoor_cone_search.yaml",
   "max_seconds": "",
@@ -44,7 +49,7 @@
   "go": false
  },
  "stack:record-run": {
-  "sdk": false,
+  "sdk": true,
   "slam": false,
   "map_out": "maps/sesion1",
   "db": "",
