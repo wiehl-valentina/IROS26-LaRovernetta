@@ -1,0 +1,367 @@
+# Seccion `mission:` para el modo semantico. Reemplaza la seccion mission: de
+# configs/indoor_cone_search.yaml (guardalo como configs/indoor_semantic_tour.yaml
+# copiando el resto del archivo -- camera/projection/samtp/navigation/planner/
+# safety/memory/odometry/cone -- tal cual, sin tocar tu calibracion).
+#
+# El circuito vive ACA, no en mission.py: cambiar el recorrido es editar esta
+# lista. Los prompts son literalmente lo que se le manda al VLM.
+
+# Config de la Misión Semántica Indoor (VLM + BEV Corridor)
+# Conserva intacta la calibración del robot (camera, projection, samtp, navigation, planner, safety, memory, odometry, cone).
+
+rover:
+  base_url: "http://localhost:8000"
+  timeout_s: 5.0
+
+samtp:
+  config_path: "sam2/configs/sam2.1_inference_tiny/sam2.1_custom2.yaml"
+  checkpoint_path: "sam2_logs/configs/sam2.1_training_tiny/sam2_training_custom2_freezeNoneNone_f57.yaml/checkpoints/checkpoint_2.pt"
+  device: null
+  precision: "auto"
+  score_thresh: 0.0
+
+camera:
+  calibrated: true
+  image_size: [1920, 1080]
+  intrinsics:
+    - [925.265722853314, 0.0, 962.3052531643399]
+    - [0.0, 924.6288195383473, 528.3891677741947]
+    - [0.0, 0.0, 1.0]
+  dist_coeffs: [-0.26257227523222204, 0.06503885855790396, -0.00031427372195389234, -0.0011895820486559178, -0.0073726075647136185]
+  height_m: 0.150
+  pitch_down_deg: 1.85
+  pose:
+    - [-0.000313571, -0.032360666, 0.999476207, 0.000000000]
+    - [-0.999953056, 0.009689420, -0.000000000, 0.000000000]
+    - [-0.009684345, -0.999429288, -0.032362186, 0.150244633]
+    - [0.000000000, 0.000000000, 0.000000000, 1.000000000]
+
+projection:
+  ground_z: 0.0
+  resolution_m_per_px: 0.03
+  forward_range_m: 2.0
+  side_range_m: 2.0
+  max_ray_distance_m: 2.5
+  projection_downscale: 2
+
+navigation:
+  angular_sign: -1.0
+  max_linear: 0.9
+  max_angular: 0.6
+  turn_speed: 0.40
+  kp_angular: 0.45
+  lookahead_m: 1.5
+  align_threshold_deg: 90.0
+  commit_hold_s: 2.0
+  commit_min_deg: 8.0
+  commit_override_deg: 30.0
+  replan_every_m: 0.6
+  replan_min_remaining_m: 0.3
+  replan_max_s: 1.5
+  min_linear_while_planned: 0.06
+  goal_range_m: 3.5
+  claim_radius_m: 8.0
+  heading_min_displacement_m: 1.5
+  trust_orientation: false
+  orientation_offset_deg: 0.0
+  orientation_sign: 1.0
+
+planner:
+  grid_size: 200
+  unknown_cost: 0.30
+  smooth_kernel: 3
+  num_goals: 24
+  num_mid_points_per_goal: 16
+  path_num_samples: 80
+  footprint_px: 12
+  threshold_cost: 0.35
+  threshold_points_ratio: 0.02
+  number_of_points_to_filter: 60
+  alpha: 1.0
+  best_k: 10
+  use_clustering: true
+  max_clusters: 2
+  cluster_angle_threshold_deg: 40.0
+  random_seed: 42
+  include_goal_in_path_bank: false
+  include_random_goals: true
+  goal_weight: 1.0
+  uniform_path_bank: true
+  fan_max_angle_deg: 75.0
+  fan_num_headings: 31
+
+safety:
+  stale_frame_s: 2.0
+  max_consecutive_errors: 5
+  recovery_after_empty_plans: 3
+  recovery_turn_s: 1.2
+  loop_period_s: 0.2
+  max_consecutive_turns: 5
+  unstick_forward_s: 1.5
+  obstacle_persist_frames: 4
+  retroceso_min_libre_pct: 55.0
+  retroceso_min_cobertura_pct: 30.0
+  retroceso_max_m: 0.35
+  retroceso_paso_m: 0.12
+  retroceso_linear: -0.15
+  recovery_headings_deg: [90.0, -90.0, 180.0]
+  recovery_min_cobertura_pct: 25.0
+  recovery_turn_speed: 0.45
+  recovery_step_deg: 45.0
+  recovery_deg_per_s: 45.0
+  heading_search_radius_m: 2.0
+  use_vlm_recovery: false
+  vlm_recovery_timeout_s: 4.0
+  vlm_recovery_min_confidence: 0.35
+
+odometry:
+  wheel_radius_m: 0.0527
+  track_width_m: 0.15
+  left_rpm_indices: [0, 2]
+  right_rpm_indices: [1, 3]
+  rotation_sign: 1.0
+  use_gyro_for_rotation: true
+  gps_correction: false
+  min_gps_displacement_m: 1.0
+
+mapping:
+  rtabmap_correction:
+    enabled: true
+    map_frame: "map"
+    base_frame: "base_link"
+    lookup_timeout_s: 0.2
+
+memory:
+  enabled: true
+  map_size_m: 8.0
+  update_weight: 0.45
+  decay_per_s: 0.06
+  recenter_margin_m: 1.5
+  min_confidence: 0.15
+  plan_forward_m: 3.0
+  plan_side_m: 2.0
+
+cone:
+  backend: "color"
+  real_height_m: 0.30
+  color:
+    orange:
+      hsv_low: [2, 180, 120]
+      hsv_high: [20, 255, 255]
+      hsv_low2: null
+      hsv_high2: null
+    red:
+      hsv_low: [0, 180, 120]
+      hsv_high: [5, 255, 255]
+      hsv_low2: [175, 180, 120]
+      hsv_high2: [179, 255, 255]
+    blue:
+      hsv_low: [103, 100, 50]
+      hsv_high: [120, 255, 255]
+      hsv_low2: null
+      hsv_high2: null
+    green:
+      hsv_low: [76, 180, 40]
+      hsv_high: [94, 255, 130]
+      hsv_low2: null
+      hsv_high2: null
+    min_area_px: 250
+    min_aspect_ratio: 0.25
+    max_aspect_ratio: 1.3
+    min_fill_ratio: 0.35
+    morph_kernel: 5
+
+mission:
+  mode: "semantic_corridor"
+  segment_lookahead_m: 2.5
+  corridor_centering_weight: 0.6
+  corridor_centering_max_m: 0.8
+  turn_probe_m: 1.2
+  turn_max_deg: 150.0
+  align_min_clearance_m: 1.5
+  align_tolerance_deg: 8.0
+  align_linear_scale: 0.25
+  align_max_s: 12.0
+  sweep_max_deg: 60.0
+  bev_row0_is_far: true
+  milestone_cooldown_s: 3.0
+  vlm_stale_s: 2.5
+  route_hint:
+    enabled: false
+    path: "configs/waypoints_sesion1.yaml"
+    heading_bias_max_deg: 25
+  segments:
+    - id: "f1_entrada"
+      milestone:
+        id: "piano"
+        prompt: "En la imagen de la camara frontal de un robot que avanza por un pasillo universitario: ¿se ve un piano (vertical o de cola)?"
+        confirm_hits: 3
+        min_confidence: 0.6
+        max_distance_m: 6.0
+      on_milestone:
+        side: "left"
+        look_for: "una puerta o vano de entrada abierto hacia la izquierda"
+      max_distance_m: 25.0
+      on_timeout: "sweep"
+    - id: "f2_pasillo_central"
+      milestone:
+        id: "tres_sillas"
+        prompt: "¿Se ven tres sillas alineadas en hilera contra una pared?"
+        confirm_hits: 3
+        min_confidence: 0.6
+        max_distance_m: 6.0
+      on_milestone:
+        side: "left"
+        look_for: "una apertura o pasillo lateral hacia la izquierda"
+      max_distance_m: 30.0
+      on_timeout: "sweep"
+    - id: "f3_pasillo_final"
+      milestone:
+        id: "marca_azul"
+        prompt: "¿Se ve una tuerca o pieza metalica AZUL sobre la pared, un mueble o el piso? Responde 'presente' solo si distinguis claramente el objeto azul, no si solo hay algo azulado de fondo."
+        confirm_hits: 3
+        min_confidence: 0.65
+        max_distance_m: 3.0
+      on_milestone:
+        side: "left"
+        look_for: "la continuacion del pasillo hacia la izquierda"
+      max_distance_m: 30.0
+      on_timeout: "advance"
+    - id: "f4_retorno"
+      milestone:
+        id: "fin_pasillo"
+        prompt: "¿El pasillo termina en una pared frontal a menos de 3 metros?"
+        confirm_hits: 2
+        min_confidence: 0.6
+      on_milestone:
+        side: "right"
+        look_for: "un cono de transito naranja"
+      max_distance_m: 30.0
+      on_timeout: "stop"
+      final: true
+  cone_photo:
+    enabled: true
+    revisit_radius_m: 1.0
+    photo_dir: "checkpoint_photos"
+
+vlm:
+  backend: "gemini"
+  model: "gemini-1.5-flash"
+  api_key: 
+  interval_s: 1.0            # cadencia de consulta (~1 Hz)
+  interval_turn_s: 0.5       # cadencia más rápida en giros
+  timeout_s: 6.0
+  max_side_px: 640
+  jpeg_quality: 80
+  max_tokens: 128
+  temperature: 0.0
+
+dashboard:
+  route_status_path: "/home/pablolube/IROS26-LaRovernetta/earth-rovers-sdk/static/genie_waypoints.json"
+
+# Levantar el servidor ANTES de correr la mision, en otra terminal:
+#   pip install vllm
+#   python -m vllm.entrypoints.openai.api_server \
+#       --model Qwen/Qwen2-VL-2B-Instruct \
+#       --port 8001 --max-model-len 4096 --limit-mm-per-prompt image=1
+#
+# Va en un proceso APARTE a proposito: SAM-TP ya tiene la GPU, y un 2B
+# cargado en el mismo proceso le pelea la VRAM justo cuando el planner la
+# necesita. Probar que responde, sin robot:
+#   python -m genie_rover.Indoor.vlm_semantic --image debug/run1/00007_rgb.jpg \
+#       --prompt "¿se ve un piano?"
+
+# --- overlay del dashboard (opcional, igual que antes) ----------------------
+# dashboard:
+#   route_status_path: "/ruta/a/earth-rovers-sdk/static/genie_waypoints.json"
+cone:
+  # "color": heuristica HSV+forma, cero entrenamiento, para arrancar hoy.
+  # "yolo":  ultralytics YOLO, requiere checkpoint entrenado (ver doc).
+  backend: "color"
+
+  # Alto real del cono en metros. Se usa SOLO como respaldo cuando el cono
+  # NO toca el piso visible en la imagen (esta a otra altura -- arriba de un
+  # cordon/escalon/estante -- o su base esta parcialmente tapada): en vez de
+  # perder la deteccion, estima la distancia por tamaño aparente en la
+  # imagen. Ajustar al cono real que se use en la pista.
+  real_height_m: 0.30
+
+color:
+
+  # ============================================================
+  # NARANJA
+  # Referencias:
+  #   #FE1800 -> HSV [3, 255, 254]
+  #   #F59203 -> HSV [18, 252, 245]
+  # ============================================================
+  orange:
+    hsv_low: [2, 180, 120]
+    hsv_high: [20, 255, 255]
+    hsv_low2: null
+    hsv_high2: null
+
+  # ============================================================
+  # ROJO
+  # Referencias:
+  #   #DF171A -> HSV [180, 229, 223]
+  #   #D71513 -> HSV [0, 233, 215]
+  #
+  # El rojo cruza el límite 0/180 del HSV,
+  # por eso utiliza dos rangos.
+  # ============================================================
+  red:
+    hsv_low: [0, 180, 120]
+    hsv_high: [5, 255, 255]
+    hsv_low2: [175, 180, 120]
+    hsv_high2: [179, 255, 255]
+
+  # ============================================================
+  # AZUL
+  # Referencias:
+  #   #243255 -> HSV [111, 147, 85]
+  #   #233158 -> HSV [112, 154, 88]
+  # ============================================================
+  blue:
+    hsv_low: [103, 100, 50]
+    hsv_high: [120, 255, 255]
+    hsv_low2: null
+    hsv_high2: null
+
+  # ============================================================
+  # VERDE
+  # Referencias:
+  #   #005244 -> HSV [85, 255, 82]
+  #   #004638 -> HSV [84, 255, 70]
+  # ============================================================
+  green:
+    hsv_low: [76, 180, 40]
+    hsv_high: [94, 255, 130]
+    hsv_low2: null
+    hsv_high2: null
+
+  # Area minima en pixeles para no confundir
+  # ruido/manchitas con un cono real.
+  min_area_px: 250
+
+  # Relacion ancho/alto minima del blob detectado.
+  min_aspect_ratio: 0.25
+
+  # Relacion ancho/alto maxima.
+  # Filtra formas muy alargadas o muy achatadas.
+  max_aspect_ratio: 1.3
+
+  # Que tan "lleno" tiene que estar el bounding box.
+  # Filtra formas muy huecas o irregulares.
+  min_fill_ratio: 0.35
+
+  # Tamano del kernel morfologico.
+  # Limpieza de la mascara de color antes de buscar blobs.
+  morph_kernel: 5
+
+  yolo:
+    # Config para el backend alternativo (si backend: "yolo" en vez de "color").
+    weights_path: "checkpoints/cono_detection_model.pt"   # pesos del modelo YOLO entrenado.
+    class_names: ["cone"]                       # clases que reconoce el modelo.
+    conf_thresh: 0.50                           # umbral de confianza minimo.
+    device: null                                # null = autodetectar (igual que samtp).
+    img_size: 640            

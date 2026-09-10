@@ -12,3 +12,4 @@ __pycache__/
 Datasets/
 maps/
 genie/maps/
+ML_model/.venv-data/

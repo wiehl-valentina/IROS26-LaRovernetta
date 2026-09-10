@@ -428,8 +428,13 @@ cmd_map_session() {
 
 HELP_MAPROS='mapping-ros2 — RTAB-Map + bridge ROS2 (correccion de pose por cierre de bucles)
 
-  ./rover_launch.sh mapping-ros2 [--db PATH] [--config PATH] [--sdk-url URL]
-                                 [--feed-fps N] [--raw]
+  ./rover_launch.sh mapping-ros2 [--db PATH] [--localization] [--config PATH]
+                                 [--sdk-url URL] [--feed-fps N] [--raw]
+
+  sin --localization  MAPEO: RTAB-Map arranca la base VACIA (--delete_db_on_start).
+                      Si --db ya existe, antes se copia a <nombre>_bak_<fecha>.db.
+  --localization      RELOCALIZA sobre --db (que tiene que existir): no la borra
+                      ni le agrega nodos. Es lo que usa la mision indoor.
 
 Por defecto deriva intrinsecos, distorsion, radio de rueda, ancho de trocha,
 signo de rotacion y extrinsecos de camara del yaml de genie (--config, por
@@ -437,10 +442,11 @@ defecto genie/'"$CFG_MAPPING"'), para que la odometria del bridge ROS2 y la de
 genie_rover NO diverjan. Con --raw usa los defaults del launch file.'
 cmd_mapping_ros2() {
     wants_help "$@" && show_help "$HELP_MAPROS"
-    local db="" config="$GENIE_DIR/$CFG_MAPPING" sdk_url="" feed_fps="" raw=0
+    local db="" config="$GENIE_DIR/$CFG_MAPPING" sdk_url="" feed_fps="" raw=0 localization=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --db) db="$2"; shift 2 ;;
+            --localization) localization=1; shift ;;
             --config) config="$2"; shift 2 ;;
             --sdk-url) sdk_url="$2"; shift 2 ;;
             --feed-fps) feed_fps="$2"; shift 2 ;;
@@ -454,16 +460,33 @@ cmd_mapping_ros2() {
     [ -f "$ROS2_DIR/earth_rover_bridge.py" ] || die "Falta $ROS2_DIR/earth_rover_bridge.py — corre './rover_launch.sh sync-ros2' o revisa ROS2_DIR"
 
     if [ -z "$db" ]; then
+        [ "$localization" -eq 1 ] && die "--localization necesita --db con la base grabada"
         mkdir -p "$MAPS_DIR"
         db="$MAPS_DIR/sesion_$(date +%Y%m%d_%H%M%S).db"
     else
         db="$(ensure_parent_dir "$db")"
+    fi
+    # ABSOLUTO antes del `cd "$MAPPING_DIR"` de abajo: RTAB-Map resuelve un
+    # database_path relativo contra SU cwd (la carpeta del launch), no contra
+    # el repo -- "maps/sesion1.db" terminaba en ros2/mapping/maps/ o ~/.ros/.
+    db="$(realpath -m "$db")"
+
+    if [ "$localization" -eq 1 ]; then
+        [ -s "$db" ] || die "No existe (o esta vacia) la base a relocalizar: $db"
+        c_green "==> RTAB-Map en LOCALIZACION: carga $db sin borrarla"
+    elif [ -s "$db" ]; then
+        # modo mapeo = --delete_db_on_start: la base se vacia al arrancar.
+        local bak="${db%.db}_bak_$(date +%Y%m%d_%H%M%S).db"
+        cp -p "$db" "$bak" || die "No pude respaldar $db antes de pisarla"
+        warn "modo MAPEO sobre una base existente: RTAB-Map la vacia al arrancar."
+        warn "respaldo en $bak  (si querias relocalizar, faltaba --localization)"
     fi
 
     source_ros2
     cd "$MAPPING_DIR" || exit 1
 
     local launch_args=(database_path:="$db")
+    [ "$localization" -eq 1 ] && launch_args+=(localization:=true)
     [ -n "$sdk_url" ]  && launch_args+=(sdk_url:="$sdk_url")
     [ -n "$feed_fps" ] && launch_args+=(feed_fps:="$feed_fps")
 
@@ -1303,8 +1326,19 @@ cmd_indoor_run() {
         panes=1
     fi
     if [ "$with_rtabmap" -eq 1 ]; then
+        # La mision RELOCALIZA contra el mapeo previo: localization:=true, que
+        # no lleva --delete_db_on_start. Sin esto mapping-ros2 arrancaba en
+        # modo MAPEO y vaciaba la base grabada. Si la base no existe (modo B
+        # sin mapa previo) cae a mapeo sobre una base nueva, con aviso.
+        local rt_mode=""
+        db="$(realpath -m "$(expand_path "$db")")"
+        if [ -s "$db" ]; then
+            rt_mode="--localization"
+        else
+            [ "$mode" = both ] && warn "modo C sin base previa ($db): RTAB-Map va a MAPEAR de cero, no hay contra que relocalizar"
+        fi
         [ "$panes" -gt 0 ] && tmux split-window -h -t "$session:main" -c "$REPO"
-        tmux send-keys -t "$session:main" "echo 'esperando al SDK...'; sleep 6; '$SELF' mapping-ros2 --db '$db'" C-m
+        tmux send-keys -t "$session:main" "echo 'esperando al SDK...'; sleep 6; '$SELF' mapping-ros2 --db '$db' $rt_mode" C-m
         panes=$((panes + 1))
     fi
     [ "$panes" -gt 0 ] && tmux split-window -v -t "$session:main" -c "$REPO"
