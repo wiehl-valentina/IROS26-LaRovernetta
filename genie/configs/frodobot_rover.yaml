@@ -62,7 +62,7 @@ navigation:
   #   +1.0  si angular positivo hace girar a la DERECHA
   angular_sign: -1.0
 
-  max_linear: 1.0       # maximo de la escala -1..1 (NO m/s).
+  max_linear: 0.22       # maximo de la escala -1..1 (NO m/s).
   max_angular: 0.45
   turn_speed: 0.40
   # Ganancia del giro: angular = kp_angular * radianes(error). Con 0.9 el
@@ -235,3 +235,40 @@ memory:
   min_confidence: 0.15
   plan_forward_m: 3.0
   plan_side_m: 2.0
+
+# --------------------------------------------------------------- KingKong
+# Parche de mision, especifico de este recorrido. Apagalo (enabled: false) y
+# el bridge vuelve a su comportamiento generico.
+#
+# La calle entre el checkpoint 1 y el 3 es recta, y sobre ella hay UNA
+# bocacalle por la que no hay que meterse. A la IDA queda a la izquierda;
+# despues del giro de 180 grados en el cp3, la misma bocacalle queda a la
+# DERECHA. Por eso el lado prohibido no es fijo: se invierte con la fase.
+kingkong:
+  enabled: true
+  # El rumbo sigue la secuencia normal (1, 2, 3, 4, 5). Lo unico que cambia el
+  # parche es: donde girar, por donde NO meterse, y a cuales entrar al centro.
+  #
+  # Al reclamar este checkpoint: frenar y girar.
+  giro_en_sequence: 3
+  # Checkpoints a los que hay que entrar al CENTRO en vez de reclamarlos apenas
+  # se pisa el radio oficial (claim_radius_m: 15 m). El 2 y el 4 son el mismo
+  # punto fisico a mitad de la calle: reclamarlos desde el borde dejaria al
+  # rover cortando por la vereda en vez de pasar derecho.
+  centrar_en_sequences: [2, 4]
+  centrar_radio_m: 2.5
+  # Valvula de escape: si no logra cerrar esos metros (GPS ruidoso, obstaculo),
+  # despues de este tiempo reclama igual en vez de quedarse dando vueltas.
+  centrar_timeout_s: 45.0
+  # Lado prohibido durante la IDA. En la vuelta se usa el contrario.
+  lado_prohibido_ida: izquierda
+  # Cuanto puede desviarse un camino candidato hacia el lado prohibido antes
+  # de descartarlo. 0 seria demasiado estricto: casi todo camino se corre unos
+  # centimetros para un lado u otro al esquivar.
+  desvio_tolerado_m: 0.40
+  # Giro en el cp3. Se hace a lazo cerrado con el giroscopo, no con
+  # recovery_deg_per_s, porque ese numero no esta medido.
+  giro_deg: 180.0
+  giro_tolerancia_deg: 12.0
+  giro_timeout_s: 25.0
+  giro_turn_speed: 0.45

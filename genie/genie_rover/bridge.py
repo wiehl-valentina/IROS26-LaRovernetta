@@ -40,7 +40,7 @@ from .navigation import (
     path_to_robot,
     path_to_world,
 )
-from .odometry import Odometry, OdometryConfig, Pose
+from .odometry import Odometry, OdometryConfig, Pose, wrap_rad
 from .perception import PerceptionPipeline
 from .persistent_map import MapConfig, PersistentMap
 from .sdk_client import Checkpoint, RoverClient, RoverError
@@ -197,6 +197,26 @@ class Bridge:
         self._stop_requested = False
         self._checkpoints: list[Checkpoint] = []
         self._latest_scanned = 0
+
+        # ---- parche KingKong (ver la seccion kingkong: del config) --------
+        # Fase "ida": navegar directo al checkpoint 3, con la bocacalle de la
+        # izquierda vedada. Al reclamar el 3: frenar, girar 180 a lazo cerrado,
+        # y pasar a "vuelta", donde la meta es el checkpoint 1 y la MISMA
+        # bocacalle queda ahora a la derecha.
+        kk = cfg.get("kingkong", {}) or {}
+        self.kk_enabled = bool(kk.get("enabled", False))
+        self.kk_giro_seq = int(kk.get("giro_en_sequence", 3))
+        self.kk_centrar_seqs = set(int(s) for s in kk.get("centrar_en_sequences", []))
+        self.kk_centrar_radio_m = float(kk.get("centrar_radio_m", 2.5))
+        self.kk_centrar_timeout_s = float(kk.get("centrar_timeout_s", 45.0))
+        self._kk_centrar_desde: dict[int, float] = {}
+        self.kk_lado_ida = str(kk.get("lado_prohibido_ida", "izquierda")).lower()
+        self.kk_desvio_tolerado_m = float(kk.get("desvio_tolerado_m", 0.40))
+        self.kk_giro_deg = float(kk.get("giro_deg", 180.0))
+        self.kk_giro_tol_deg = float(kk.get("giro_tolerancia_deg", 12.0))
+        self.kk_giro_timeout_s = float(kk.get("giro_timeout_s", 25.0))
+        self.kk_giro_turn_speed = float(kk.get("giro_turn_speed", 0.45))
+        self.kk_fase = "ida"
         self._last_frame_ts = 0.0
         self._last_frame_change = time.time()
         self._consecutive_errors = 0
@@ -245,6 +265,172 @@ class Bridge:
             if cp.sequence > self._latest_scanned:
                 return cp
         return None
+
+    # ------------------------------------------------------------- KingKong
+
+    def _kk_checkpoint(self, sequence: int) -> Checkpoint | None:
+        for cp in self._checkpoints:
+            if cp.sequence == sequence:
+                return cp
+        return None
+
+    def _kk_esperar_centro(self, sequence: int, distance_m: float) -> bool:
+        """True = todavia no reclamar, seguir acercandose al checkpoint.
+
+        claim_radius_m es la tolerancia OFICIAL del ERC (15 m): reclamar apenas
+        se entra da el punto, pero deja al rover en el borde del circulo, que en
+        una calle angosta puede ser la vereda de enfrente o directamente antes de
+        la esquina. Para los checkpoints de kingkong.centrar_en_sequences se
+        exige llegar a centrar_radio_m antes de reclamar, asi el rover pasa por
+        arriba del punto.
+
+        Tiene valvula de escape: si se queda dando vueltas sin poder cerrar esos
+        metros (ruido de GPS, un obstaculo, la vereda), despues de
+        centrar_timeout_s reclama igual. Perder el checkpoint por insistir con el
+        centro seria peor que reclamarlo descentrado.
+        """
+        if not self.kk_enabled or sequence not in self.kk_centrar_seqs:
+            return False
+        if distance_m <= self.kk_centrar_radio_m:
+            t0 = self._kk_centrar_desde.pop(sequence, None)
+            if t0 is not None:
+                print(f"[bridge] [KK] cp#{sequence}: llegue al centro "
+                      f"({distance_m:.1f} m), reclamo")
+            return False
+
+        ahora = time.time()
+        t0 = self._kk_centrar_desde.get(sequence)
+        if t0 is None:
+            self._kk_centrar_desde[sequence] = ahora
+            print(f"[bridge] [KK] cp#{sequence} a {distance_m:.1f} m: dentro del radio "
+                  f"oficial pero NO reclamo todavia, me acerco al centro "
+                  f"(<= {self.kk_centrar_radio_m:.1f} m)")
+            return True
+
+        if ahora - t0 > self.kk_centrar_timeout_s:
+            print(f"[bridge] [KK] cp#{sequence}: no pude centrarme en "
+                  f"{self.kk_centrar_timeout_s:.0f} s (me quede a {distance_m:.1f} m). "
+                  f"Reclamo igual para no perder el checkpoint.")
+            self._kk_centrar_desde.pop(sequence, None)
+            return False
+        return True
+
+    def _kk_al_reclamar(self, sequence: int) -> bool:
+        """Se llama despues de reclamar con exito. Si el que cayo es el ultimo
+        de la ida, frena, gira, y cambia de fase.
+
+        Devuelve True si efectivamente giro, porque en ese caso quien llama
+        tiene que cortar la iteracion: el frame que tiene en la mano se saco
+        ANTES del giro, y procesarlo ahora lo integraria al mapa con la pose
+        nueva -- una foto de lo que hay atras, pegada como si fuera de adelante.
+        """
+        if not self.kk_enabled or self.kk_fase != "ida":
+            return False
+        if sequence != self.kk_giro_seq:
+            return False
+
+        print(f"[bridge] [KK] checkpoint #{sequence} reclamado: fin de la ida.")
+        self.send(DriveCommand(0.0, 0.0, "KK: freno antes del giro"))
+        self._kk_giro_cerrado(self.kk_giro_deg)
+        self.kk_fase = "vuelta"
+
+        # El banco de caminos se filtra segun la fase, asi que hay que tirar el
+        # cacheado: el de la ida tiene vedada la izquierda y ahora hace falta
+        # el contrario.
+        self._bank = None
+        self._bank_shape = None
+
+        # Nada de lo que el planner venia siguiendo sirve despues de un 180.
+        self._plan_path_world = None
+        self._plan_pose = None
+        self._consecutive_empty = 0
+        self._consecutive_turns = 0
+        self._turn_sign_history.clear()
+        self._commit_side = 0
+        self.heading_est.reset_track()
+        lado = "derecha" if self.kk_lado_ida.startswith("izq") else "izquierda"
+        print(f"[bridge] [KK] fase VUELTA: sigo la secuencia normal de "
+              f"checkpoints, bocacalle prohibida ahora a la {lado}")
+        return True
+
+    def _kk_giro_cerrado(self, deg: float) -> None:
+        """Giro en el lugar verificado con el giroscopo.
+
+        No usa _girar_hacia a proposito: aquel calcula la duracion de cada paso
+        con recovery_deg_per_s, que es un valor supuesto y no medido, y ademas
+        corta apenas el mapa ve el frente libre -- que en un 180 pasa enseguida
+        y dejaria el giro a medias. Aca lo unico que manda es cuanto giro de
+        verdad, leido de odometry.pose.theta (que integra el giroscopo).
+        """
+        if self.odometry is None:
+            print("[bridge] [KK] sin odometria, no puedo verificar el giro; lo salteo")
+            return
+
+        objetivo = abs(float(deg))
+        ang = self.follower.angular_sign * self.kk_giro_turn_speed
+        pose = self.odometry.update(self.client.telemetry().raw)
+        theta_prev = pose.theta
+        girado = 0.0
+        t0 = time.time()
+
+        print(f"[bridge] [KK] girando {objetivo:.0f} grados (verificado con giroscopo)...")
+        while girado < objetivo - self.kk_giro_tol_deg and not self._stop_requested:
+            if time.time() - t0 > self.kk_giro_timeout_s:
+                print(f"[bridge] [KK] TIMEOUT del giro: llegue a {girado:.0f} de "
+                      f"{objetivo:.0f} grados en {self.kk_giro_timeout_s:.0f} s. "
+                      f"Probablemente falte potencia (giro_turn_speed={self.kk_giro_turn_speed}).")
+                break
+            self.send(DriveCommand(0.0, ang, f"KK: giro {objetivo:.0f} grados"))
+            time.sleep(0.3)
+            pose = self.odometry.update(self.client.telemetry().raw)
+            # Acumular el incremento envuelto: theta salta de +pi a -pi y restar
+            # los extremos daria un salto de 360 en vez de unos pocos grados.
+            d = math.degrees(wrap_rad(pose.theta - theta_prev))
+            theta_prev = pose.theta
+            girado += abs(d)
+
+        self.send(DriveCommand(0.0, 0.0, "KK: fin del giro"))
+        print(f"[bridge] [KK] giro terminado: {girado:.0f} grados reales")
+
+    def _kk_filtrar_banco(self, bank: list, grid: int, bev_resolution_m: float) -> list:
+        """Saca del banco los caminos que se meten hacia el lado prohibido.
+
+        Los caminos vienen en pixeles de la grilla del planner, (fila, columna),
+        y la columna crece hacia la DERECHA (goal_xy_to_bev_pixel: col = w//2 +
+        x_right/res). El centro es grid//2.
+
+        Se mira el punto FINAL: lo que se quiere impedir es que el camino
+        termine metido en la bocacalle, no que se corra unos centimetros al
+        esquivar algo. Por eso la tolerancia va en metros y no en pixeles.
+        """
+        if not self.kk_enabled or not bank:
+            return bank
+
+        prohibido_izq = (self.kk_lado_ida.startswith("izq")) == (self.kk_fase == "ida")
+        centro = grid / 2.0
+        # La grilla del planner es cuadrada y el BEV no, asi que un metro no son
+        # los mismos pixeles en fila que en columna. Para columnas, el ancho
+        # total del BEV (2*side_range) se estira a grid pixeles.
+        px_por_m = grid / max(2.0 * self.side_range, 1e-6)
+        tol_px = self.kk_desvio_tolerado_m * px_por_m
+
+        filtrado = []
+        for path in bank:
+            col_final = float(path[-1, 1])
+            if prohibido_izq and col_final < centro - tol_px:
+                continue
+            if (not prohibido_izq) and col_final > centro + tol_px:
+                continue
+            filtrado.append(path)
+
+        lado = "izquierda" if prohibido_izq else "derecha"
+        print(f"[bridge] [KK] banco filtrado ({lado} vedada): "
+              f"{len(filtrado)} de {len(bank)} caminos sobreviven")
+        if not filtrado:
+            print("[bridge] [KK] OJO: el filtro dejo el banco VACIO, uso el completo "
+                  "para no dejar al planner sin candidatos")
+            return bank
+        return filtrado
 
     def run(self, max_seconds: float | None = None) -> None:
         signal.signal(signal.SIGINT, self.request_stop)
@@ -313,20 +499,36 @@ class Bridge:
         heading = self.heading_est.update(telem.latitude, telem.longitude,
                                           telem.orientation, telem.timestamp)
 
+        # Reclamar y navegar son dos cosas distintas. El SDK solo deja reclamar
+        # el proximo de la secuencia, asi que el candidato a reclamo sigue
+        # siendo current_target(); pero con el parche KingKong el rumbo se fija
+        # hacia otro checkpoint, para no desviarse persiguiendo el intermedio.
         target = self.current_target()
         if target is not None and heading is not None:
             goal = goal_from_gps(telem.latitude, telem.longitude, heading,
                                  target.latitude, target.longitude, self.goal_range_m)
             if goal.distance_m < self.claim_radius_m:
-                ok, msg = self.client.claim_checkpoint()
-                if ok:
-                    print(f"[bridge] ✓ checkpoint #{target.sequence} conseguido: {msg}")
-                    self.refresh_checkpoints()
+                # El radio oficial del ERC es generoso (claim_radius_m), asi que
+                # reclamar apenas se entra deja al rover en el BORDE del circulo.
+                # Para los checkpoints marcados en kingkong.centrar_en_sequences
+                # se sigue avanzando hasta estar encima del punto y recien ahi se
+                # reclama, que es lo que hace que pase por el centro de la calle
+                # y no la corte por la vereda.
+                if self._kk_esperar_centro(target.sequence, goal.distance_m):
+                    pass
                 else:
-                    print(f"[bridge] cerca del checkpoint ({goal.distance_m:.1f} m) "
-                          f"pero rechazado: {msg}")
+                    ok, msg = self.client.claim_checkpoint()
+                    if ok:
+                        print(f"[bridge] ✓ checkpoint #{target.sequence} conseguido: {msg}")
+                        self.refresh_checkpoints()
+                        if self._kk_al_reclamar(target.sequence):
+                            return  # frame viejo: que la proxima vuelta saque uno nuevo
+                    else:
+                        print(f"[bridge] cerca del checkpoint ({goal.distance_m:.1f} m) "
+                              f"pero rechazado: {msg}")
+            nota_kk = "" if not self.kk_enabled else f" [KK {self.kk_fase}]"
             goal_desc = (f"cp#{target.sequence} a {goal.distance_m:.0f} m, "
-                         f"rel {goal.relative_bearing_deg:+.0f} grados")
+                         f"rel {goal.relative_bearing_deg:+.0f} grados{nota_kk}")
         else:
             goal = type("G", (), {"x_right_m": 0.0, "y_forward_m": self.goal_range_m})()
             goal_desc = "derecho adelante (sin meta GPS)"
@@ -471,6 +673,7 @@ class Bridge:
                     include_random_goals=bool(self.planner_cfg.include_random_goals),
                     random_seed=self.planner_cfg.random_seed,
                 )
+            self._bank = self._kk_filtrar_banco(self._bank, grid, bev_resolution_m)
             self._bank_shape = bev_shape
             print(f"[bridge] banco de {len(self._bank)} caminos candidatos precalculado "
                   f"en {time.time() - t0:.1f} s (se reusa durante toda la corrida)")
