@@ -1,62 +1,92 @@
-# Guía de Ejecución: La Rovernetta (GeNIE + Earth Rovers SDK)
+# Guía de Ejecución: La Rovernetta (ROS 2 EKF + GeNIE)
 
-Para levantar el proyecto y poner el rover a navegar de forma autónoma, es necesario ejecutar dos procesos en paralelo. Como cada componente tiene dependencias muy distintas (el SDK usa librerías web y GeNIE usa PyTorch/SAM2), **cada proceso debe correr en su propio entorno virtual y en una terminal separada**.
+El sistema de La Rovernetta está compuesto por dos capas modulares que deben ejecutarse en paralelo:
+1. **Capa Sensorial (ROS 2 EKF)**: Se encarga de conectarse a la API del rover, leer los sensores crudos (IMU, GPS, Odometría), fusionarlos matemáticamente y calcular un rumbo (heading) preciso sin deriva magnética.
+2. **Cerebro Autónomo (GeNIE / Python)**: Analiza el video con Inteligencia Artificial (SAM-TP), proyecta los obstáculos en un mapa 2D usando el rumbo calculado por el EKF, planifica la ruta, y envía los comandos de los motores.
 
----
-
-## 1. Levantar el SDK del Earth Rover (Proceso A)
-
-Este proceso se encarga de la comunicación directa con el rover (video, telemetría y comandos de motor) a través de los servidores de FrodoBots.
-
-1. **Abrir la primera terminal.**
-2. Moverse a la carpeta del SDK:
-   ```bash
-   cd earth-rovers-sdk
-   ```
-3. Activar el entorno virtual del SDK:
-   ```bash
-   source .venv_sdk/bin/activate 
-   ```
-4. Iniciar el servidor (API local en el puerto 8000):
-   ```bash
-   hypercorn main:app --reload
-   ```
-
-> **Importante:** Deja esta terminal abierta y corriendo. No la cierres ni presiones `Ctrl+C`.
+A continuación, se detalla cómo instalar y ejecutar ambas capas desde cero en una computadora anfitriona (sin usar Docker).
 
 ---
 
-## 2. Levantar el cerebro autónomo GeNIE (Proceso B)
+## 1. Instalación de ROS 2 (Jazzy Jalisco)
 
-Este proceso analiza las fotos del SDK, extrae el mapa (BEV) usando el modelo SAM, y le envía las órdenes de manejo al SDK.
+> **Nota:** ROS 2 Jazzy requiere **Ubuntu 24.04**. Si estás en Ubuntu 22.04, deberás instalar ROS 2 Humble y reemplazar la palabra `jazzy` por `humble` en los comandos a continuación.
 
-1. **Abrir una SEGUNDA terminal.**
-2. Moverse a la carpeta de GeNIE:
-   ```bash
-   cd genie
-   ```
-3. Activar el entorno virtual de GeNIE:
-   ```bash
-   source .venv_genie/bin/activate
-   ```
-4. Lanzar el puente de control autónomo:
-   ```bash
-   python -m genie_rover.bridge \
-       --config configs/frodobot_rover.yaml \
-       --go \
-       --start-mission \
-       --max-seconds 120
-   ```
+Abre una terminal y ejecuta los comandos oficiales para instalar ROS 2 Base y las herramientas de compilación:
 
-### Notas sobre el comando GeNIE:
-- `--go`: Habilita el movimiento real. Sin este flag, el programa hace un "dry run" (calcula todo pero no mueve los motores).
-- `--start-mission`: Se encarga de autorizar la misión automáticamente (requerido por el SDK).
-- `--max-seconds 120`: El bot se detendrá automáticamente a los 2 minutos por seguridad. (Puedes modificar este número o quitarlo si quieres navegación continua).
+```bash
+# 1. Asegúrate de tener un sistema actualizado
+sudo apt update && sudo apt install software-properties-common curl -y
+
+# 2. Agrega la clave y el repositorio de ROS 2
+sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+
+# 3. Instala ROS 2 y las dependencias de La Rovernetta
+sudo apt update
+sudo apt install ros-jazzy-ros-base python3-colcon-common-extensions ros-jazzy-robot-localization ros-jazzy-tf2-ros -y
+```
 
 ---
 
-## Detención de emergencia
+## 2. Compilar el Workspace de ROS 2
 
-- Para frenar el rover en cualquier momento, haz un click en la terminal de GeNIE (Proceso B) y presiona `Ctrl + C`. El bridge atrapará la señal y le mandará una orden inmediata de freno total a los motores antes de cerrarse.
-- Si por alguna razón el programa se cuelga, el SDK que dejamos corriendo en la Terminal A tiene un *watchdog* de seguridad que cortará la corriente de las ruedas automáticamente.
+Una vez instalado ROS 2, debes compilar el workspace que se encuentra en la carpeta `ros2_ws_src/` de este repositorio.
 
+1. Abre una terminal en la raíz de este repositorio (`IROS26-LaRovernetta`).
+2. Ingresa a la carpeta del workspace:
+   ```bash
+   cd ros2_ws_src
+   ```
+3. Configura el entorno de ROS y compila los paquetes:
+   ```bash
+   source /opt/ros/jazzy/setup.bash
+   colcon build
+   ```
+
+*(Solo debes compilar la primera vez o cuando modifiques el código fuente dentro de `ros2_ws_src`).*
+
+---
+
+## 3. Flujo de Ejecución (Paso a Paso)
+
+Cada vez que vayas a correr una misión, necesitas abrir **dos terminales**. Reemplaza `IP_DEL_ROVER` por la IP real del Earth Rover en tu red (por ejemplo, `172.31.187.39`).
+
+### TERMINAL 1: Iniciar el EKF de ROS 2
+Esta terminal mantendrá vivo el filtro de Kalman.
+
+```bash
+# Entrar al workspace
+cd IROS26-LaRovernetta/ros2_ws_src
+
+# Configurar el entorno (siempre necesario en una terminal nueva)
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+# Lanzar el nodo puente y el EKF
+ros2 launch er_bringup localization_bypass.launch.py sdk_url:=http://IP_DEL_ROVER:8000 target_ip:=IP_DEL_ROVER
+```
+*Deja esta terminal corriendo.*
+
+### TERMINAL 2: Iniciar el Cerebro GeNIE
+Esta terminal ejecutará la conducción autónoma.
+
+```bash
+# Entrar a la carpeta de la IA
+cd IROS26-LaRovernetta/genie
+
+# Activar el entorno virtual de conda o Python (según cómo hayas instalado SAM2/Torch)
+# source .venv_genie/bin/activate
+# o 
+# conda activate sam_tp
+
+# Lanzar el rover de forma autónoma
+./run_mission.sh --go
+```
+
+**Parámetros útiles del script `run_mission.sh`:**
+* `./run_mission.sh --go`: Inicia el movimiento real de los motores.
+* `./run_mission.sh` (sin `--go`): Ejecuta en modo "Dry Run" o Simulacro. Procesará la visión y mostrará qué decidiría hacer, pero sin mandarle torque a las ruedas. Útil para debugear de forma segura en un escritorio.
+
+### Detención de Emergencia
+Para frenar el rover de emergencia, basta con hacer click en la **Terminal 2** (GeNIE) y presionar `Ctrl + C`. El sistema atrapará la señal y enviará un comando de frenado a cero (0) a los motores antes de cerrarse.
