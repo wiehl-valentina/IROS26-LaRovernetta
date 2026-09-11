@@ -1,6 +1,6 @@
 {
   "_comment": "Calibraci\u00f3n de norma magn\u00e9tica y factores relativos de saturaci\u00f3n bruta (Fase 1). Origen: Test A en reposo (2026-09-10), norma media = 3331.3 counts. Los umbrales se expresan en factores relativos a mag_norm_reference para garantizar portabilidad universal.",
-  "mag_norm_reference": 12221.7,
+  "mag_norm_reference": 3330.0,
   "mag_gross_factor_min": 0.3,
   "mag_gross_factor_max": 2.5,
   "mag_tol_inner_factor": 0.2,
