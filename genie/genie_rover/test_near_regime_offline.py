@@ -126,7 +126,7 @@ def _build_stub(pmap: PersistentMap):
     for name in ("_map_free_and_coverage", "_girar_hacia", "_barrido_ciego",
                  "_preguntar_vlm", "_retroceder", "_recover_informado",
                  "_retroceso_y_recover", "_is_tilt_too_steep_for_recovery",
-                 "_get_estimated_tilt_deg", "_is_front_blocked"):
+                 "_get_estimated_tilt_deg", "_is_front_blocked", "_unstick"):
         if hasattr(Bridge, name):
             setattr(stub, name, types.MethodType(getattr(Bridge, name), stub))
 

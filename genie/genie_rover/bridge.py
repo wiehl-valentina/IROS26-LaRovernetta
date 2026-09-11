@@ -34,13 +34,14 @@ from .navigation import (
     DriveCommand,
     HeadingEstimator,
     PathFollower,
+    check_checkpoint_reached,
     front_clearance_m,
     front_is_blocked,
     goal_from_gps,
     path_to_robot,
     path_to_world,
 )
-from .odometry import Odometry, OdometryConfig, Pose, estimate_roll_pitch
+from .odometry import Odometry, OdometryConfig, Pose, estimate_roll_pitch, wrap_rad
 from .perception import PerceptionPipeline
 from .persistent_map import MapConfig, PersistentMap
 from .sdk_client import Checkpoint, RoverClient, RoverError
@@ -93,7 +94,15 @@ class Bridge:
             min_linear_while_following=nav.get("min_linear_while_planned", 0.08),
         )
         self.goal_range_m = float(nav.get("goal_range_m", 3.5))
-        self.claim_radius_m = float(nav.get("claim_radius_m", 8.0))
+        # checkpoint_reached_radius_m: Umbral de llegada al checkpoint (portado de ROS 2)
+        # Origen: frodobot_rover.yaml (13.0m nominal, alineado con ERC y tolerancias GNSS de ROS 2)
+        self.checkpoint_reached_radius_m = float(
+            nav.get("checkpoint_reached_radius_m", nav.get("claim_radius_m", 13.0))
+        )
+        self.claim_radius_m = self.checkpoint_reached_radius_m
+        self._base_checkpoint_radius_m = self.checkpoint_reached_radius_m
+        self._current_checkpoint_radius_m = self.checkpoint_reached_radius_m
+        self._last_target_sequence: int | None = None
 
         # ---- replanificacion por disparo espacial -------------------------
         # plan_on_bev (GeNIE) no corre en cada frame: solo cuando el robot
@@ -150,6 +159,7 @@ class Bridge:
                 use_tilt_projection=bool(odo_cfg.get("use_tilt_projection", True)),
                 tilt_blend_start_deg=float(odo_cfg.get("tilt_blend_start_deg", 5.0)),
                 tilt_blend_max_deg=float(odo_cfg.get("tilt_blend_max_deg", 20.0)),
+                tilt_max_staleness_s=float(odo_cfg.get("tilt_max_staleness_s", 5.0)),
             ))
 
 
@@ -205,6 +215,10 @@ class Bridge:
         self.recovery_headings_deg = list(safety.get("recovery_headings_deg", [0.0, 90.0, -90.0, 180.0]))
         self.recovery_min_cobertura_pct = float(safety.get("recovery_min_cobertura_pct", 25.0))
         self.heading_search_radius_m = float(safety.get("heading_search_radius_m", 2.0))
+        # Latencia de arranque de hardware (tiempo muerto medido en Test A: 1.5 - 2.5 s)
+        self.recovery_startup_latency_s = float(safety.get("recovery_startup_latency_s", 2.0))
+        self.recovery_turn_tolerance_deg = float(safety.get("recovery_turn_tolerance_deg", 15.0))
+        self.recovery_turn_timeout_s = float(safety.get("recovery_turn_timeout_s", 25.0))
         # Recuperacion con VLM (genie_rover.vlm_recovery): se prueba solo si
         # el mapa no encontro un rumbo confiable. Nunca lanza excepcion -- si
         # falla (sin credenciales, sin red, timeout) el bridge cae al barrido
@@ -220,10 +234,11 @@ class Bridge:
         self._consecutive_blocked = 0
 
         self.stats = LoopStats()
-        # Muestras de (rumbo_gps - rumbo_brujula) para diagnosticar si el
-        # magnetometro tiene un offset sistematico (corregible con
-        # navigation.orientation_offset_deg) o si directamente es ruido.
-        self._disagreements: list[float] = []
+        # Muestras de (rumbo_activo - curso_gps_confiable) para evaluar offset cinemático real
+        self._disagreements_gps: list[float] = []
+        # Muestras de (compás_crudo - referencia) para diagnóstico de perturbación magnética local
+        self._disagreements_compass: list[float] = []
+        self._disagreements = self._disagreements_gps  # alias para compatibilidad retrospectiva
         self._stop_requested = False
         self._checkpoints: list[Checkpoint] = []
         self._latest_scanned = 0
@@ -231,6 +246,7 @@ class Bridge:
         self._last_frame_change = time.time()
         self._consecutive_errors = 0
         self._consecutive_empty = 0
+        self._consecutive_empty_recoveries = 0
         # Deteccion de giro sin avance: el planner puede quedar en un ciclo
         # donde cada giro revela una escena que vuelve a pedir girar. Sin
         # memoria entre frames, eso no se rompe solo.
@@ -362,16 +378,39 @@ class Bridge:
 
         target = self.current_target()
         if target is not None and heading is not None:
+            # Si cambió el target, restaurar el radio geodésico nominal/base
+            if self._last_target_sequence != target.sequence:
+                self._last_target_sequence = target.sequence
+                self._current_checkpoint_radius_m = self._base_checkpoint_radius_m
+
+            reached, dist_to_cp = check_checkpoint_reached(
+                telem.latitude,
+                telem.longitude,
+                target.latitude,
+                target.longitude,
+                self._current_checkpoint_radius_m,
+            )
             goal = goal_from_gps(telem.latitude, telem.longitude, heading,
                                  target.latitude, target.longitude, self.goal_range_m)
-            if goal.distance_m < self.claim_radius_m:
+            if reached:
                 ok, msg = self.client.claim_checkpoint()
                 if ok:
-                    print(f"[bridge] ✓ checkpoint #{target.sequence} conseguido: {msg}")
+                    print(f"[bridge] ✓ checkpoint #{target.sequence} alcanzado "
+                          f"({dist_to_cp:.1f} m <= {self._current_checkpoint_radius_m:.1f} m): {msg}")
+                    # Al avanzar de checkpoint con éxito, se restaura la tolerancia base
+                    self._current_checkpoint_radius_m = self._base_checkpoint_radius_m
                     self.refresh_checkpoints()
                 else:
-                    print(f"[bridge] cerca del checkpoint ({goal.distance_m:.1f} m) "
-                          f"pero rechazado: {msg}")
+                    # DETECTOR DE RECHAZO DEL SDK (portado de gps_waypoint_controller.py:396)
+                    # Si el SDK rechaza el reclamo (ej. fuera de geocerca estricta o error 422),
+                    # estrangular la tolerancia a la mitad (13.0 -> 6.5 -> 3.25m, piso 0.5m)
+                    # para obligar al rover a acercarse más antes de volver a intentar,
+                    # evitando saturar la API en cada frame.
+                    old_rad = self._current_checkpoint_radius_m
+                    self._current_checkpoint_radius_m = max(0.5, self._current_checkpoint_radius_m * 0.5)
+                    print(f"[bridge] cerca del checkpoint ({dist_to_cp:.1f} m <= {old_rad:.1f} m) "
+                          f"pero rechazado por SDK: {msg}. Estrangulando tolerancia geodésica a "
+                          f"{self._current_checkpoint_radius_m:.2f} m.")
             goal_desc = (f"cp#{target.sequence} a {goal.distance_m:.0f} m, "
                          f"rel {goal.relative_bearing_deg:+.0f} grados")
         else:
@@ -422,12 +461,18 @@ class Bridge:
         # gps_track: ahi las dos lecturas salieron de la MISMA llamada a
         # update() y son comparables. Con orientation(fallback) el rumbo GPS
         # guardado puede ser viejo y el robot haber girado desde entonces, asi
-        # que restarlos daria un numero contaminado por la rotacion.
+        # Desacuerdo Heading Activo vs Curso GPS (Ground Truth en rectas).
+        # Solo se registra cuando el curso GPS es confiable (Fase 2 / track con baja incertidumbre).
         nota_desac = ""
-        desacuerdo = self.heading_est.disagreement_deg()
-        if desacuerdo is not None and ("gps_track" in self.heading_est.source or "ekf_udp" in self.heading_est.source):
-            self._disagreements.append(float(desacuerdo))
-            nota_desac = f"  desacuerdo={desacuerdo:+.0f}gr"
+        desac_gps = self.heading_est.disagreement_deg()
+        if desac_gps is not None:
+            self._disagreements_gps.append(float(desac_gps))
+            nota_desac = f"  desac_gps={desac_gps:+.0f}gr"
+
+        # Distorsión magnética del compás crudo respecto a la referencia confiable (informativo)
+        dist_mag = self.heading_est.compass_distortion_deg()
+        if dist_mag is not None:
+            self._disagreements_compass.append(float(dist_mag))
         nota_tilt = ""
 
         if self.odometry is not None and self.odometry.last_pitch is not None:
@@ -494,6 +539,7 @@ class Bridge:
                 return
 
             self._consecutive_empty = 0
+            self._consecutive_empty_recoveries = 0
             self.stats.plans_ok += 1
 
             if pose_now is not None:
@@ -600,22 +646,36 @@ class Bridge:
         libre: si hubiera algo delante, no habriamos llegado hasta aca.
         """
         self.stats.unstucks += 1
-        giros = self._consecutive_turns
-        sentido = sum(self._turn_sign_history)
-        print(f"[bridge] ATASCADO: {giros} giros seguidos sin avanzar "
-              f"(sentido dominante {'izq' if sentido > 0 else 'der'}). "
-              f"Fuerzo un avance de {self.unstick_forward_s:.1f} s.")
+        if giros > 0:
+            sentido = sum(self._turn_sign_history)
+            print(f"[bridge] ATASCADO: {giros} giros seguidos sin avanzar "
+                  f"(sentido dominante {'izq' if sentido > 0 else 'der'}). "
+                  f"Fuerzo un avance de {self.unstick_forward_s:.1f} s.")
+        else:
+            print(f"[bridge] RECUPERACION FRONTAL: frente despejado en memoria pero sin plan viable. "
+                  f"Fuerzo un avance de {self.unstick_forward_s:.1f} s para superar zona ciega.")
 
         self.send(DriveCommand(self.follower.max_linear, 0.0, "avance forzado"))
         t0 = time.time()
         while time.time() - t0 < self.unstick_forward_s and not self._stop_requested:
             time.sleep(0.15)
             try:
+                pose_now = None
+                if self.odometry is not None:
+                    t_telem = self.client.telemetry()
+                    pose_now = self.odometry.update(
+                        t_telem.raw,
+                        ekf_heading=getattr(t_telem, "ekf_heading", None),
+                        ekf_timestamp=getattr(t_telem, "ekf_heading_time", None),
+                    )
                 rgb, _ = self.client.front_frame()
-                roll_pitch = self.odometry.current_roll_pitch() if self.odometry is not None else None
+                roll_pitch = self.odometry.current_roll_pitch() if (self.odometry is not None and hasattr(self.odometry, "current_roll_pitch")) else None
                 r = roll_pitch[0] if roll_pitch is not None else None
                 p = roll_pitch[1] if roll_pitch is not None else None
                 res = self.perception.process(rgb, roll_rad=r, pitch_rad=p)
+                if self.use_map and self.pmap is not None and pose_now is not None:
+                    self.pmap.integrate(res.traversability, res.observed, pose_now,
+                                        self.forward_range, self.side_range, t=time.time())
                 if self._is_front_blocked(res.traversability):
                     print("[bridge] obstaculo durante el avance forzado, corto")
                     break
@@ -679,14 +739,18 @@ class Bridge:
         transitable. Informada por mapa+VLM cuando hay memoria espacial
         (_recover_informado); si no, barrido ciego en el lugar.
         """
+        self._consecutive_empty_recoveries = getattr(self, "_consecutive_empty_recoveries", 0) + 1
         print("[bridge] RECUPERACION: buscando rumbo transitable "
-              f"({self._consecutive_empty} planes vacios seguidos)")
+              f"({self._consecutive_empty} planes vacios seguidos, "
+              f"intento #{self._consecutive_empty_recoveries})")
         if self.use_map and self.pmap is not None and self.odometry is not None:
             self._recover_informado()
         else:
             self._barrido_ciego()
         self.heading_est.reset_track()  # el track GPS previo ya no dice el rumbo
         self._consecutive_empty = 0
+        self._plan_path_world = None
+        self._plan_pose = None
 
     def _get_estimated_tilt_deg(self) -> tuple[float, float] | None:
         """Devuelve (|pitch_deg|, |roll_deg|) si hay estimacion vigente, o None."""
@@ -835,6 +899,7 @@ class Bridge:
         self._consecutive_turns = 0
         self._turn_sign_history.clear()
         self._consecutive_empty = 0
+        self._consecutive_empty_recoveries = 0
         self._commit_side = 0
         self._consecutive_blocked = 0
         self._plan_path_world = None
@@ -937,10 +1002,17 @@ class Bridge:
         veto_tilt, razon_tilt = self._is_tilt_too_steep_for_recovery()
 
         mejor_heading, mejor_libre = None, -1.0
+        consecutive_recoveries = getattr(self, "_consecutive_empty_recoveries", 0)
         for h in self.recovery_headings_deg:
             # Si hay inclinacion peligrosa, vetamos el rumbo 180° (atras) por riesgo de vuelco
             if veto_tilt and abs(abs(float(h)) - 180.0) < 1.0:
                 print(f"[bridge]   rumbo 180° VETADO por pendiente ({razon_tilt})")
+                continue
+
+            # Anti-bucle para rumbo 0°: Si ya tuvimos recuperaciones consecutivas por planes vacios
+            # sin avance, vetamos 0° para obligar a una rotacion real que cambie la perspectiva
+            if consecutive_recoveries >= 2 and abs(float(h)) < 1e-6:
+                print("[bridge]   rumbo 0° OMITIDO (reintentos consecutivos de recuperacion sin avance)")
                 continue
 
             libre_pct, cobertura_pct = self._map_free_and_coverage(pose, float(h), self.heading_search_radius_m)
@@ -951,7 +1023,13 @@ class Bridge:
         if mejor_heading is not None:
             print(f"[bridge]   elijo rumbo {mejor_heading:+.0f} grados por mapa (libre={mejor_libre:.0f}%)")
             self.stats.recoveries_por_mapa += 1
-            self._girar_hacia(mejor_heading)
+            if abs(mejor_heading) < 1e-6:
+                # Rumbo 0° significa que el mapa ve el frente despejado.
+                # Un giro de 0° seria un no-op que dejaria al robot estancado en el mismo lugar;
+                # para recuperar el avance se ejecuta un avance forzado verificado.
+                self._unstick()
+            else:
+                self._girar_hacia(mejor_heading)
             return
 
         if self.use_vlm_recovery:
@@ -981,7 +1059,10 @@ class Bridge:
                 print(f"[bridge]   VLM sugiere '{decision.heading}' "
                       f"(confianza {decision.confidence:.2f}): {decision.reason}")
                 self.stats.recoveries_por_vlm += 1
-                self._girar_hacia(heading_deg)
+                if abs(heading_deg) < 1e-6:
+                    self._unstick()
+                else:
+                    self._girar_hacia(heading_deg)
                 return
 
         self._barrido_ciego()
@@ -1013,14 +1094,18 @@ class Bridge:
                                     timeout_s=self.vlm_recovery_timeout_s)
 
     def _girar_hacia(self, heading_rel_deg: float, step_deg: float | None = None) -> None:
-        """Gira en pasos hacia heading_rel_deg (relativo al rumbo del robot al
-        momento de llamar), re-verificando con el mapa despues de cada paso.
-        Nunca se compromete de una sola vez a un angulo grande calculado de
-        antemano, porque para el final del giro esos datos ya pueden estar
-        viejos.
+        """Gira hacia heading_rel_deg (relativo al rumbo del robot al momento de llamar).
 
-        La duracion de cada paso sale de recovery_deg_per_s, que es la tasa de
-        giro REAL del robot en grados por segundo.
+        Opera en LAZO CERRADO monitoreando la rotación física real integrada por la odometría,
+        contemplando la latencia de arranque del hardware (1.5 a 2.5 s) antes de evaluar
+        criterios de corte.
+
+        Criterios de fin de giro:
+        1. Primario (Lazo Cerrado): El giro real medido alcanza el objetivo dentro de
+           recovery_turn_tolerance_deg (o >= 80% del ángulo pedido).
+        2. Anticipado (Mapa Despejado): El mapa detecta frente libre, pero SOLO si ya transcurrió
+           la latencia de arranque y hubo rotación real significativa (>=20° o >=40% del objetivo).
+        3. Seguridad / Fallback: Timeout de seguridad y modelo teórico si la odometría no se mueve.
         """
         assert self.odometry is not None
         if abs(heading_rel_deg) < 1e-6:
@@ -1033,18 +1118,53 @@ class Bridge:
                 print(f"[bridge]   BLOQUEO DEFENSIVO: intento de giro 180° cancelado por {razon_tilt}")
                 return
 
+        target_mag_deg = abs(heading_rel_deg)
         step_deg = float(self.recovery_step_deg if step_deg is None else step_deg)
-        ang = self.follower.angular_sign * math.copysign(self.recovery_turn_speed, heading_rel_deg)
-        ang = float(np.clip(ang, -self.follower.max_angular, self.follower.max_angular))
-        paso_s = step_deg / max(self.recovery_deg_per_s, 1e-3)
+        base_speed = float(getattr(self, "recovery_turn_speed", 0.75))
+        ang = self.follower.angular_sign * math.copysign(base_speed, heading_rel_deg)
+        ang = float(np.clip(ang, -1.0, 1.0))
 
-        girado = 0.0
-        while abs(girado) < abs(heading_rel_deg) and not self._stop_requested:
-            self.send(DriveCommand(0.0, ang, f"girando hacia {heading_rel_deg:+.0f} grados (regimen cercano)"))
+        startup_lat_s = float(getattr(self, "recovery_startup_latency_s", 0.0))
+        deg_per_s = max(self.recovery_deg_per_s, 1.0)
+        tol_deg = float(getattr(self, "recovery_turn_tolerance_deg", 15.0))
+        target_reached_deg = max(target_mag_deg * 0.80, target_mag_deg - tol_deg)
+
+        # Duración teórica esperada y timeout de seguridad
+        expected_s = startup_lat_s + (target_mag_deg / deg_per_s)
+        timeout_s = float(getattr(self, "recovery_turn_timeout_s", max(20.0, expected_s * 1.5)))
+        paso_s = min(1.0, step_deg / deg_per_s)
+
+        t_start = time.time()
+        girado_real_deg = 0.0
+        girado_teorico_deg = 0.0
+        last_theta = self.odometry.pose.theta
+        comandos_enviados = 0
+
+        while not self._stop_requested:
+            now = time.time()
+            elapsed_s = now - t_start
+
+            # Chequeo de timeout de seguridad
+            if elapsed_s >= timeout_s:
+                print(f"[bridge]   TIMEOUT de giro ({elapsed_s:.1f}s >= {timeout_s:.1f}s, "
+                      f"girado real: {girado_real_deg:.1f}° / obj: {heading_rel_deg:+.0f}°)")
+                break
+
+            # Boost dinámico de par si el rover lucha contra fricción lateral en pendiente o pasto alto
+            if elapsed_s >= (startup_lat_s + 1.0) and girado_real_deg < (target_mag_deg * 0.25):
+                boost = min(0.20, 0.08 * (elapsed_s - (startup_lat_s + 0.5)))
+                effective_speed = min(0.95, base_speed + boost)
+                ang = self.follower.angular_sign * math.copysign(effective_speed, heading_rel_deg)
+                ang = float(np.clip(ang, -1.0, 1.0))
+
+            progreso_str = f"girando hacia {heading_rel_deg:+.0f} grados (regimen cercano) [{girado_real_deg:.1f}°/{target_mag_deg:.0f}°]"
+            self.send(DriveCommand(0.0, ang, progreso_str))
+            comandos_enviados += 1
+            girado_teorico_deg += step_deg
+
             t0 = time.time()
             while time.time() - t0 < paso_s and not self._stop_requested:
-                time.sleep(0.1)
-            girado += math.copysign(step_deg, heading_rel_deg)
+                time.sleep(0.05)
 
             t_telem = self.client.telemetry()
             pose = self.odometry.update(
@@ -1053,9 +1173,28 @@ class Bridge:
                 ekf_timestamp=getattr(t_telem, "ekf_heading_time", None),
             )
 
-            libre_pct, cobertura_pct = self._map_free_and_coverage(pose, 0.0, self.heading_search_radius_m)
-            if cobertura_pct >= self.recovery_min_cobertura_pct and libre_pct >= self.retroceso_min_libre_pct:
-                print(f"[bridge]   frente libre por mapa tras girar {girado:+.0f} grados, corto")
+            # Acumular rotación física medida (invariante a wrap [-pi, pi])
+            d_th = wrap_rad(pose.theta - last_theta)
+            last_theta = pose.theta
+            girado_real_deg += math.degrees(abs(d_th))
+
+            # 1. Criterio Lazo Cerrado: Giro físico completado
+            if girado_real_deg >= target_reached_deg and elapsed_s >= (startup_lat_s * 0.5):
+                print(f"[bridge]   giro completado por odometría: {girado_real_deg:.1f}° girados "
+                      f"(objetivo: {target_mag_deg:.0f}°, tol: {tol_deg:.0f}°) en {elapsed_s:.1f}s ({comandos_enviados} cmds)")
+                break
+
+            # 2. Criterio Despeje por Mapa: Solo tras superar latencia de arranque Y giro mínimo real
+            if elapsed_s >= startup_lat_s and (girado_real_deg >= min(20.0, target_mag_deg * 0.4)):
+                libre_pct, cobertura_pct = self._map_free_and_coverage(pose, 0.0, self.heading_search_radius_m)
+                if cobertura_pct >= self.recovery_min_cobertura_pct and libre_pct >= self.retroceso_min_libre_pct:
+                    print(f"[bridge]   frente libre por mapa tras girar {girado_real_deg:.1f}° reales en {elapsed_s:.1f}s, corto")
+                    break
+
+            # 3. Criterio de compatibilidad/fallback si la odometría no se mueve (stubs offline o sensor sin giro)
+            if girado_real_deg < 1.0 and girado_teorico_deg >= target_mag_deg and elapsed_s >= expected_s:
+                print(f"[bridge]   corte por modelo abierto/fallback ({elapsed_s:.1f}s >= {expected_s:.1f}s, "
+                      f"sin rotación de odometría detectada)")
                 break
 
         self.send(DriveCommand(0.0, 0.0, "fin del giro"))
@@ -1108,51 +1247,51 @@ class Bridge:
         self._print_heading_diagnosis()
 
     def _print_heading_diagnosis(self) -> None:
-        """Resume el desacuerdo brujula vs GPS y dice que hacer con el.
+        """Resume el diagnóstico de rumbo al final de la corrida.
 
-        Se usa estadistica CIRCULAR (promediar el vector unitario de cada
-        angulo) y no un promedio comun: con angulos, +179 y -179 estan a 2
-        grados uno del otro pero su media aritmetica da 0, que es el lado
-        opuesto. R es la longitud del vector promedio: cerca de 1 significa
-        que las muestras apuntan todas para el mismo lado (offset sistematico,
-        corregible); cerca de 0 significa que estan repartidas (ruido).
+        Compara:
+        1. Rumbo Activo vs Curso GPS Confiable: Fuente válida para evaluar offset cinemático.
+        2. Compás Crudo SDK vs Referencia: Diagnóstico informativo de perturbación magnética
+           ambiental (estructuras metálicas), con advertencia explícita de NO aplicar al config.
         """
-        muestras = self._disagreements
-        print("\n  --- rumbo: brujula vs GPS ---")
-        if len(muestras) < 5:
-            print(f"  muestras utiles:        {len(muestras)} (pocas para concluir; "
-                  "hace falta que el robot avance lo suficiente como para que "
-                  "gps_track se active)")
-            return
-        radianes = np.radians(np.asarray(muestras, dtype=np.float64))
-        media = math.degrees(math.atan2(np.mean(np.sin(radianes)), np.mean(np.cos(radianes))))
-        r = float(np.hypot(np.mean(np.sin(radianes)), np.mean(np.cos(radianes))))
-        dispersion = math.degrees(math.sqrt(-2.0 * math.log(r))) if r > 1e-9 else 180.0
-        print(f"  muestras utiles:        {len(muestras)}")
-        print(f"  desacuerdo medio:       {media:+.0f} grados")
-        print(f"  concentracion R:        {r:.2f}  (dispersion ~{dispersion:.0f} grados)")
-        # Un offset chico no se corrige aunque este muy concentrado: pedirle al
-        # config que compense 3 grados es ruido, no calibracion.
-        if abs(media) < 10.0:
-            print("  -> SIN OFFSET: las dos fuentes coinciden en promedio."
-                  " No hay nada que calibrar.")
-            if r < 0.9:
-                print("     La dispersion que queda no es sesgo sino desacuerdo"
-                      " momentaneo: el track GPS mide la CUERDA entre dos"
-                      " muestras, asi que mientras el robot gira se queda"
-                      " atras. Por eso trust_orientation: true.")
-        elif r >= 0.7:
-            print(f"  -> OFFSET SISTEMATICO. Pone en el config:")
-            print(f"     navigation.orientation_offset_deg: {media:+.0f}")
-            print("     Con eso las dos fuentes coinciden y desaparecen los saltos"
-                  " de rumbo al alternar entre ellas.")
-        elif r >= 0.4:
-            print("  -> offset parcial: hay tendencia pero con mucha dispersion."
-                  " Probar el offset ayuda, pero conviene la fusion con odometria.")
+        print("\n  --- diagnóstico de rumbo ---")
+
+        # 1. Heading Activo vs Curso GPS Confiable
+        muestras_gps = self._disagreements_gps
+        print("  [1] Rumbo Activo vs Curso GPS (Ground Truth en rectas):")
+        if len(muestras_gps) < 5:
+            print(f"      muestras útiles:        {len(muestras_gps)} (pocas para concluir; "
+                  "hace falta avance rectilíneo continuo para activar curso GPS confiable)")
         else:
-            print("  -> RUIDO, no offset. El magnetometro no es corregible con una"
-                  " constante: hay que usar pose.theta de la odometria como rumbo"
-                  " de corto plazo y el GPS solo como referencia absoluta.")
+            rad = np.radians(np.asarray(muestras_gps, dtype=np.float64))
+            media_gps = math.degrees(math.atan2(np.mean(np.sin(rad)), np.mean(np.cos(rad))))
+            r_gps = float(np.hypot(np.mean(np.sin(rad)), np.mean(np.cos(rad))))
+            disp = math.degrees(math.sqrt(-2.0 * math.log(r_gps))) if r_gps > 1e-9 else 180.0
+            print(f"      muestras útiles:        {len(muestras_gps)}")
+            print(f"      desacuerdo medio:       {media_gps:+.0f} grados")
+            print(f"      concentración R:        {r_gps:.2f}  (dispersión ~{disp:.0f} grados)")
+            if abs(media_gps) < 10.0:
+                print("      -> SIN OFFSET: el rumbo activo y el curso GPS coinciden en promedio."
+                      " No hay nada que calibrar.")
+            elif r_gps >= 0.7:
+                print(f"      -> OFFSET SISTEMÁTICO CINEMÁTICO DETECTADO contra curso GPS.")
+                print(f"         navigation.orientation_offset_deg: {media_gps:+.0f}")
+                print("         (Alineación cinemática del chasis respecto a trayectoria GNSS)")
+            else:
+                print("      -> Dispersión transitoria en el track GPS (curvas o baja velocidad).")
+
+        # 2. Compás Crudo del SDK vs Referencia Confiable (Interferencia Magnética Ambiental)
+        muestras_mag = self._disagreements_compass
+        if len(muestras_mag) >= 5:
+            rad_m = np.radians(np.asarray(muestras_mag, dtype=np.float64))
+            media_mag = math.degrees(math.atan2(np.mean(np.sin(rad_m)), np.mean(np.cos(rad_m))))
+            r_mag = float(np.hypot(np.mean(np.sin(rad_m)), np.mean(np.cos(rad_m))))
+            print(f"\n  [2] Compás Crudo SDK vs Referencia (Diagnóstico de Interferencia Magnética):")
+            print(f"      muestras registradas:   {len(muestras_mag)}")
+            print(f"      desvío compás crudo:    {media_mag:+.0f} grados (R={r_mag:.2f})")
+            print("      -> AVISO: Esta discrepancia refleja perturbación magnética local (metal en el sitio).")
+            print("         NO aplicar este valor a navigation.orientation_offset_deg: el EKF ya descarta")
+            print("         el compás saturado mediante gating y se ancla al giróscopo debiasado y GPS.")
 
 
 def main() -> int:

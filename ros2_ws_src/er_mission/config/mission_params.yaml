@@ -1,0 +1,10 @@
+mission_manager_node:
+  ros__parameters:
+    sdk_url: "http://127.0.0.1:8000"
+    checkpoint_post_retries: 15
+    checkpoint_post_min_interval_s: 2.0
+    checkpoint_max_distance_m: 13.5
+    proximity_dwell_s: 2.0
+    min_navigation_time_s: 8.0
+    pre_post_stop_s: 2.5
+    gps_retention_max_age_s: 10.0

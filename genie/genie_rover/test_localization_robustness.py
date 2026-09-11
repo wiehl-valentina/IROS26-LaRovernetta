@@ -170,6 +170,39 @@ def test_gyro_uncertainty_growth():
     print("  ✓ Test f superado.")
 
 
+def test_disagreement_with_gps_course():
+    print("\n=== Test g: disagreement_deg() contra curso GPS y compass_distortion_deg() ===")
+    he = HeadingEstimator(use_ekf_udp=True, ekf_weight=1.0)
+
+    # 1. Sin curso GPS disponible -> disagreement_deg debe ser None
+    he.update(9.7915, -84.1058, orientation=180.0, t=1.0, ekf_heading=215.0)
+    assert he.disagreement_deg() is None, "Sin curso GPS no debe emitir desacuerdo"
+
+    # Distorsión magnética del compás crudo: (180 - 215) = -35°
+    dist_comp = he.compass_distortion_deg()
+    assert dist_comp is not None and abs(dist_comp - (-35.0)) < 1e-4, f"Esperaba -35°, dio {dist_comp}"
+    print(f"  Distorsión compás crudo identificada: {dist_comp:+.1f}° (no sugerida como offset de config)")
+
+    # 2. Generar curso GPS confiable por avance rectilíneo al Norte (heading ~0.0°)
+    # Desplazamiento de ~3 metros al Norte en 3 segundos con RTK Fix
+    lat0 = 9.791500
+    lon0 = -84.105800
+    lat1 = lat0 + (3.0 / 111194.9)
+    he.update(lat0, lon0, orientation=180.0, t=2.0, hdop=0.010, fix_quality=4, gps_signal=45, ekf_heading=5.0)
+    he.update(lat1, lon0, orientation=180.0, t=3.0, hdop=0.010, fix_quality=4, gps_signal=45, ekf_heading=5.0)
+
+    assert he.last_gps_heading is not None, "Debería haber calculado curso GPS"
+    assert he.last_gps_sigma is not None and he.last_gps_sigma <= 15.0, "Curso GPS debe tener baja sigma"
+    print(f"  Curso GPS calculado: {he.last_gps_heading:.1f}°, sigma: ±{he.last_gps_sigma:.2f}°")
+
+    # 3. disagreement_deg() compara Heading EKF (5.0°) vs Curso GPS (~0.0°) -> ~+5.0°
+    desac_gps = he.disagreement_deg()
+    assert desac_gps is not None, "Con curso GPS confiable debe haber desacuerdo"
+    assert abs(desac_gps - 5.0) < 1.0, f"Esperaba desacuerdo ~+5.0° contra curso GPS, dio {desac_gps}"
+    print(f"  Desacuerdo cinemático contra curso GPS: {desac_gps:+.1f}° (métrica válida para calibración)")
+    print("  ✓ Test g superado.")
+
+
 def main():
     print("==================================================")
     print("  EJECUTANDO SUITE DE LOCALIZACIÓN ROBUSTA (FASE 1 Y 2)")
@@ -179,6 +212,7 @@ def main():
     test_heading_jitter_rejection()
     test_circular_weighted_fusion()
     test_gyro_uncertainty_growth()
+    test_disagreement_with_gps_course()
     print("\n==================================================")
     print("  TODAS LAS PRUEBAS OFFLINE PASARON EXITOSAMENTE.")
     print("==================================================")

@@ -1,0 +1,72 @@
+gps_waypoint_controller:
+  ros__parameters:
+    # --- Tolerancias y Distancias ---
+    goal_tolerance_m: 13.0            # Radio de llegada al waypoint/checkpoint (metros)
+    goal_dwell_s: 1.0                 # Tiempo de permanencia mínima en meta para confirmar llegada (segundos)
+    approach_align_distance_m: 8.0    # Distancia a la meta a partir de la cual se aplica el umbral fino de alineación (metros)
+
+    # --- Umbrales de Alineación Angular y Transición (FIX 1a / FIX 1b) ---
+    align_threshold_deg: 18.0         # Umbral fino de error angular para pasar a DRIVE en aproximación cercana (grados)
+    coarse_align_threshold_deg: 25.0  # Umbral grueso de error angular a larga distancia (grados)
+    drive_abort_threshold_deg: 65.0   # Umbral de desvío geodésico para abortar DRIVE y volver a ALIGN (grados)
+    drive_abort_dwell_s: 1.5          # Persistencia mínima del desvío para confirmar aborto de DRIVE (segundos)
+    max_bev_deviation_deg: 45.0       # Desviación angular máxima que BEV puede comandar respecto al rumbo geodésico (grados)
+    drive_pivot_threshold_deg: 30.0   # Por encima de este error respecto al rumbo
+                                      # deseado, el rover frena y pivota a turn_throttle
+                                      # en vez de girar lento mientras avanza.
+
+    # --- Dinámica de Movimiento y Giro (Acelerador Normalizado [-1.0, 1.0]) ---
+    forward_throttle: 0.20             # Fracción normalizada de acelerador lineal en modo DRIVE (0.0 a 1.0)
+                                       # NOTA DE SEGURIDAD (Brief 25 / Rollover Incident):
+                                       # Reducido preventivamente de 0.40 a 0.20 tras vuelco en campo por giro
+                                       # brusco contra obstáculo. Subir de vuelta a 0.40 únicamente tras
+                                       # validar en campo el acoplamiento lineal/angular y la reducción por congestión.
+    turn_throttle: 0.70                # Fracción normalizada de acelerador angular de giro en modo ALIGN (0.0 a 1.0)
+    drive_correction_gain: 0.01        # Ganancia proporcional para corrección angular durante el avance (modo DRIVE)
+    max_drive_angular: 0.45   # = drive_correction_gain * max_bev_deviation_deg (0.01 * 45)
+                              # Elimina saturación en el rango operativo completo.
+    turn_slowdown_factor: 0.7          # FIX 1b: A demanda angular máxima, reduce el avance lineal hasta un 70%
+    min_drive_throttle_ratio: 0.3      # FIX 1b: Piso de avance: nunca baja del 30% del throttle nominal
+    motor_deadband_throttle: 0.15      # FIX A.2: Umbral estimado de arranque de motores.
+                                       # Por debajo de este valor el comando no produce
+                                       # movimiento. PENDIENTE DE MEDICIÓN: ver matriz de
+                                       # calibraciones de hardware (medición 3).
+    max_total_drive_angular: 0.8       # Límite de seguridad absoluto para la fracción angular en DRIVE (0.0 a 1.0)
+    invert_angular: true               # Inversión de signo angular para coincidir con la convención cinemática del robot
+    control_loop_hz: 3.0               # Frecuencia del lazo principal de control (Hz)
+
+    # --- Mitigación de Latencia y Filtros (Burst & Wait / FIX 2a y 2b) ---
+    turn_burst_s: 0.25                 # Duración nominal del pulso de giro en ALIGN (segundos)
+    pause_after_turn_s: 0.5            # Pausa mínima tras pulso de giro para estabilización física (segundos)
+    turn_burst_min_s: 0.15             # Duración mínima de ráfaga de giro proporcional (segundos)
+    turn_burst_max_s: 1.20             # Duración máxima de ráfaga de giro proporcional (segundos)
+    yaw_rate_deg_s: 17.0               # Velocidad angular efectiva medida en hardware a turn_throttle=0.70 (grados/s)
+    turn_burst_damping: 0.6            # Factor de amortiguamiento de ráfaga de giro proporcional
+    heading_trust_threshold_deg: 10.0  # Umbral de incertidumbre propagada para autorizar ráfaga sin esperar compás (grados)
+    max_heading_jump_deg: 150.0        # Salto angular instantáneo máximo tolerado antes de rechazar la muestra (grados)
+    heading_filter_alpha: 0.35         # Factor de suavizado pasa-bajos exponencial para el rumbo
+    reached_publish_period_s: 1.0      # Período de republicación del estado REACHED (segundos)
+    gps_max_stale_s: 2.0               # Antigüedad máxima permitida para datos GPS antes de frenar (segundos)
+
+    # --- Seguimiento de Trayectorias Planificadas (BEV) y Recovery (FIX 3) ---
+    path_following_enabled: true       # Habilita seguimiento de trayectorias locales BEV
+    path_topic: "earth_rover/planned_path"
+    path_valid_topic: "earth_rover/planner_valid"
+    alive_paths_topic: "earth_rover/alive_paths"  # Tópico con conteo de caminos sobrevivientes al filtro de colisión (FIX 2)
+    alive_paths_nominal: 40            # Cantidad nominal de caminos libres; conteos menores indican congestión
+    min_congestion_ratio: 0.25         # Piso de velocidad lineal en congestión crítica (alive_paths=1)
+    alive_paths_max_stale_s: 5.0       # Antigüedad máxima permitida para telemetría de alive_paths (segundos)
+    path_max_stale_s: 8.0              # Antigüedad máxima de trayectoria planificada antes de fallback a GPS (segundos)
+    lookahead_distance_m: 1.0          # Distancia de persecución sobre la trayectoria (metros)
+    recovery_turn_throttle: 0.30       # Fracción normalizada de acelerador angular en modo RECOVERY (0.0 a 1.0)
+    recovery_max_duration_s: 20.0   # A recovery_turn_throttle=0.30 (~7.3°/s extrapolado
+                                    # de 17°/s medidos a 0.70), 20s barren ~146°.
+                                    # Con 8.0s solo barría 58°, insuficiente para escanear.
+
+    # --- Gobernador Dinámico de Velocidad (Brief 14 / N.1, Brief 15 / O.2, Brief 18 / R.1) ---
+    require_velocity_governor: true    # Si true, requiere tópico safe_velocity_limit del planner BEV
+    safe_velocity_limit_topic: "earth_rover/safe_velocity_limit"
+    max_linear_speed_mps: 1.111        # Velocidad física máxima del Mini+ a acelerador pleno 1.0 (m/s)
+    heading_max_stale_s: 3.5           # Antigüedad máxima permitida para datos de heading antes de frenar (segundos)
+    heading_fresh_wait_timeout_s: 2.5  # Tiempo máximo de espera en pausa para recibir un heading fresco (Brief 22 / V.2)
+    geodesic_fallback_throttle: 0.20   # Fracción normalizada de acelerador lineal en navegación geodésica pura (0.0 a 1.0)

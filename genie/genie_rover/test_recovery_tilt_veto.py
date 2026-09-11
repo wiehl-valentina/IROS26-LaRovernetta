@@ -141,7 +141,7 @@ def _build_test_stub(tilt_pitch_deg: float = 0.0, tilt_roll_deg: float = 0.0):
     for name in ("_map_free_and_coverage", "_girar_hacia", "_barrido_ciego",
                  "_preguntar_vlm", "_retroceder", "_recover_informado",
                  "_retroceso_y_recover", "_is_tilt_too_steep_for_recovery",
-                 "_get_estimated_tilt_deg", "_is_front_blocked"):
+                 "_get_estimated_tilt_deg", "_is_front_blocked", "_unstick"):
         if hasattr(Bridge, name):
             setattr(stub, name, types.MethodType(getattr(Bridge, name), stub))
 
@@ -365,6 +365,42 @@ class TestRecoveryTiltVeto(unittest.TestCase):
         self.assertAlmostEqual(rear_pose.theta, expected_theta, places=5,
                                msg=f"theta de camara trasera debio ser theta + pi ({expected_theta}), pero fue {rear_pose.theta}")
 
+    def test_recover_0deg_triggers_unstick(self):
+        """Verifica que si _recover_informado elige rumbo 0.0° (adelante despejado en mapa),
+        ejecuta _unstick() (avance forzado) en vez de ser un no-op pasivo.
+        """
+        stub = _build_test_stub(tilt_pitch_deg=0.0, tilt_roll_deg=0.0)
+        # Hacemos todo el mapa libre
+        stub.pmap.value[:] = 1.0
+        stub.pmap.conf[:] = 1.0
+        stub.unstick_forward_s = 0.1
+
+        unstick_called = [False]
+        stub._unstick = lambda: unstick_called.__setitem__(0, True)
+
+        stub._recover_informado()
+        self.assertTrue(unstick_called[0], "Al elegir 0° debe ejecutar _unstick() para avanzar")
+        self.assertEqual(stub.stats.recoveries_por_mapa, 1)
+
+    def test_consecutive_recoveries_omit_0deg(self):
+        """Verifica que tras recuperaciones consecutivas sin exito (_consecutive_empty_recoveries >= 2),
+        el rumbo 0° se omita para obligar a una rotacion real (evita bucle infinito).
+        """
+        stub = _build_test_stub(tilt_pitch_deg=0.0, tilt_roll_deg=0.0)
+        stub.pmap.value[:] = 1.0
+        stub.pmap.conf[:] = 1.0
+        # Simular que ya hubo intentos consecutivos de recuperacion
+        stub._consecutive_empty_recoveries = 2
+
+        girado_headings = []
+        stub._girar_hacia = lambda h: girado_headings.append(h)
+
+        stub._recover_informado()
+        self.assertEqual(len(girado_headings), 1)
+        self.assertNotEqual(girado_headings[0], 0.0,
+                            f"En reintentos consecutivos no debe elegir 0°, eligio {girado_headings[0]}")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

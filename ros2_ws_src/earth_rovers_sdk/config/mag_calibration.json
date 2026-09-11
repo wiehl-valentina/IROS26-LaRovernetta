@@ -1,0 +1,14 @@
+{
+  "_comment": "Calibraci\u00f3n de norma magn\u00e9tica y factores relativos de saturaci\u00f3n bruta (Fase 1). Origen: Test A en reposo (2026-09-10), norma media = 3331.3 counts. Los umbrales se expresan en factores relativos a mag_norm_reference para garantizar portabilidad universal.",
+  "mag_norm_reference": 12221.7,
+  "mag_gross_factor_min": 0.3,
+  "mag_gross_factor_max": 2.5,
+  "mag_tol_inner_factor": 0.2,
+  "mag_tol_outer_factor": 0.5,
+  "mag_tilt_level_deg": 6.0,
+  "mag_tilt_slope_deg": 18.0,
+  "mag_tilt_weight_min": 0.15,
+  "mag_stuck_std_thresh": 5.0,
+  "mag_turn_rate_thresh_dps": 3.0,
+  "calibrated": true
+}

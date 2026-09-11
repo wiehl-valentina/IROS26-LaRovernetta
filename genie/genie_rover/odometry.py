@@ -100,6 +100,7 @@ class OdometryConfig:
     # Umbrales de degradacion de confianza EKF por inclinacion (en grados)
     tilt_blend_start_deg: float = 5.0
     tilt_blend_max_deg: float = 20.0
+    tilt_max_staleness_s: float = 5.0
     max_dt_s: float = 0.5
 
 
@@ -557,14 +558,14 @@ class Odometry:
         self.last_blend_effective = self.cfg.heading_blend
 
     def current_roll_pitch(self, now: float | None = None,
-                           max_staleness_s: float = 1.5) -> tuple[float, float] | None:
+                           max_staleness_s: float | None = None) -> tuple[float, float] | None:
         """Devuelve (roll_rad, pitch_rad) si el gate esta abierto o dentro de la vigencia max_staleness_s.
 
         Manejo de gate cerrado:
           - Gate abierto: medicion fresca, se devuelve inmediatamente.
           - Gate cerrado (aceleracion lineal o vibraciones): una pendiente fisica no desaparece
             en decenas o cientos de milisegundos. Se preserva la ultima medicion valida mientras
-            su antiguedad no supere max_staleness_s (por defecto 1.5 s, alineado con ekf_staleness_s).
+            su antiguedad no supere max_staleness_s (por defecto tilt_max_staleness_s del config, 5.0 s).
           - Antiguedad > max_staleness_s o sin medicion previa: devuelve None
             (el consumidor cae a la pose nominal nivelada).
         """
@@ -572,8 +573,9 @@ class Odometry:
             return None
         if self.tilt_gate_open:
             return self.last_roll, self.last_pitch
+        staleness_limit = max_staleness_s if max_staleness_s is not None else getattr(self.cfg, "tilt_max_staleness_s", 5.0)
         t_now = now if now is not None else time.time()
-        if self.last_tilt_time is not None and (t_now - self.last_tilt_time) <= max_staleness_s:
+        if self.last_tilt_time is not None and (t_now - self.last_tilt_time) <= staleness_limit:
             return self.last_roll, self.last_pitch
         return None
 

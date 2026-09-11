@@ -1,0 +1,335 @@
+<?xml version="1.0"?>
+<!--
+  URDF del Rover FrodoBots Mini+ V6.2 (REP-103 / REP-105 compliant)
+  
+  Dimensiones Oficiales (Ficha Mini+ V6.2):
+  - Largo total: 250 mm (0.250 m)
+  - Ancho total: 190 mm (0.190 m)
+  - Alto total: 195 mm (0.195 m)
+  - Vía (Track, centro-centro de ruedas izq/der): 160 mm (0.160 m)
+  - Batalla (Wheelbase, centro-centro ejes del/tras): 150 mm (0.150 m)
+  - Diámetro de ruedas: 95 mm (radio r = 0.0475 m)
+  - Despeje al suelo: 45 mm (0.045 m)
+  - Masa total: 1.4 kg
+  - Pendiente máxima: 18°
+  - Velocidad máxima: 1.11 m/s (4.0 km/h)
+  
+  Sensores:
+  - Cámara frontal: x = 0.125 m, y = 0.0 m, z = 0.140 m sobre el suelo.
+    Pitch nominal = -8.0° (-0.1396 rad, cabeceo hacia abajo).
+    NOTA: Altura y pitch son valores nominales sujetos a confirmación con hardware.
+  - IMU (MPU-6050): en el centro del chasis (x = 0.0, y = 0.0, z = 0.080 m).
+  - GPS (L1/L5): sobre la cubierta superior (x = 0.0, y = 0.0, z = 0.195 m).
+-->
+<robot name="mini_plus_rover">
+
+  <!-- ========================================================================= -->
+  <!-- 1. BASE FOOTPRINT & CHASSIS (base_link)                                  -->
+  <!-- ========================================================================= -->
+  <link name="base_footprint"/>
+
+  <joint name="base_footprint_to_base_link" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <!-- El centro de base_link se ubica a la altura del eje de ruedas + despeje -->
+    <origin xyz="0.0 0.0 0.0975" rpy="0 0 0"/>
+  </joint>
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.250 0.130 0.105"/>
+      </geometry>
+      <material name="dark_gray">
+        <color rgba="0.2 0.2 0.2 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.250 0.190 0.150"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="1.20"/>
+      <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
+      <!-- Inercia de caja solida: Ixx = m/12 * (w^2 + h^2), Iyy = m/12 * (l^2 + h^2), Izz = m/12 * (l^2 + w^2) -->
+      <inertia ixx="0.0031" ixy="0.0" ixz="0.0"
+               iyy="0.0073" iyz="0.0"
+               izz="0.0084"/>
+    </inertial>
+  </link>
+
+  <!-- ========================================================================= -->
+  <!-- 2. RUEDAS (4 Ruedas en Tracción Skid-Steer)                                -->
+  <!-- ========================================================================= -->
+  <!-- Front Left Wheel -->
+  <link name="front_left_wheel">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.0475" length="0.030"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.05 0.05 0.05 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.0475" length="0.030"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.05"/>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <inertia ixx="0.000032" ixy="0" ixz="0" iyy="0.000032" iyz="0" izz="0.000056"/>
+    </inertial>
+  </link>
+
+  <joint name="front_left_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="front_left_wheel"/>
+    <origin xyz="0.075 0.080 -0.050" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- Front Right Wheel -->
+  <link name="front_right_wheel">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.0475" length="0.030"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.05 0.05 0.05 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.0475" length="0.030"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.05"/>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <inertia ixx="0.000032" ixy="0" ixz="0" iyy="0.000032" iyz="0" izz="0.000056"/>
+    </inertial>
+  </link>
+
+  <joint name="front_right_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="front_right_wheel"/>
+    <origin xyz="0.075 -0.080 -0.050" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- Rear Left Wheel -->
+  <link name="rear_left_wheel">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.0475" length="0.030"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.05 0.05 0.05 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.0475" length="0.030"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.05"/>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <inertia ixx="0.000032" ixy="0" ixz="0" iyy="0.000032" iyz="0" izz="0.000056"/>
+    </inertial>
+  </link>
+
+  <joint name="rear_left_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="rear_left_wheel"/>
+    <origin xyz="-0.075 0.080 -0.050" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- Rear Right Wheel -->
+  <link name="rear_right_wheel">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.0475" length="0.030"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.05 0.05 0.05 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.0475" length="0.030"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.05"/>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <inertia ixx="0.000032" ixy="0" ixz="0" iyy="0.000032" iyz="0" izz="0.000056"/>
+    </inertial>
+  </link>
+
+  <joint name="rear_right_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="rear_right_wheel"/>
+    <origin xyz="-0.075 -0.080 -0.050" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- ========================================================================= -->
+  <!-- 3. SENSORES (Cámara Frontal, IMU MPU-6050, GPS GNSS)                       -->
+  <!-- ========================================================================= -->
+
+  <!-- 3.1 CÁMARA FRONTAL -->
+  <!-- Altura nominal 0.140 m sobre piso (z_base_link = 0.140 - 0.0975 = 0.0425 m), pitch nominal = -8° (-0.1396 rad) -->
+  <link name="camera_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.025 0.030 0.025"/>
+      </geometry>
+      <material name="blue">
+        <color rgba="0.1 0.3 0.8 1.0"/>
+      </material>
+    </visual>
+    <inertial>
+      <mass value="0.02"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.000001" ixy="0" ixz="0" iyy="0.000001" iyz="0" izz="0.000001"/>
+    </inertial>
+  </link>
+
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <!-- Posición: frente del chasis (x=0.125m), centrado (y=0.0m), z=0.0425m sobre centro base_link -->
+    <!-- Orientación: roll=0, pitch=-8° (-0.1396 rad, cabeceo abajo), yaw=0 -->
+    <origin xyz="0.125 0.0 0.0425" rpy="0.0 -0.13962634 0.0"/>
+  </joint>
+
+  <!-- Optical Frame (REP-103: +Z adelante, +X derecha, +Y abajo) -->
+  <link name="camera_optical_frame"/>
+  <joint name="camera_optical_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.570796 0 -1.570796"/>
+  </joint>
+
+  <!-- 3.2 IMU MPU-6050 -->
+  <link name="imu_link"/>
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 3.3 GPS GNSS -->
+  <link name="gps_link"/>
+  <joint name="gps_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="gps_link"/>
+    <origin xyz="0.0 0.0 0.0975" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ========================================================================= -->
+  <!-- 4. PLUGINS DE GAZEBO                                                      -->
+  <!-- ========================================================================= -->
+
+  <!-- 4.1 Cinemática Skid-Steer / 4-Wheel Drive -->
+  <gazebo>
+    <plugin name="skid_steer_drive_controller" filename="libgazebo_ros_diff_drive.so">
+      <ros>
+        <namespace>/</namespace>
+        <remapping>cmd_vel:=cmd_vel</remapping>
+        <remapping>odom:=wheel_odom</remapping>
+      </ros>
+      <update_rate>50.0</update_rate>
+      <num_wheel_pairs>2</num_wheel_pairs>
+      <left_joint>front_left_wheel_joint</left_joint>
+      <right_joint>front_right_wheel_joint</right_joint>
+      <left_joint>rear_left_wheel_joint</left_joint>
+      <right_joint>rear_right_wheel_joint</right_joint>
+      <wheel_separation>0.160</wheel_separation>
+      <wheel_diameter>0.095</wheel_diameter>
+      <max_wheel_torque>2.5</max_wheel_torque>
+      <max_wheel_acceleration>1.5</max_wheel_acceleration>
+      <publish_odom>true</publish_odom>
+      <publish_odom_tf>false</publish_odom_tf>
+      <publish_wheel_tf>true</publish_wheel_tf>
+      <odometry_frame>odom</odometry_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
+    </plugin>
+  </gazebo>
+
+  <!-- 4.2 Sensor IMU -->
+  <gazebo reference="imu_link">
+    <sensor name="mpu6050_imu" type="imu">
+      <always_on>true</always_on>
+      <update_rate>50.0</update_rate>
+      <plugin name="imu_plugin" filename="libgazebo_ros_imu_sensor.so">
+        <ros>
+          <namespace>/</namespace>
+          <remapping>~/out:=imu/data</remapping>
+        </ros>
+        <initial_orientation_as_reference>false</initial_orientation_as_reference>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+  <!-- 4.3 Sensor Cámara Frontal -->
+  <gazebo reference="camera_link">
+    <sensor name="front_camera" type="camera">
+      <always_on>true</always_on>
+      <update_rate>15.0</update_rate>
+      <camera name="front">
+        <!-- HFOV Fisheye 126° = 2.199 rad -->
+        <horizontal_fov>2.199</horizontal_fov>
+        <image>
+          <width>1024</width>
+          <height>576</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.05</near>
+          <far>10.0</far>
+        </clip>
+      </camera>
+      <plugin name="camera_controller" filename="libgazebo_ros_camera.so">
+        <ros>
+          <namespace>/</namespace>
+          <remapping>image_raw:=earth_rover/front/image_raw</remapping>
+          <remapping>camera_info:=earth_rover/front/camera_info</remapping>
+        </ros>
+        <frame_name>camera_optical_frame</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+  <!-- 4.4 Sensor GPS -->
+  <gazebo reference="gps_link">
+    <sensor name="gnss_sensor" type="gps">
+      <always_on>true</always_on>
+      <update_rate>1.0</update_rate>
+      <plugin name="gps_controller" filename="libgazebo_ros_gps_sensor.so">
+        <ros>
+          <namespace>/</namespace>
+          <remapping>~/out:=gps/fix</remapping>
+        </ros>
+        <frame_name>gps_link</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+</robot>

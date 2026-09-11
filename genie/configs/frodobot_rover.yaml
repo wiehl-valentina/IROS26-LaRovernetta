@@ -67,9 +67,9 @@ navigation:
   #   +1.0  si angular positivo hace girar a la DERECHA
   angular_sign: -1.0
 
-  max_linear: 0.70       # Origen: marian (era 1.0). Velocidad acotada para mayor control en pendiente.
-  max_angular: 0.60      # Origen: marian (era 0.45). Mayor autoridad angular.
-  turn_speed: 0.50       # Origen: marian (era 0.40). Giro nominal calibrado.
+  max_linear: 0.25       # Origen: marian (era 1.0). Velocidad acotada para mayor control en pendiente.
+  max_angular: 0.65      # Origen: marian (era 0.45). Mayor autoridad angular para vencer roce lateral.
+  turn_speed: 0.55       # Origen: marian (era 0.40). Giro nominal calibrado con par suficiente.
   # Ganancia del giro: angular = kp_angular * radianes(error). Con 0.9 el
   # comando saturaba en max_angular apenas el error pasaba los 29 grados, y
   # como el planner devuelve tipicamente 40-70 grados, giraba SIEMPRE al
@@ -82,7 +82,12 @@ navigation:
   align_threshold_deg: 90.0
 
   goal_range_m: 3.5
-  claim_radius_m: 15.0    # tolerancia oficial del ERC
+  # Radio de arribo / reclamo del checkpoint objetivo (metros).
+  # Origen: port de la lógica de ROS 2 (gps_waypoint_controller goal_tolerance_m: 13.0m).
+  # Aplica un margen de seguridad de 2.0 metros adentro del perímetro oficial del
+  # checkpoint de 15.0m en ERC para absorber el jitter autónomo del GNSS.
+  checkpoint_reached_radius_m: 13.0
+  claim_radius_m: 13.0    # alias para compatibilidad retrospectiva
 
   # MEDIDO en la corrida debug/go6 (14 muestras con las dos fuentes leidas en
   # el mismo instante): el desacuerdo medio brujula-GPS es de -3 grados, o sea
@@ -148,10 +153,10 @@ planner:
   num_mid_points_per_goal: 20
   path_num_samples: 100
   footprint_px: 12        # ~0.30 m de ancho de robot. Medir el Mini y ajustar.
-  threshold_cost: 0.52    # Origen: marian (era 0.35). Umbral de costo adaptado a pendientes.
-  threshold_points_ratio: 0.08 # Origen: marian (era 0.02).
+  threshold_cost: 0.65    # Origen: adaptado a pendientes/pasto (era 0.52). Permite superar terreno con trav ~0.35-0.50 sin filtrar 100% de caminos.
+  threshold_points_ratio: 0.18 # Origen: adaptado a pendientes (era 0.08). Evita que micro-parches de hierba descarten todo el abanico.
   number_of_points_to_filter: 60
-  alpha: 1.0
+  alpha: 3.0
   best_k: 12
   use_clustering: true    # el path fusion del paper
   max_clusters: 2
@@ -189,12 +194,12 @@ safety:
   obstacle_persist_frames: 7
 
   # Chequeo frontal calibrado para pendientes (evita falsos obstaculos por deformacion IPM):
-  # Origen: marian.
-  front_near_m: 0.32
+  # Origen: marian (calibrado para rampas y pasto sin falsos positivos).
+  front_near_m: 0.40           # Origen: marian (era 0.32). Aleja el límite cercano para evitar distorsión IPM al pie del chasis en rampa.
   front_far_m: 0.85
   front_half_width_m: 0.22
-  front_traversable_thresh: 0.28
-  front_min_free_ratio: 0.40
+  front_traversable_thresh: 0.26 # Origen: intermedio (era 0.22) para detectar obstáculos débiles que el planner ignoró.
+  front_min_free_ratio: 0.35     # Origen: intermedio (era 0.30). Requiere 65% del parche bloqueado.
 
   # Habilitacion nominal de retroceso:
   # Origen: reconciliacion marian + companero.
@@ -212,17 +217,25 @@ safety:
   retroceso_linear: -0.30      # Origen: companero (era -0.18, mayor torque de retroceso)
 
   # Recuperacion y giros:
-  recovery_turn_speed: 0.45
+  recovery_turn_speed: 0.75
   recovery_step_deg: 45.0
   # recovery_deg_per_s: tasa REAL de giro en grados por segundo.
   # Origen: RECALCULADO segun medicion experimental de hardware.
   # Medido: a turn_throttle = 0.70 el rover gira ~17.0 deg/s.
-  # Escalado a recovery_turn_speed = 0.45: 17.0 * (0.45 / 0.70) = 10.93 deg/s -> 11.0 deg/s.
-  # El valor anterior (45.0) era 4 veces mayor al real y provocaba giros incompletos.
-  recovery_deg_per_s: 11.0
+  # Escalado a recovery_turn_speed = 0.75: ~18.0 deg/s.
+  # Provee torque contundente para desatasque y giros en pendiente/pasto denso.
+  recovery_deg_per_s: 18.0
   recovery_headings_deg: [0.0, 90.0, -90.0, 180.0]
   recovery_min_cobertura_pct: 25.0
   heading_search_radius_m: 2.0
+
+  # Latencia de arranque de hardware (tiempo muerto entre comando y movimiento rotatorio fisico efectivo).
+  # Origen: Medido experimentalmente en Test A (1.5 - 2.5 s) durante ensayos de respuesta motriz en reposo.
+  recovery_startup_latency_s: 2.0
+  # Tolerancia angular para declarar fin de giro en lazo cerrado (grados).
+  recovery_turn_tolerance_deg: 15.0
+  # Timeout maximo de seguridad para evitar bloqueos si las ruedas patinan (segundos).
+  recovery_turn_timeout_s: 25.0
 
   # Umbral de inclinacion para veto de maniobras de alto riesgo (giro 180° y retroceso lineal):
   # Origen: Reconciliacion Capa 3. Superado este umbral en roll o pitch, se bloquean
@@ -281,6 +294,8 @@ odometry:
   # 8.6° a 5°, 16.7° a 10°, 28.2° a 18°):
   tilt_blend_start_deg: 5.0    # por debajo de 5° de inclinacion, confianza 100% (blend nominal)
   tilt_blend_max_deg: 20.0     # a partir de 20°, confianza 0% (se desactiva re-anclaje EKF en pendiente extrema)
+  # Persistencia de inclinacion cuando el acelerometro entra en GATE_CLOSED por vibraciones/frenado (evita reseteo falso a 0°).
+  tilt_max_staleness_s: 5.0
 
 memory:
   enabled: true

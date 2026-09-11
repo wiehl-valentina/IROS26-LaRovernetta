@@ -1,0 +1,32 @@
+traversability_node:
+  ros__parameters:
+    image_topic: "earth_rover/front/image_raw"
+    blocked_topic: "earth_rover/traversability_blocked"
+    bias_topic: "earth_rover/traversability_angular_bias"
+    overlay_topic: "earth_rover/traversability_overlay"
+    publish_overlay: true
+
+    # Vacío = auto-resolver (ver rover_traversability/weights.py: checkpoint
+    # local -> SAMTP_CHECKPOINT -> cache -> descarga de Hugging Face).
+    checkpoint_path: ""
+    hf_repo: ""
+    device: ""              # vacío = auto (cuda > mps > cpu)
+    contrast_refine: true
+
+    inference_min_period_s: 0.0
+
+    # PolicyConfig (traversability/rover_traversability/policy.py)
+    roi_top: 0.55
+    drivable_thresh: 0.5
+    num_corridors: 9
+    stop_center_fraction: 0.40
+    min_corridor_score: 0.35
+    bottom_weight: 2.0
+    min_valid_pixels: 200
+    max_linear: 0.5
+    min_linear: 0.15
+    max_angular: 0.5
+    k_angular: 1.2
+    hfov_deg: 92.7           # FOV horizontal cámara frontal Mini+ (ver policy.py)
+    goal_sigma: 0.5
+    goal_bias_floor: 0.2

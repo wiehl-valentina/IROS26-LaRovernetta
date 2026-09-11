@@ -155,6 +155,7 @@ class HeadingEstimator:
         self._uncertainty: float | None = None
         self._source = "none"
         self.last_gps_heading: float | None = None
+        self.last_gps_sigma: float | None = None
         self.last_orientation_heading: float | None = None
         self.last_ekf_heading: float | None = None
         self.last_ekf_time: float | None = None
@@ -203,6 +204,9 @@ class HeadingEstimator:
         if gps_track_res is not None:
             gps_heading, sigma_gps = gps_track_res
             self.last_gps_heading = gps_heading
+            self.last_gps_sigma = sigma_gps
+        else:
+            self.last_gps_sigma = None
 
         # 4. Propagación del giróscopo integrado
         dt = 0.0
@@ -342,12 +346,34 @@ class HeadingEstimator:
         return self._source
 
     def disagreement_deg(self) -> float | None:
-        """Cuanto difieren las estimaciones primarias de la brujula cruda."""
-        if "ekf_udp" in self._source and self.last_ekf_heading is not None and self.last_orientation_heading is not None:
-            return wrap_deg(self.last_ekf_heading - self.last_orientation_heading)
-        if self.last_gps_heading is None or self.last_orientation_heading is None:
+        """Desacuerdo entre el heading activo y el curso GPS confiable (Ground Truth en rectas).
+
+        Compara contra el curso GPS SOLO cuando este último tiene alta confianza
+        (sigma_gps <= 15.0° derivado de suficiente avance rectilíneo y buen HDOP).
+        Devuelve wrap_deg(heading_activo - last_gps_heading). Si el curso GPS no es confiable,
+        devuelve None para evitar calibrar contra mediciones dudosas o estáticas.
+        """
+        if self.last_gps_heading is None or self.last_gps_sigma is None or self.last_gps_sigma > 15.0:
             return None
-        return wrap_deg(self.last_gps_heading - self.last_orientation_heading)
+
+        # Heading activo: EKF si está disponible, o el rumbo fusionado actual
+        ref_heading = self.last_ekf_heading if self.last_ekf_heading is not None else self._heading
+        if ref_heading is None:
+            return None
+
+        return wrap_deg(ref_heading - self.last_gps_heading)
+
+    def compass_distortion_deg(self) -> float | None:
+        """Desacuerdo entre el compás crudo del SDK y la referencia confiable (EKF o GPS).
+
+        Mide la interferencia magnética ambiental local (estructuras metálicas).
+        Se reporta como diagnóstico informativo y NUNCA debe aplicarse como
+        navigation.orientation_offset_deg en el config.
+        """
+        ref = self.last_ekf_heading if self.last_ekf_heading is not None else self.last_gps_heading
+        if ref is None or self.last_orientation_heading is None:
+            return None
+        return wrap_deg(self.last_orientation_heading - ref)
 
 
 # --------------------------------------------------------------------- meta
@@ -382,6 +408,30 @@ def goal_from_gps(lat: float, lon: float, heading_deg: float,
         distance_m=distance,
         relative_bearing_deg=rel,
     )
+
+
+def check_checkpoint_reached(rover_lat: float, rover_lon: float,
+                             target_lat: float, target_lon: float,
+                             radius_m: float = 13.0) -> tuple[bool, float]:
+    """Verifica si el rover ha ingresado al radio del checkpoint objetivo.
+
+    Portado de la lógica de gps_waypoint_controller (ROS 2) para La Rovernetta.
+    Calcula la distancia geodésica euclidiana en plano tangente local y
+    determina si está dentro del radio configurable checkpoint_reached_radius_m.
+
+    Args:
+        rover_lat: Latitud actual del rover (grados).
+        rover_lon: Longitud actual del rover (grados).
+        target_lat: Latitud del centro del checkpoint (grados).
+        target_lon: Longitud del centro del checkpoint (grados).
+        radius_m: Radio de arribo en metros (default: 13.0m).
+
+    Returns:
+        (reached: bool, distance_m: float)
+    """
+    north, east = latlon_to_local_ne(rover_lat, rover_lon, target_lat, target_lon)
+    distance_m = math.hypot(north, east)
+    return (distance_m <= float(radius_m)), distance_m
 
 
 # ------------------------------------------------------ camino <-> mundo

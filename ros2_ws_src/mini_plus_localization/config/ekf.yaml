@@ -1,0 +1,116 @@
+ekf_filter_node_odom:
+  ros__parameters:
+    frequency: 10.0
+    
+    # 1. MITIGACIÓN DE LATENCIA (4G/LTE Jitter)
+    sensor_timeout: 2.0           # Si no hay datos en 2s, pasa a modo Dead-Reckoning
+    delay: 0.1                    # Buffer de 100ms para ordenar paquetes desordenados
+    transform_time_offset: 0.05   # Publicar TF 50ms en el futuro para evitar errores de extrapolación en Nav2
+    
+    two_d_mode: true              # Bloquea Z, roll y pitch (crucial para rovers terrestres)
+    publish_tf: true
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    # 2. CONFIGURACIÓN DE ODOMETRÍA (Ruedas)
+    odom0: /wheel_odom
+    # Variables: [X, Y, Z, roll, pitch, yaw, Vx, Vy, Vz, Vroll, Vpitch, Vyaw, Ax, Ay, Az]
+    # Leemos SOLO velocidad lineal (Vx, Vy). Dejamos que el IMU dicte la rotación.
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  true,  false,
+                   false, false, false,
+                   false, false, false]
+    odom0_differential: false
+
+    # 3. CONFIGURACIÓN DE IMU (MPU-6050 + Brújula)
+    imu0: /imu/data
+    imu0_config: [false, false, false,
+                  false, false, true, # Leemos yaw
+                  false, false, false,
+                  false, false, true, # Leemos Vyaw (giróscopo Z debiasado, Paso 3.0)
+                  false, false, false]
+    imu0_differential: false
+    # CORRECCIÓN: true garantiza que odom empiece en yaw=0 y sea continuo (cumple REP-105)
+    imu0_relative: true
+
+ekf_filter_node_map:
+  ros__parameters:
+    frequency: 10.0
+    
+    # Mismas defensas anti-latencia para el nodo global
+    sensor_timeout: 2.0
+    delay: 0.1
+    transform_time_offset: 0.05
+    two_d_mode: true
+    publish_tf: true
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: map
+
+    odom0: /wheel_odom
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  true,  false,
+                   false, false, false,
+                   false, false, false]
+    odom0_differential: false
+
+    # 4. CONFIGURACIÓN DEL GNSS (GPS)
+    odom1: /odometry/gps  # Tópico generado por navsat_transform_node
+    # El GPS solo nos da posición absoluta X e Y.
+    odom1_config: [true,  true,  false,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    odom1_differential: false
+
+    imu0: /imu/data
+    imu0_config: [false, false, false,
+                  false, false, true, # Leemos yaw
+                  false, false, false,
+                  false, false, true, # Leemos Vyaw (giróscopo Z debiasado, Paso 3.0)
+                  false, false, false]
+    imu0_differential: false
+    imu0_relative: false
+
+    # 5. CONFIGURACIÓN DEL RUMBO POR CURSO GNSS (gps_course_heading_bridge, Fase 2)
+    # Provee ancla absoluta de yaw en marco map cuando el rover avanza en línea recta
+    # con calidad GNSS adecuada y desambigua marcha atrás.
+    # Si compás saturado (Fase 1), el EKF ancla su yaw a esta medición.
+    pose0: /odometry/gps_heading
+    # Variables: [X, Y, Z, roll, pitch, yaw, Vx, Vy, Vz, Vroll, Vpitch, Vyaw, Ax, Ay, Az]
+    pose0_config: [false, false, false,
+                   false, false, true, # Leemos únicamente yaw absoluto en marco map
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    pose0_differential: false
+    pose0_relative: false
+
+navsat_transform:
+  ros__parameters:
+    frequency: 10.0
+    delay: 0.0
+    magnetic_declination_radians: 0.0 
+    
+    # --- CONVENCIÓN ENU REP-105 ---
+    # yaw_offset es 0.0 porque earth_rover_bridge ya convierte el heading de compás
+    # (0°=Norte, horario) a yaw ENU (0°=Este, antihorario) antes de publicarlo en /imu/data.
+    yaw_offset: 0.0
+    
+    zero_altitude: true
+    broadcast_utm_transform: false
+    publish_filtered_gps: true
+    
+    # --- CORRECCIÓN DE FUSIÓN ---
+    # Obligamos a navsat a usar el 'yaw' ya filtrado y perfecto del EKF, no el IMU crudo
+    use_odometry_yaw: false  
+    
+    wait_for_datum: false
