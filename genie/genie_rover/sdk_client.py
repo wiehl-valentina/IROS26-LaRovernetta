@@ -73,14 +73,13 @@ class RoverClient:
     # ---------------------------------------------------------------- camara
 
     def rear_frame(self) -> tuple[np.ndarray, float]:
-        r = self.session.get(f"{self.base_url}/feed?view=rear", timeout=self.timeout)
+        r = self.session.get(f"{self.base_url}/v2/rear", timeout=self.timeout)
         r.raise_for_status()
-        import cv2
-        arr = np.frombuffer(r.content, np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if img is None:
-            raise RoverError("Frame trasero corrupto")
-        return img, time.time()
+        data = r.json()
+        b64 = data.get("rear_frame")
+        if not b64:
+            raise RoverError("El SDK no devolvio 'rear_frame' (video no conectado?)")
+        return _decode_b64_image(b64), float(data.get("timestamp", time.time()))
 
     def front_frame(self) -> tuple[np.ndarray, float]:
         """Devuelve (imagen RGB HxWx3 uint8, timestamp unix)."""
