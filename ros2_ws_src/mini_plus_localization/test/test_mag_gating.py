@@ -149,3 +149,46 @@ def test_mag_stuck_detector_during_rotation(ros_context):
     assert cov_yaw > 8.0e5, "Covarianza debe estar fuertemente inflada"
 
     bridge.destroy_node()
+
+
+def test_dynamic_wmm_reference_gaborone_and_costa_rica(ros_context):
+    bridge = EarthRoverBridge()
+    bridge._running = False
+    bridge._filtered_roll = 0.0
+    bridge._filtered_pitch = 0.0
+
+    # 1. Simular GPS en Gaborone (Test A)
+    bridge._update_dynamic_mag_reference(-24.69, 25.88)
+    
+    # Validar que la referencia haya quedado cerca de 3330 (1051.9 + 2278.1 = 3330)
+    assert math.isclose(bridge._mag_norm_reference, 3330.0, abs_tol=10.0), f"Ref esperada ~3330, obtenida {bridge._mag_norm_reference}"
+    
+    # Lectura real del sensor en Test A (~3331) debe ser confiable
+    conf, cov_yaw, diag = bridge._evaluate_magnetic_gate(
+        mx=-95.0, my=126.0, mz=3308.0, omega_z=0.0, accel_gate_open=True
+    )
+    assert conf > 0.95, "Gaborone: lectura nominal debe dar score alto"
+    assert diag["trusted"] is True
+
+    # Forzar reset de historia/scores
+    bridge._mag_history.clear()
+    bridge._mag_confidence_score = 1.0
+
+    # 2. Simular viaje a Costa Rica
+    bridge._update_dynamic_mag_reference(9.79159, -84.10606)
+    
+    # Validar que la referencia haya subido a ~3535
+    assert math.isclose(bridge._mag_norm_reference, 3535.0, abs_tol=10.0), f"Ref esperada ~3535, obtenida {bridge._mag_norm_reference}"
+    gross_max = 3535.0 * bridge._mag_gross_factor_max # ~8837
+
+    # Lectura real saturada en Costa Rica (~12221)
+    for _ in range(10):
+        conf, cov_yaw, diag = bridge._evaluate_magnetic_gate(
+            mx=-128.0, my=-6270.0, mz=10490.0, omega_z=0.0, accel_gate_open=True
+        )
+    
+    assert conf < 0.05, "Costa Rica: lectura 12221 debe ser vetada (saturación)"
+    assert diag["trusted"] is False
+    assert diag["mag_norm"] > diag["gross_max"], "La norma debe exceder el factor gross_max dinámico"
+
+    bridge.destroy_node()

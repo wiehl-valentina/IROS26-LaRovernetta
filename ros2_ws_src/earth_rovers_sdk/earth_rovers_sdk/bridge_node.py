@@ -19,10 +19,12 @@ import math
 import threading
 import time
 from collections import deque
+from datetime import datetime
 
 import cv2
 import rclpy
 import requests
+import pygeomag
 import websocket
 from cv_bridge import CvBridge
 from geometry_msgs.msg import Quaternion, Twist
@@ -318,10 +320,25 @@ class EarthRoverBridge(Node):
 
         # Estado del Detector de Anomalía Magnética y Compuerta Continua (Fase 1)
         self._mag_history = deque(maxlen=20)
-        self._mag_calibrated = False
+        self._mag_calibrated = True # Forzamos True para no calibrar offline con el sensor
         self._mag_calib_buffer = []
         self._mag_confidence_score = 1.0
         self._last_mag_diag = None
+
+        # Integración WMM/IGRF dinámica
+        self._geo_model = pygeomag.GeoMag()
+        self.declare_parameter("mag_dynamic_update_dist_m", 1000.0)
+        self._mag_dynamic_update_dist_m = float(self.get_parameter("mag_dynamic_update_dist_m").value)
+        self._last_calc_lat = None
+        self._last_calc_lon = None
+        # TODO: Refinar offset de Hard-Iron.
+        # El valor de +2278.1 fue calibrado con UN SOLO punto (Gaborone) y es una 
+        # aproximación aditiva en norma (1D). No captura que la relación vectorial 
+        # entre el sesgo del chasis y el campo terrestre cambia con la inclinación 
+        # geomagnética del sitio (que varía por latitud, independientemente del tilt 
+        # del rover). Es candidato a refinar con más puntos de calibración en sitios 
+        # con campo geomagnético distinto, cuando haya rover disponible.
+        self._hard_iron_offset_counts = 2278.1
 
         self.create_subscription(Twist, "cmd_vel", self._on_cmd_vel, command_qos)
 
@@ -758,6 +775,51 @@ class EarthRoverBridge(Node):
                 if ws is not None:
                     ws.close()
 
+    def _haversine_dist(self, lat1, lon1, lat2, lon2):
+        R = 6371000.0
+        phi1 = math.radians(lat1)
+        phi2 = math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlambda = math.radians(lon2 - lon1)
+        a = math.sin(dphi / 2.0)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2.0)**2
+        c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+        return R * c
+
+    def _update_dynamic_mag_reference(self, lat: float, lon: float):
+        if self._last_calc_lat is not None and self._last_calc_lon is not None:
+            dist = self._haversine_dist(self._last_calc_lat, self._last_calc_lon, lat, lon)
+            if dist < self._mag_dynamic_update_dist_m:
+                return
+        
+        # Calcular fecha decimal actual para el modelo WMM
+        now_dt = datetime.utcnow()
+        year = now_dt.year
+        day_of_year = now_dt.timetuple().tm_yday
+        is_leap = 1 if (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)) else 0
+        days_in_year = 366 if is_leap else 365
+        dec_year = year + (day_of_year / days_in_year)
+
+        try:
+            # altitud 0, modelo offline incrustado
+            result = self._geo_model.calculate(lat, lon, 0.0, dec_year)
+            F_nT = result.f
+            F_gauss = F_nT / 100000.0
+            # Sensibilidad: 3750 LSB/Gauss (RNG=\u00b18G en QMC5883P)
+            dynamic_counts = F_gauss * 3750.0
+            
+            new_ref = dynamic_counts + self._hard_iron_offset_counts
+            
+            self.get_logger().info(
+                f"[MAG_DYNAMIC] WMM Ref. actualizada: lat={lat:.4f}, lon={lon:.4f} -> "
+                f"F_geomag={dynamic_counts:.1f} + HI={self._hard_iron_offset_counts:.1f} "
+                f"=> {new_ref:.1f} counts"
+            )
+            self._mag_norm_reference = new_ref
+            self._last_calc_lat = lat
+            self._last_calc_lon = lon
+        except Exception as e:
+            self.get_logger().error(f"Error calculando modelo geomagnético dinámico: {e}")
+
     def _publish_telemetry(self, data: dict):
         now = self.get_clock().now().to_msg()
 
@@ -802,6 +864,8 @@ class EarthRoverBridge(Node):
 
             if is_fix_valid:
                 gps.status.status = NavSatStatus.STATUS_FIX
+                # Actualizar referencia magnética si el rover se desplazó
+                self._update_dynamic_mag_reference(float(lat), float(lng))
             else:
                 gps.status.status = NavSatStatus.STATUS_NO_FIX
                 hdop = 50.0 # Castigo masivo a la covarianza ante pérdida de anclaje
