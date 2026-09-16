@@ -1,0 +1,53 @@
+import glob
+import os
+from flask import Flask, send_file, jsonify, request
+
+app = Flask(__name__)
+
+IMAGE_FOLDER = "/home/pablolube/IROS26-LaRovernetta/genie/debug/carpeta"
+
+# Carga y ordena la lista de fotos (.jpg, .jpeg o .png)
+image_files = sorted(
+    glob.glob(os.path.join(IMAGE_FOLDER, "*.jpg")) + 
+    glob.glob(os.path.join(IMAGE_FOLDER, "*.jpeg")) +
+    glob.glob(os.path.join(IMAGE_FOLDER, "*.png"))
+)
+
+current_idx = 0
+
+@app.route('/v2/front', methods=['GET', 'POST'])
+def get_front_camera():
+    global current_idx
+    if not image_files:
+        return jsonify({"error": "No hay imagenes"}), 404
+    
+    photo_path = image_files[current_idx]
+    current_idx = (current_idx + 1) % len(image_files)
+    return send_file(photo_path, mimetype='image/jpeg')
+
+# Telemetria basica y respuesta estandar para evitar el parser error
+@app.route('/v2/state', methods=['GET', 'POST'])
+@app.route('/v2/status', methods=['GET', 'POST'])
+@app.route('/v2/telemetry', methods=['GET', 'POST'])
+def get_mock_state():
+    return jsonify({
+        "status": "ok",
+        "battery": 100.0,
+        "pose": {"x": 0.0, "y": 0.0, "yaw": 0.0},
+        "linear_velocity": 0.0,
+        "angular_velocity": 0.0
+    })
+
+# Manejador genérico (catch-all) para cualquier otro endpoint /v2/ no mapeado
+@app.route('/v2/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE'])
+def catch_all_v2(subpath):
+    print(f"[MOCK] Petición no mapeada capturada: /v2/{subpath} [{request.method}]")
+    return jsonify({
+        "status": "ok",
+        "message": f"Mock catch-all para /v2/{subpath}",
+        "value": 0.0
+    })
+
+if __name__ == '__main__':
+    print(f"[MOCK] Servidor activo. Se encontraron {len(image_files)} fotos en {IMAGE_FOLDER}")
+    app.run(host='0.0.0.0', port=8000)

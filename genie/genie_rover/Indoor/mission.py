@@ -72,7 +72,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .cone_detector import ConeDetection, GroundPoint
-from ..odometry import Pose
+from ..odometry import Pose, wrap_rad
 
 if TYPE_CHECKING:  # solo para hints, sin crear un import circular en runtime
     from ..persistent_map import PersistentMap
@@ -135,7 +135,18 @@ class MissionConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> "MissionConfig":
-        return cls(**(d or {}))
+        """Ignora las claves que no son campos de MissionConfig.
+
+        Antes era `cls(**(d or {}))`, que explotaba con TypeError ante
+        cualquier clave extra en la seccion `mission:` del yaml --
+        incluida `console_color`, que indoor_bridge.py ya leia del dict
+        crudo justamente para no tocar esta clase. Ahora ademas el mismo
+        `mission:` puede traer las claves del modo semantico (`mode`,
+        `segments`, `route_hint`, ...) sin romper el modo de conos.
+        """
+        d = d or {}
+        conocidas = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        return cls(**conocidas)
 
 
 class MissionState(str, Enum):
@@ -528,6 +539,708 @@ class ConeMissionFSM:
 
         return GroundPoint(x_forward_m=self.cfg.wander_forward_m, y_left_m=0.0,
                            distance_m=self.cfg.wander_forward_m)
+
+
+# =============================================================================
+#  MODO SEMANTICO: tramos rectos + hitos visuales
+# =============================================================================
+#
+# Convive con ConeMissionFSM, no la reemplaza: mission.mode elige cual usa
+# indoor_bridge.py ("cone_tour" = la de siempre, "semantic_corridor" = esta).
+# map_session.py y test_indoor_mission_offline.py siguen usando la vieja sin
+# enterarse de que existe esta.
+#
+# Diferencia de fondo con ConeMissionFSM: alla la meta era un PUNTO (waypoint
+# o cono) y llegar al punto era el evento. Aca la meta es un CARRIL (una
+# semirrecta con rumbo fijo) que se desliza con el robot y no se agota nunca;
+# lo que hace avanzar la mision es que el VLM confirme un hito visual. El cono
+# deja de ser meta: solo dispara una foto, sin frenar ni desviar (ver
+# ConePhotoLog, que lo maneja del lado del bridge).
+#
+# Igual que ConeMissionFSM, esta maquina SOLO decide la meta (x_right_m,
+# y_forward_m) que se le pasa a plan_on_bev. El camino y la evitacion de
+# obstaculos los sigue resolviendo SAM-TP + plan_on_bev + front_is_blocked,
+# sin cambios.
+
+
+# ------------------------------------------------- lo que aporta el VLM
+
+@dataclass
+class VlmQuery:
+    """Que tiene que preguntarle el bridge al VLM en este frame.
+
+    La FSM no llama al VLM (no conoce el cliente, no bloquea el lazo de
+    control): expone que pregunta esta activa y consume la respuesta que le
+    traigan, si llego. Si no llego ninguna, el tramo sigue recto -- que es
+    el comportamiento seguro por defecto.
+    """
+    id: str
+    prompt: str
+
+
+@dataclass
+class VlmObservation:
+    """Una respuesta del VLM, ya parseada.
+
+    `id` tiene que coincidir con el id de la VlmQuery activa: una respuesta
+    vieja (del hito anterior, que llego tarde por latencia) se descarta sola
+    en vez de disparar un cambio de fase equivocado.
+    """
+    id: str
+    present: bool
+    confidence: float = 0.0
+    position: str = "centro"        # "izquierda" | "centro" | "derecha"
+    distance_m: float | None = None
+    reason: str = ""
+    t: float = 0.0                  # timestamp de la respuesta
+
+
+# ------------------------------------------- lo que aporta la geometria (BEV)
+
+@dataclass
+class CorridorHint:
+    """Donde esta el centro del espacio libre delante del robot.
+
+    lateral_offset_m: positivo = el centro libre esta a la IZQUIERDA (misma
+                      convencion que GroundPoint.y_left_m).
+    clearance_m:      cuanto se puede avanzar recto antes de topar con algo
+                      no transitable, mirando la franja central.
+    valid:            False si el BEV no observo lo suficiente como para que
+                      estos numeros signifiquen algo.
+    """
+    lateral_offset_m: float = 0.0
+    clearance_m: float = 0.0
+    valid: bool = False
+
+
+def corridor_hint_from_bev(bev_traversability: np.ndarray,
+                           observed_mask: np.ndarray | None,
+                           resolution_m: float,
+                           lookahead_m: float,
+                           band_m: float = 0.6,
+                           free_thresh: float = 0.5,
+                           center_band_m: float = 0.35,
+                           min_free_cells: int = 6,
+                           row0_is_far: bool = True) -> CorridorHint:
+    """Centro del pasillo y despeje frontal, leidos del mismo BEV que ya usa
+    plan_on_bev -- no agrega ninguna percepcion nueva.
+
+    Convencion de ejes asumida (la misma que usa indoor_bridge.py al llamar
+    plan_on_bev): las COLUMNAS son x_right, centradas en la columna del medio;
+    las FILAS son distancia hacia adelante. `row0_is_far=True` significa que
+    la fila 0 es la mas LEJANA (es como lo arma project_score_to_bev y como lo
+    lee la barra de console_report.py). Si al mirar un volcado de --debug-dir
+    resulta al reves, alcanza con pasar row0_is_far=False: no hay ningun otro
+    lugar del modo semantico que dependa de esta convencion.
+    """
+    bev = np.asarray(bev_traversability, dtype=np.float32)
+    if bev.ndim != 2 or bev.size == 0:
+        return CorridorHint()
+    filas, cols = bev.shape
+
+    obs = (np.ones_like(bev, dtype=bool) if observed_mask is None
+           else np.asarray(observed_mask).astype(bool))
+    libre = (bev >= free_thresh) & obs
+
+    # Distancia hacia adelante de cada fila.
+    idx = np.arange(filas, dtype=np.float32)
+    dist_fila = (filas - 1 - idx) * resolution_m if row0_is_far else idx * resolution_m
+
+    # --- offset lateral: centroide de lo libre en la franja del lookahead ---
+    franja = np.abs(dist_fila - lookahead_m) <= band_m
+    if not np.any(franja):
+        # lookahead mas lejos de lo que el BEV alcanza: usar la franja mas
+        # lejana disponible en vez de devolver nada.
+        franja = dist_fila >= (float(dist_fila.max()) - band_m)
+
+    cols_libres = libre[franja].sum(axis=0)
+    total = float(cols_libres.sum())
+    if total < min_free_cells:
+        return CorridorHint()
+
+    centro_col = (cols - 1) / 2.0
+    peso = cols_libres.astype(np.float32)
+    centroide = float((peso * np.arange(cols, dtype=np.float32)).sum() / total)
+    x_right = (centroide - centro_col) * resolution_m
+    lateral_offset_m = -x_right          # a y_left (positivo = izquierda)
+
+    # --- despeje frontal: hasta donde llega lo libre en la franja central ---
+    media_col = max(1, int(round(center_band_m / resolution_m)))
+    c0 = max(0, int(round(centro_col)) - media_col)
+    c1 = min(cols, int(round(centro_col)) + media_col + 1)
+    central = libre[:, c0:c1]
+    fila_libre = central.mean(axis=1) >= 0.5
+
+    orden = np.argsort(dist_fila)          # de cerca a lejos
+    clearance = 0.0
+    for r in orden:
+        if not fila_libre[r]:
+            break
+        clearance = float(dist_fila[r])
+
+    return CorridorHint(lateral_offset_m=lateral_offset_m,
+                        clearance_m=clearance, valid=True)
+
+
+# ------------------------------------------------------- el circuito, en datos
+
+@dataclass
+class MilestoneSpec:
+    """El hito visual que termina un tramo."""
+    id: str
+    prompt: str
+    confirm_hits: int = 3           # confirmaciones SEGUIDAS para creerle
+    min_confidence: float = 0.6
+    max_distance_m: float | None = None   # si el VLM estima distancia, exigir
+                                          # que el hito este a menos de esto
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "MilestoneSpec":
+        return cls(**(d or {}))
+
+
+@dataclass
+class TurnSpec:
+    """El giro que se hace DESPUES de confirmar el hito del tramo."""
+    side: str                        # "left" | "right"
+    look_for: str                    # prompt de la apertura/puerta/cono
+    id: str | None = None            # se completa solo con el id del tramo
+    confirm_hits: int = 2
+    min_confidence: float = 0.55
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "TurnSpec":
+        t = cls(**(d or {}))
+        if t.side not in ("left", "right"):
+            raise ValueError(f"turn.side tiene que ser 'left' o 'right', no {t.side!r}")
+        return t
+
+    @property
+    def sign(self) -> float:
+        """+1 gira a la izquierda (theta crece, y_left positivo)."""
+        return 1.0 if self.side == "left" else -1.0
+
+
+@dataclass
+class SegmentSpec:
+    """Un tramo recto + el hito que lo cierra + que hacer despues."""
+    id: str
+    milestone: MilestoneSpec
+    turn: TurnSpec | None = None
+    max_distance_m: float = 30.0
+    max_seconds: float | None = None
+    on_timeout: str = "sweep"        # "sweep" | "advance" | "stop"
+    final: bool = False
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "SegmentSpec":
+        d = dict(d or {})
+        seg_id = str(d.pop("id"))
+        milestone = MilestoneSpec.from_dict(d.pop("milestone"))
+        turn_d = d.pop("on_milestone", None) or d.pop("turn", None)
+        turn = None
+        if turn_d:
+            turn_d = dict(turn_d)
+            turn_d.setdefault("id", f"{seg_id}__apertura")
+            turn = TurnSpec.from_dict(turn_d)
+        seg = cls(id=seg_id, milestone=milestone, turn=turn, **d)
+        if seg.on_timeout not in ("sweep", "advance", "stop"):
+            raise ValueError(f"{seg_id}: on_timeout invalido ({seg.on_timeout!r})")
+        return seg
+
+
+@dataclass
+class SemanticMissionConfig:
+    # --- carril virtual ------------------------------------------------------
+    segment_lookahead_m: float = 2.5
+    corridor_centering_weight: float = 0.6   # 0 = rumbo puro, 1 = centrado puro
+    corridor_centering_max_m: float = 0.8    # tope de correccion lateral
+
+    # --- giros ---------------------------------------------------------------
+    turn_probe_m: float = 1.2        # cuan al costado se pone la meta al pivotear
+    turn_max_deg: float = 150.0      # tope de giro buscando la apertura
+    align_min_clearance_m: float = 1.5
+    align_tolerance_deg: float = 8.0
+    align_linear_scale: float = 0.25
+    align_max_s: float = 12.0
+
+    # --- barrido de rescate (on_timeout: "sweep") ----------------------------
+    sweep_max_deg: float = 60.0
+
+    # Convencion de filas del BEV que se le pasa a corridor_hint_from_bev
+    # (True = la fila 0 es la mas lejana). Ver el docstring de esa funcion.
+    bev_row0_is_far: bool = True
+
+    # --- VLM (cadencia y anti-rebote) ---------------------------------------
+    milestone_cooldown_s: float = 3.0   # tras cambiar de fase, ignorar hitos
+    vlm_stale_s: float = 2.5            # respuesta mas vieja que esto = no hay
+
+    # --- guia opcional del mapeo previo -------------------------------------
+    route_hint_path: str | None = None
+    route_hint_enabled: bool = False
+    route_hint_max_deg: float = 25.0
+
+    segments: list[SegmentSpec] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "SemanticMissionConfig":
+        d = dict(d or {})
+        d.pop("mode", None)
+        segs = [SegmentSpec.from_dict(s) for s in d.pop("segments", [])]
+        hint = dict(d.pop("route_hint", {}) or {})
+        cfg = cls(
+            segments=segs,
+            route_hint_path=hint.get("path"),
+            route_hint_enabled=bool(hint.get("enabled", False)),
+            route_hint_max_deg=float(hint.get("heading_bias_max_deg", 25.0)),
+            **{k: v for k, v in d.items() if k in cls.__dataclass_fields__},
+        )
+        if not cfg.segments:
+            raise ValueError("mission.segments vacio: el modo semantico necesita "
+                             "al menos un tramo (ver indoor_semantic_tour.yaml)")
+        return cfg
+
+
+# --------------------------------------------------------------- carril virtual
+
+class HeadingLock:
+    """Semirrecta infinita desde donde se bloqueo el rumbo.
+
+    NO es un punto fijo: la meta se calcula proyectando la pose actual sobre
+    la semirrecta y adelantando `lookahead` metros sobre ella. Eso da dos
+    cosas que un punto fijo no da: la meta nunca se agota (el tramo dura lo
+    que tarde el hito en aparecer, no lo que dure la distancia), y el error
+    lateral que deja un esquive se cancela solo al volver al carril, en vez
+    de mandar al robot en diagonal contra la pared de enfrente.
+    """
+
+    def __init__(self, pose: Pose, theta: float | None = None):
+        self.x0 = float(pose.x)
+        self.y0 = float(pose.y)
+        self.theta = float(pose.theta if theta is None else theta)
+
+    def progress_m(self, pose: Pose) -> float:
+        """Cuanto avanzo el robot SOBRE el carril (no en linea recta)."""
+        dx, dy = pose.x - self.x0, pose.y - self.y0
+        return dx * math.cos(self.theta) + dy * math.sin(self.theta)
+
+    def lateral_error_m(self, pose: Pose) -> float:
+        """Desvio perpendicular al carril; positivo = el robot esta a la
+        izquierda del carril."""
+        dx, dy = pose.x - self.x0, pose.y - self.y0
+        return -dx * math.sin(self.theta) + dy * math.cos(self.theta)
+
+    def goal_world(self, pose: Pose, lookahead_m: float) -> tuple[float, float]:
+        s = max(0.0, self.progress_m(pose)) + float(lookahead_m)
+        return (self.x0 + s * math.cos(self.theta),
+                self.y0 + s * math.sin(self.theta))
+
+
+class RouteHint:
+    """La ruta del mapeo previo, degradada a SUGERENCIA.
+
+    Nunca es meta del planner y su agotamiento nunca termina la mision: lo
+    unico que puede hacer es corregir el rumbo en el momento de bloquearlo, y
+    solo si la correccion es chica (heading_bias_max_deg). Si sugiere algo muy
+    distinto se la ignora, porque en ese caso el mapeo previo esta viejo o el
+    robot no esta donde la ruta cree.
+    """
+
+    def __init__(self, points: list[tuple[float, float]], max_bias_deg: float = 25.0):
+        self.points = list(points)
+        self.max_bias_deg = float(max_bias_deg)
+
+    @classmethod
+    def from_file(cls, path: str, max_bias_deg: float = 25.0) -> "RouteHint":
+        import yaml
+        data = yaml.safe_load(Path(path).read_text())
+        pts = [(float(p["x_m"]), float(p["y_m"])) for p in data.get("waypoints", [])]
+        return cls(pts, max_bias_deg=max_bias_deg)
+
+    def bias_heading(self, pose: Pose, theta: float) -> tuple[float, str]:
+        """Devuelve (theta_corregido, motivo)."""
+        if not self.points:
+            return theta, "sin ruta de guia"
+        # El punto util es el mas cercano que este ADELANTE del rumbo actual.
+        mejor, mejor_d = None, float("inf")
+        for (px, py) in self.points:
+            rel = Pose(px, py, 0.0).relative_to(Pose(pose.x, pose.y, theta))
+            if rel.x <= 0.3:
+                continue
+            d = math.hypot(rel.x, rel.y)
+            if d < mejor_d:
+                mejor, mejor_d = (px, py), d
+        if mejor is None:
+            return theta, "la ruta de guia no tiene puntos adelante"
+        sugerido = math.atan2(mejor[1] - pose.y, mejor[0] - pose.x)
+        delta = wrap_rad(sugerido - theta)
+        if abs(math.degrees(delta)) > self.max_bias_deg:
+            return theta, (f"guia descartada ({math.degrees(delta):+.0f} grados, "
+                           f"mas de {self.max_bias_deg:.0f})")
+        return wrap_rad(theta + delta), f"guia aplicada ({math.degrees(delta):+.0f} grados)"
+
+
+# ------------------------------------------------------- foto del cono (evento)
+
+class ConePhotoLog:
+    """El cono ya no es meta ni checkpoint: es un disparador de foto.
+
+    Esto vive aca y no en la FSM a proposito -- justamente para que sacar la
+    foto no pueda alterar la trayectoria: indoor_bridge.py lo consulta aparte
+    del mission_goal y, si da True, guarda el frame y sigue derecho en el
+    mismo ciclo.
+    """
+
+    def __init__(self, revisit_radius_m: float = 1.0):
+        self.revisit_radius_m = float(revisit_radius_m)
+        self.seen: list[tuple[float, float]] = []
+
+    def should_photograph(self, x_world: float, y_world: float) -> bool:
+        for (px, py) in self.seen:
+            if math.hypot(x_world - px, y_world - py) <= self.revisit_radius_m:
+                return False
+        return True
+
+    def record(self, x_world: float, y_world: float) -> int:
+        self.seen.append((float(x_world), float(y_world)))
+        return len(self.seen)
+
+    @property
+    def photos(self) -> int:
+        return len(self.seen)
+
+
+# ----------------------------------------------------------- maquina de estados
+
+class SemanticState(str, Enum):
+    RUN_SEGMENT = "RUN_SEGMENT"
+    TURN_SEARCH = "TURN_SEARCH"
+    TURN_ALIGN = "TURN_ALIGN"
+    SWEEP = "SWEEP"
+    DONE = "DONE"
+
+
+class SemanticMissionFSM:
+    """Recorrido por tramos rectos con cambios de fase semanticos.
+
+    Uso desde indoor_bridge.py:
+
+        fsm = SemanticMissionFSM(sem_cfg)
+        ...
+        q = fsm.current_query()          # que preguntarle al VLM ahora
+        obs = vlm.latest_for(q.id)       # respuesta cacheada, puede ser None
+        hint = corridor_hint_from_bev(plan_bev, plan_obs, res, lookahead)
+        goal = fsm.update(pose, now, vlm=obs, corridor=hint)
+    """
+
+    def __init__(self, cfg: SemanticMissionConfig):
+        self.cfg = cfg
+        self.state = SemanticState.RUN_SEGMENT
+        self.segment_idx = 0
+        self.segments_done = 0
+        self.failed_reason: str | None = None
+
+        self._lock: HeadingLock | None = None
+        self._route_hint: RouteHint | None = None
+        if cfg.route_hint_enabled and cfg.route_hint_path:
+            self._route_hint = RouteHint.from_file(cfg.route_hint_path,
+                                                   cfg.route_hint_max_deg)
+
+        self._hits = 0
+        self._last_obs_t: float = -1.0
+        self._phase_t: float = 0.0          # cuando empezo la fase actual
+        self._turn_theta0: float = 0.0
+        self._sweep_leg = 0                  # 0 = a un lado, 1 = al otro
+        self._started = False
+
+    # ------------------------------------------------------------- publico
+
+    @property
+    def segment(self) -> SegmentSpec:
+        idx = min(self.segment_idx, len(self.cfg.segments) - 1)
+        return self.cfg.segments[idx]
+
+    def current_query(self) -> VlmQuery | None:
+        """Que hito hay que estar buscando en este momento. None = ninguno
+        (la mision termino, o esta en alineacion fina, que es geometrica)."""
+        if self.state == SemanticState.DONE:
+            return None
+        seg = self.segment
+        if self.state in (SemanticState.RUN_SEGMENT, SemanticState.SWEEP):
+            return VlmQuery(seg.milestone.id, seg.milestone.prompt)
+        if self.state == SemanticState.TURN_SEARCH and seg.turn is not None:
+            return VlmQuery(seg.turn.id or f"{seg.id}__apertura", seg.turn.look_for)
+        return None
+
+    def update(self, pose: Pose, now: float,
+               vlm: VlmObservation | None = None,
+               corridor: CorridorHint | None = None) -> MissionGoal:
+        if not self._started:
+            self._relock(pose, now, motivo="inicio de mision")
+            self._started = True
+
+        if self.state == SemanticState.DONE:
+            razon = self.failed_reason or (
+                f"recorrido completo: {self.segments_done} tramo(s)")
+            return MissionGoal(0.0, 0.0, self.state.value, razon, mission_done=True)
+
+        confirmado = self._count_hits(vlm, now)
+
+        if self.state == SemanticState.RUN_SEGMENT:
+            return self._run_segment(pose, now, confirmado, corridor)
+        if self.state == SemanticState.TURN_SEARCH:
+            return self._turn_search(pose, now, confirmado)
+        if self.state == SemanticState.TURN_ALIGN:
+            return self._turn_align(pose, now, corridor)
+        return self._sweep(pose, now, confirmado)
+
+    # -------------------------------------------------------------- estados
+
+    def _run_segment(self, pose: Pose, now: float, confirmado: bool,
+                     corridor: CorridorHint | None) -> MissionGoal:
+        seg = self.segment
+        if confirmado:
+            return self._milestone_reached(pose, now, f"hito '{seg.milestone.id}' confirmado")
+
+        assert self._lock is not None
+        avance = self._lock.progress_m(pose)
+        transcurrido = now - self._phase_t
+        vencido = (avance >= seg.max_distance_m
+                   or (seg.max_seconds is not None and transcurrido >= seg.max_seconds))
+        if vencido:
+            return self._on_timeout(pose, now, avance)
+
+        x_fwd, y_left = self._lane_goal(pose, corridor)
+        gp = GroundPoint(x_fwd, y_left, math.hypot(x_fwd, y_left))
+        x_right, y_forward = gp.to_bev_goal()
+        return MissionGoal(x_right, y_forward, self.state.value,
+                           f"{seg.id}: recto {avance:.1f}/{seg.max_distance_m:.0f} m, "
+                           f"buscando '{seg.milestone.id}'")
+
+    def _turn_search(self, pose: Pose, now: float, confirmado: bool) -> MissionGoal:
+        seg = self.segment
+        turn = seg.turn
+        assert turn is not None
+        girado = math.degrees(wrap_rad(pose.theta - self._turn_theta0)) * turn.sign
+
+        if confirmado:
+            self._enter(SemanticState.TURN_ALIGN, now)
+            return MissionGoal(0.0, 0.5, self.state.value,
+                               f"{seg.id}: '{turn.look_for[:28]}' a la vista, alineando",
+                               linear_scale=self.cfg.align_linear_scale)
+
+        if girado >= self.cfg.turn_max_deg:
+            if seg.on_timeout == "stop":
+                return self._finish(f"{seg.id}: gire {girado:.0f} grados sin encontrar "
+                                    f"la apertura")
+            self._enter(SemanticState.TURN_ALIGN, now)
+            return MissionGoal(0.0, 0.5, self.state.value,
+                               f"{seg.id}: sin confirmacion tras {girado:.0f} grados, "
+                               f"alineo por geometria igual",
+                               linear_scale=self.cfg.align_linear_scale)
+
+        # Pivote: meta al costado y linear_scale 0 -> el seguidor gira en el
+        # lugar en vez de avanzar. La meta se mantiene un poco adelante (no
+        # exactamente a 90 grados) para que plan_on_bev no reciba una meta
+        # degenerada encima del robot.
+        y_left = turn.sign * self.cfg.turn_probe_m
+        gp = GroundPoint(0.3, y_left, math.hypot(0.3, y_left))
+        x_right, y_forward = gp.to_bev_goal()
+        return MissionGoal(x_right, y_forward, self.state.value,
+                           f"{seg.id}: girando a la {turn.side} ({girado:.0f} grados), "
+                           f"buscando apertura", linear_scale=0.0)
+
+    def _turn_align(self, pose: Pose, now: float,
+                    corridor: CorridorHint | None) -> MissionGoal:
+        """Alineacion fina POR GEOMETRIA, no por VLM.
+
+        El VLM sabe decir "hay una puerta a tu izquierda"; no sabe decir "te
+        faltan 4 grados". El centro del hueco lo sabe el BEV, asi que la
+        ultima parte del giro la cierra el BEV.
+        """
+        seg = self.segment
+        if corridor is None or not corridor.valid:
+            if (now - self._phase_t) >= self.cfg.align_max_s:
+                return self._after_turn(pose, now,
+                                        "alineacion sin BEV utilizable, bloqueo el rumbo actual")
+            return MissionGoal(0.0, 0.5, self.state.value,
+                               f"{seg.id}: esperando BEV para alinear",
+                               linear_scale=0.0)
+
+        rumbo = math.atan2(corridor.lateral_offset_m, self.cfg.segment_lookahead_m)
+        alineado = abs(math.degrees(rumbo)) <= self.cfg.align_tolerance_deg
+        despejado = corridor.clearance_m >= self.cfg.align_min_clearance_m
+        if alineado and despejado:
+            return self._after_turn(pose, now,
+                                    f"alineado (desvio {math.degrees(rumbo):+.0f} grados, "
+                                    f"despeje {corridor.clearance_m:.1f} m)",
+                                    theta=wrap_rad(pose.theta + rumbo))
+
+        if (now - self._phase_t) >= self.cfg.align_max_s:
+            return self._after_turn(pose, now,
+                                    f"alineacion agotada a {self.cfg.align_max_s:.0f} s",
+                                    theta=wrap_rad(pose.theta + rumbo))
+
+        gp = GroundPoint(self.cfg.segment_lookahead_m, corridor.lateral_offset_m,
+                         self.cfg.segment_lookahead_m)
+        x_right, y_forward = gp.to_bev_goal()
+        return MissionGoal(x_right, y_forward, self.state.value,
+                           f"{seg.id}: alineando (desvio {math.degrees(rumbo):+.0f} grados, "
+                           f"despeje {corridor.clearance_m:.1f} m)",
+                           linear_scale=self.cfg.align_linear_scale)
+
+    def _sweep(self, pose: Pose, now: float, confirmado: bool) -> MissionGoal:
+        """Rescate: el hito no aparecio en max_distance_m. Frena y barre a los
+        dos lados preguntando lo mismo, antes de dar el tramo por perdido."""
+        seg = self.segment
+        if confirmado:
+            return self._milestone_reached(pose, now,
+                                           f"hito '{seg.milestone.id}' encontrado en el barrido")
+
+        signo = 1.0 if self._sweep_leg == 0 else -1.0
+        girado = math.degrees(wrap_rad(pose.theta - self._turn_theta0)) * signo
+        tope = self.cfg.sweep_max_deg * (1 if self._sweep_leg == 0 else 2)
+        if girado >= tope:
+            if self._sweep_leg == 0:
+                self._sweep_leg = 1
+            else:
+                # Barrido agotado: se aplica la politica como si fuera "advance"
+                # (si era "stop" no habriamos entrado aca).
+                return self._milestone_reached(
+                    pose, now, f"{seg.id}: hito no encontrado ni en el barrido, sigo igual")
+
+        y_left = signo * self.cfg.turn_probe_m
+        gp = GroundPoint(0.3, y_left, math.hypot(0.3, y_left))
+        x_right, y_forward = gp.to_bev_goal()
+        return MissionGoal(x_right, y_forward, self.state.value,
+                           f"{seg.id}: barrido de rescate ({girado:.0f} grados)",
+                           linear_scale=0.0)
+
+    # ------------------------------------------------------------- privado
+
+    def _lane_goal(self, pose: Pose, corridor: CorridorHint | None) -> tuple[float, float]:
+        """Meta del tramo: punto sobre el carril, corregido hacia el centro
+        del pasillo. Devuelve (x_forward_m, y_left_m) en marco del robot."""
+        assert self._lock is not None
+        gx, gy = self._lock.goal_world(pose, self.cfg.segment_lookahead_m)
+        rel = Pose(gx, gy, 0.0).relative_to(pose)
+        x_fwd, y_left = rel.x, rel.y
+
+        if corridor is not None and corridor.valid and self.cfg.corridor_centering_weight > 0:
+            w = min(1.0, max(0.0, self.cfg.corridor_centering_weight))
+            mezcla = (1.0 - w) * y_left + w * corridor.lateral_offset_m
+            tope = self.cfg.corridor_centering_max_m
+            y_left = y_left + max(-tope, min(tope, mezcla - y_left))
+        return x_fwd, y_left
+
+    def _count_hits(self, vlm: VlmObservation | None, now: float) -> bool:
+        """Histeresis: N confirmaciones SEGUIDAS, no una.
+
+        Con esta arquitectura un falso positivo no es un error de percepcion:
+        es un giro a la izquierda contra una pared. Por eso una sola respuesta
+        afirmativa nunca alcanza para cambiar de fase.
+        """
+        q = self.current_query()
+        if q is None or vlm is None:
+            return False
+        if vlm.id != q.id:
+            return False                      # respuesta de un hito viejo
+        if vlm.t <= self._last_obs_t:
+            return False                      # ya contada
+        if (now - vlm.t) > self.cfg.vlm_stale_s:
+            return False                      # llego demasiado tarde
+        self._last_obs_t = vlm.t
+
+        if (now - self._phase_t) < self.cfg.milestone_cooldown_s:
+            return False                      # el hito anterior sigue en cuadro
+
+        seg = self.segment
+        if self.state == SemanticState.TURN_SEARCH and seg.turn is not None:
+            requeridos, min_conf = seg.turn.confirm_hits, seg.turn.min_confidence
+            max_d = None
+        else:
+            requeridos = seg.milestone.confirm_hits
+            min_conf = seg.milestone.min_confidence
+            max_d = seg.milestone.max_distance_m
+
+        ok = vlm.present and vlm.confidence >= min_conf
+        if ok and max_d is not None and vlm.distance_m is not None:
+            ok = vlm.distance_m <= max_d
+        self._hits = self._hits + 1 if ok else 0
+        return self._hits >= requeridos
+
+    def _milestone_reached(self, pose: Pose, now: float, razon: str) -> MissionGoal:
+        seg = self.segment
+        if seg.turn is not None:
+            self._enter(SemanticState.TURN_SEARCH, now)
+            self._turn_theta0 = pose.theta
+            return MissionGoal(0.0, 0.0, self.state.value,
+                               f"{razon}; giro a la {seg.turn.side}", linear_scale=0.0)
+        return self._after_turn(pose, now, razon)
+
+    def _after_turn(self, pose: Pose, now: float, razon: str,
+                    theta: float | None = None) -> MissionGoal:
+        """Cierra el tramo actual: o termina la mision, o bloquea rumbo nuevo."""
+        seg = self.segment
+        self.segments_done += 1
+        if seg.final:
+            return self._finish(f"{razon}; ultimo tramo completado", ok=True)
+
+        self.segment_idx = min(self.segment_idx + 1, len(self.cfg.segments) - 1)
+        self._relock(pose, now, motivo=razon, theta=theta)
+        nuevo = self.segment
+        return MissionGoal(0.0, 0.5, self.state.value,
+                           f"{razon}; arranca '{nuevo.id}'",
+                           linear_scale=self.cfg.align_linear_scale)
+
+    def _on_timeout(self, pose: Pose, now: float, avance: float) -> MissionGoal:
+        seg = self.segment
+        razon = f"{seg.id}: {avance:.1f} m sin ver '{seg.milestone.id}'"
+        if seg.on_timeout == "stop":
+            return self._finish(razon + " (on_timeout: stop)")
+        if seg.on_timeout == "advance":
+            return self._milestone_reached(pose, now, razon + " (sigo igual)")
+        self._enter(SemanticState.SWEEP, now)
+        self._turn_theta0 = pose.theta
+        self._sweep_leg = 0
+        return MissionGoal(0.0, 0.0, self.state.value, razon + " (barrido de rescate)",
+                           linear_scale=0.0)
+
+    def _finish(self, razon: str, ok: bool = False) -> MissionGoal:
+        self.state = SemanticState.DONE
+        if not ok:
+            self.failed_reason = razon
+        return MissionGoal(0.0, 0.0, self.state.value, razon, mission_done=True)
+
+    def _enter(self, state: SemanticState, now: float) -> None:
+        self.state = state
+        self._phase_t = now
+        self._hits = 0
+
+    def _relock(self, pose: Pose, now: float, motivo: str,
+                theta: float | None = None) -> None:
+        th = pose.theta if theta is None else theta
+        if self._route_hint is not None:
+            th, _ = self._route_hint.bias_heading(pose, th)
+        self._lock = HeadingLock(pose, th)
+        self._enter(SemanticState.RUN_SEGMENT, now)
+
+    # ------------------------------------------------------------ inspeccion
+
+    @property
+    def checkpoints_done(self) -> int:
+        """Alias de segments_done, con el nombre que ya usan
+        MissionConsoleReporter, RouteStatus y el resumen final de
+        indoor_bridge.py -- asi esos tres siguen andando sin ramificar por
+        modo. En el modo semantico un "checkpoint" es un TRAMO cerrado, no
+        un cono: los conos se cuentan aparte, en ConePhotoLog."""
+        return self.segments_done
+
+    @property
+    def lane(self) -> HeadingLock | None:
+        """El carril activo, para que route_status.py lo publique en el
+        dashboard en lugar de los waypoints."""
+        return self._lock
 
 
 # --------------------------------------------------------------------- pruebas
