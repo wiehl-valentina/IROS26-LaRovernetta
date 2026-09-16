@@ -4,6 +4,9 @@ __pycache__/
 *.pyo
 
 # Installer metadata
+# Dependencias opcionales descargadas localmente (ver README_NOMAD.md)
+/third_party/
+
 *.egg-info/
 dist/
 build/

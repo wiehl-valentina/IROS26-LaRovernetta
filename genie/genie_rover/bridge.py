@@ -53,6 +53,21 @@ class Bridge:
     def __init__(self, cfg: dict, dry_run: bool = True, debug_dir: str | None = None):
         self.cfg = cfg
         self.dry_run = bool(dry_run)
+        # Optional backend stays out of the legacy execution/import path.
+        self.mppi = self.mppi_recovery = self.mppi_actuation = None
+        self.nomad = None
+        trajectory_algorithm = cfg.get('navigation', {}).get('trajectory_algorithm', 'polynomial')
+        recovery_algorithm = cfg.get('safety', {}).get('recovery_algorithm', 'legacy')
+        if trajectory_algorithm not in ('polynomial', 'mppi', 'nomad') or recovery_algorithm not in ('legacy', 'mppi'):
+            raise ValueError('Algoritmos validos: polynomial|mppi|nomad y legacy|mppi')
+        if trajectory_algorithm == 'nomad':
+            from .nomad import NoMaDConfig, NoMaDPlanner
+            self.nomad = NoMaDPlanner(NoMaDConfig(**cfg.get('nomad', {})), dry_run=self.dry_run)
+        if trajectory_algorithm == 'mppi' or recovery_algorithm == 'mppi':
+            from .mppi_adapter import build_backends
+            self.mppi, self.mppi_recovery, self.mppi_actuation = build_backends(cfg, self.dry_run)
+        self._mppi_blocked_frames = 0
+        self._mppi_context = None
         self.debug_dir = Path(debug_dir) if debug_dir else None
         if self.debug_dir:
             self.debug_dir.mkdir(parents=True, exist_ok=True)
@@ -123,6 +138,7 @@ class Bridge:
         self.max_consecutive_errors = int(safety.get("max_consecutive_errors", 5))
         self.recovery_after_empty = int(safety.get("recovery_after_empty_plans", 3))
         self.recovery_turn_s = float(safety.get("recovery_turn_s", 1.5))
+        self._legacy_recovery_side = 1  # +1 derecha, -1 izquierda; alterna por intento
         self.loop_period_s = float(safety.get("loop_period_s", 0.0))
 
         self.stats = LoopStats()
@@ -228,6 +244,9 @@ class Bridge:
     # -------------------------------------------------------------- un paso
 
     def _step(self) -> None:
+        if self.mppi_actuation is not None or self.nomad is not None:
+            self.send(DriveCommand(0.0, 0.0, 'Observacion con rover detenido'))
+        observation_started = time.monotonic()
         rgb, frame_ts = self.client.front_frame()
         now = time.time()
         if frame_ts != self._last_frame_ts:
@@ -238,6 +257,9 @@ class Bridge:
                 f"El frame no cambia desde hace {now - self._last_frame_change:.1f} s "
                 "(video congelado)"
             )
+
+        if self.nomad is not None:
+            self.nomad.observe(rgb, frame_ts, observation_started)
 
         telem = self.client.telemetry()
         heading = self.heading_est.update(telem.latitude, telem.longitude,
@@ -267,6 +289,7 @@ class Bridge:
         plan_bev, plan_obs = res.traversability, res.observed
         fwd, side = self.forward_range, self.side_range
         nota_mapa = ""
+        pose = None
         if self.use_map and self.odometry is not None and self.pmap is not None:
             pose = self.odometry.update(telem.raw)
             self.pmap.integrate(res.traversability, res.observed, pose,
@@ -286,19 +309,74 @@ class Bridge:
 
         # El chequeo de colision usa SIEMPRE la observacion fresca: si algo se
         # cruzo recien, no queremos que el promedio del mapa lo diluya.
-        if front_is_blocked(res.traversability, self.resolution):
+        blocked = front_is_blocked(res.traversability, self.resolution)
+        if self.mppi is not None or self.mppi_recovery is not None:
+            from .mppi_adapter import LocalMap
+            local_map = LocalMap(res, self.resolution, self.pmap, pose)
+            self._mppi_context = (local_map, pose, blocked, observation_started)
+            if self.mppi_recovery is not None and self.mppi_recovery.active:
+                if self.mppi_recovery.finished(pose, blocked):
+                    self.mppi_recovery.active = False
+                    self._consecutive_empty = self._consecutive_turns = 0
+                    if self.mppi is not None:
+                        self.mppi.reset()
+                else:
+                    self._recover()
+                    return
+        if blocked:
             self.stats.blocked += 1
             self.send(DriveCommand(0.0, 0.0, "OBSTACULO al frente"))
+            if self.mppi is not None:
+                self.mppi.reset()
+            if self.mppi_recovery is not None:
+                self._mppi_blocked_frames += 1
+                if self._mppi_blocked_frames >= int(self.cfg['safety'].get('obstacle_persist_frames', 4)):
+                    self._recover()
+            return
+        self._mppi_blocked_frames = 0
+
+        if self.mppi is not None:
+            plan = self.mppi.plan(local_map, [float(goal.y_forward_m), -float(goal.x_right_m)])
+            if not plan.valid or np.max(np.abs(plan.controls)) < 1e-4:
+                self.stats.plans_empty += 1
+                self._consecutive_empty += 1
+                if self._consecutive_empty >= self.recovery_after_empty:
+                    self._recover()
+                else:
+                    self.send(DriveCommand(0.0, 0.0, 'MPPI sin movimiento valido'))
+                return
+            self._consecutive_empty = 0
+            self.stats.plans_ok += 1
+            if abs(plan.controls[0, 0]) < 0.01:
+                self._consecutive_turns += 1
+                if self._consecutive_turns >= self.max_consecutive_turns:
+                    self.mppi.reset()
+                    self._recover()
+                    return
+            else:
+                self._consecutive_turns = 0
+            self._send_mppi(plan, self.mppi, observation_started, 'MPPI trayectoria')
             return
 
-        plan = plan_on_bev(
-            bev_traversability=plan_bev,
-            observed_mask=plan_obs,
-            goal_x_m=float(goal.x_right_m),
-            goal_y_m=float(goal.y_forward_m),
-            bev_resolution_m=(2.0 * side) / plan_bev.shape[1],
-            config=self.planner_cfg,
-        )
+        if self.nomad is not None:
+            if not self.nomad.ready:
+                self.send(DriveCommand(0.0, 0.0, 'NoMaD: esperando contexto RGB nuevo'))
+                return  # warm-up is not a planner failure / recovery trigger
+            plan = self.nomad.plan(plan_bev, plan_obs, float(goal.x_right_m),
+                                   float(goal.y_forward_m), (2.0*side)/plan_bev.shape[1],
+                                   fwd, self.planner_cfg)
+            if time.monotonic()-observation_started > self.nomad.config.max_observation_age_s:
+                self.send(DriveCommand(0.0, 0.0, 'NoMaD: observacion vencida durante inferencia'))
+                return
+        else:
+            plan = plan_on_bev(
+                bev_traversability=plan_bev,
+                observed_mask=plan_obs,
+                goal_x_m=float(goal.x_right_m),
+                goal_y_m=float(goal.y_forward_m),
+                bev_resolution_m=(2.0 * side) / plan_bev.shape[1],
+                config=self.planner_cfg,
+            )
 
         path = plan.final_path_xy_m
         if path is None or len(path) < 2:
@@ -339,6 +417,9 @@ class Bridge:
         porque front_is_blocked ya se evaluo en esta misma iteracion y dio
         libre: si hubiera algo delante, no habriamos llegado hasta aca.
         """
+        if self.mppi_recovery is not None:
+            self._recover()
+            return
         self.stats.unstucks += 1
         giros = self._consecutive_turns
         sentido = sum(self._turn_sign_history)
@@ -412,19 +493,67 @@ class Bridge:
                             f"mantengo el rumbo (evito titubeo, {error_deg:+.0f} grados)")
 
     def _recover(self) -> None:
-        """Recuperacion minima: girar en el lugar para buscar salida.
-
-        GeNIE usa un VLM para esto (mirar en 4 direcciones y elegir). Esta es la
-        version sin VLM: gira a ciegas. Si te importa el puntaje del ERC, aca es
-        donde conviene meter el modulo del paper.
-        """
-        print("[bridge] RECUPERACION: girando para buscar terreno transitable")
-        self.send(DriveCommand(0.0, self.follower.angular_sign * self.follower.turn_speed,
-                               "barrido de recuperacion"))
-        time.sleep(self.recovery_turn_s)
-        self.send(DriveCommand(0.0, 0.0, "fin del barrido"))
+        """Dispatch independent recovery backend; legacy alternates turn sides."""
+        if getattr(self, 'mppi_recovery', None) is not None:
+            self._recover_mppi()
+            return
+        if self._stop_requested:
+            self.send(DriveCommand(0.0, 0.0, "recovery cancelado"))
+            return
+        side = self._legacy_recovery_side
+        self._legacy_recovery_side = -side
+        label = "derecha" if side > 0 else "izquierda"
+        print(f"[bridge] RECUPERACION: barrido hacia {label}")
+        try:
+            self.send(DriveCommand(0.0, side * self.follower.angular_sign * self.follower.turn_speed,
+                                   f"barrido de recuperacion hacia {label}"))
+            if not self.dry_run:
+                deadline = time.monotonic() + self.recovery_turn_s
+                while not self._stop_requested and time.monotonic() < deadline:
+                    time.sleep(min(0.02, max(0.0, deadline-time.monotonic())))
+        finally:
+            self.send(DriveCommand(0.0, 0.0, "fin del barrido"))
         self.heading_est.reset_track()  # el track GPS previo ya no dice el rumbo
         self._consecutive_empty = 0
+
+    def _recover_mppi(self) -> None:
+        recovery = self.mppi_recovery
+        self.send(DriveCommand(0.0, 0.0, 'MPPI recovery: detener antes de evaluar'))
+        if self._mppi_context is None:
+            return
+        local_map, pose, blocked, observed_at = self._mppi_context
+        recovery.start(pose)
+        if recovery.steps >= recovery.cfg.max_steps:
+            print('[bridge] MPPI recovery agotado: detengo la ejecucion')
+            self._stop_requested = True
+            return
+        result = recovery.plan(local_map, blocked, pose)
+        self._send_mppi(result, recovery.optimizer, observed_at, 'MPPI recovery')
+        self.heading_est.reset_track()
+
+    def _send_mppi(self, result, optimizer, observed_at, reason):
+        """Execute ONLY one dt pulse, then stop before slow perception/replan.
+
+        SDK holds commands indefinitely. A finally-stop bounds our intended
+        motion, including interruption; transport/firmware failure still needs
+        a robot-side watchdog. Dry-run neither sleeps nor touches the SDK.
+        """
+        try:
+            if (self._stop_requested or not result.valid or
+                    time.monotonic()-observed_at > self.mppi_actuation.max_observation_age_s):
+                optimizer.reset()
+                return
+            cmd = self.mppi_actuation.command(result.controls[0], self.follower.angular_sign, reason)
+            self.send(cmd)
+            if not self.dry_run:
+                deadline = time.monotonic()+optimizer.cfg.dt
+                while not self._stop_requested and time.monotonic() < deadline:
+                    time.sleep(min(0.02, max(0.0, deadline-time.monotonic())))
+        finally:
+            self.send(DriveCommand(0.0, 0.0, 'MPPI fin de pulso'))
+        if self.debug_dir:
+            np.savez(self.debug_dir / f'{self.stats.iterations:05d}_mppi.npz',
+                     path_xy_m=result.final_path_xy_m, controls=result.controls, cost=result.cost)
 
     def _maybe_dump_debug(self, rgb, res, plan) -> None:
         if not self.debug_dir:

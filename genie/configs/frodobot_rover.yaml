@@ -12,9 +12,55 @@ rover:
   base_url: "http://localhost:8000"
   timeout_s: 5.0
 
+# Opcionales: solo se leen si alguno de los dos selectores vale mppi.
+# MPPI usa unidades fisicas; NO copiar aqui velocidades normalizadas del SDK.
+mppi:
+  samples: 256
+  horizon: 16
+  iterations: 2
+  dt: 0.15
+  temperature: 0.5
+  max_v: 0.22            # m/s
+  max_reverse_v: 0.10    # m/s, solo recovery y espacio conocido
+  max_w: 0.40            # rad/s, positivo = izquierda en el optimizador
+  radius_m: 0.20        # radio circular que debe contener toda la huella
+  collision_step_m: 0.025
+  min_traversability: 0.4
+  seed: 42
+
+mppi_actuation:
+  # Bypass solicitado para pruebas: NO representa una calibracion medida.
+  # Las predicciones de movimiento y los chequeos de trayectoria pueden ser inexactos.
+  calibrated: true
+  linear_mps_per_unit: 1.0  # escala nominal NO medida: velocidad fisica / comando SDK
+  angular_rps_per_unit: 1.0 # escala nominal NO medida: velocidad angular / |comando SDK|
+  max_observation_age_s: 2.0
+
+mppi_recovery:
+  max_steps: 20         # presupuesto total por episodio; agotado = detener bridge
+  attempt_steps: 6      # mantener submeta, luego probar otra direccion
+  progress_m: 0.15      # salir si frente libre y hubo avance o giro suficiente
+  progress_rad: 0.5
+  target_distance_m: 0.5
+
+# Solo se lee/carga si navigation.trajectory_algorithm: nomad.
+# Rutas relativas a genie/ (o absolutas). Dependencias en requirements-nomad.txt.
+nomad:
+  model_config_path: third_party/visualnav-transformer/train/config/nomad.yaml
+  checkpoint_path: checkpoints/nomad.pth
+  device: auto                  # auto | cpu | cuda
+  num_samples: 16
+  waypoint_scale_m: 0.10         # placeholder: metros por unidad de accion NoMaD
+  scale_calibrated: false        # --go exige verificar la escala en este rover
+  goal_weight: 1.0               # costo adicional por distancia final al GPS
+  min_context_interval_s: 0.2
+  max_context_gap_s: 5.0
+  max_observation_age_s: 2.0
+  seed: 42
+
 samtp:
   config_path: "sam2/configs/sam2.1_inference_tiny/sam2.1_custom2.yaml"
-  checkpoint_path: "sam2_logs/configs/sam2.1_training_tiny/sam2_training_custom2_freezeNoneNone_f57.yaml/checkpoints/checkpoint_2.pt"  # viejo, checkpoint generico del paper
+  checkpoint_path: "checkpoints/checkpoint_2.pt"  # checkpoint generico del paper
   #checkpoint_path: "checkpoints/checkpoint_finetuned_v2.pt"   # nuevo, fine-tuneado en 50k frames del Mini+
   device: null
   precision: "auto"
@@ -57,6 +103,7 @@ projection:
   max_ray_distance_m: 2.5
   projection_downscale: 2
 navigation:
+  trajectory_algorithm: mppi  # polynomial (original) | mppi | nomad
   # Determinar con tools/check_angular_sign.py:
   #   -1.0  si angular positivo hace girar a la IZQUIERDA
   #   +1.0  si angular positivo hace girar a la DERECHA
@@ -114,6 +161,7 @@ planner:
   include_random_goals: true
 
 safety:
+  recovery_algorithm: mppi  # legacy (original) | mppi; independiente del planner
   stale_frame_s: 2.0
   max_consecutive_errors: 5
   recovery_after_empty_plans: 3

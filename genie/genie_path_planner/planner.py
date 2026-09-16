@@ -218,6 +218,9 @@ def plan_on_bev(
     bev_resolution_m: float,
     config: PlannerConfig | None = None,
     candidate_path_bank: list[np.ndarray] | None = None,
+    bev_forward_range_m: float | None = None,
+    candidate_goal_weight: float = 0.0,
+    select_best_candidate: bool = False,
 ) -> PlannedPath:
     """Plan a local path on a BEV traversability map.
 
@@ -238,6 +241,15 @@ def plan_on_bev(
 
     start0 = (bev.shape[0] - 1, bev.shape[1] // 2)
     goal0 = goal_xy_to_bev_pixel(float(goal_x_m), float(goal_y_m), bev.shape, float(bev_resolution_m))
+    # Optional metric geometry for external generators on rectangular crops.
+    # The original polynomial path remains unchanged when omitted.
+    if bev_forward_range_m is not None:
+        if not np.isfinite(bev_forward_range_m) or bev_forward_range_m <= 0 or min(bev.shape) < 2:
+            raise ValueError('Invalid metric BEV geometry')
+        goal0 = (int(np.clip(round((bev.shape[0]-1)*(1-goal_y_m/bev_forward_range_m)),
+                             0, bev.shape[0]-1)), goal0[1])
+    if not np.isfinite(candidate_goal_weight) or candidate_goal_weight < 0:
+        raise ValueError('candidate_goal_weight must be finite and nonnegative')
     cost0 = traversability_to_cost(bev, unknown_cost=float(cfg.unknown_cost))
     cost0 = _smooth_cost(cost0, int(cfg.smooth_kernel))
 
@@ -260,7 +272,7 @@ def plan_on_bev(
         )
     else:
         candidate_paths = list(candidate_path_bank)
-    if len(candidate_paths) == 0:
+    if len(candidate_paths) == 0 and candidate_path_bank is None:
         raise RuntimeError("Path sampler returned no candidate paths")
 
     num_points_to_filter = int(min(max(1, int(cfg.number_of_points_to_filter)), int(cfg.path_num_samples) + 1))
@@ -359,18 +371,36 @@ def plan_on_bev(
     if len(paths_costed) == 0:
         raise RuntimeError("No paths left after cost computation")
 
+    if candidate_goal_weight:
+        ranked = []
+        for terrain_cost, path in paths_costed:
+            endpoint = _planner_path_to_bev_path(path[-1:], bev.shape, int(cfg.grid_size))[0]
+            x = (endpoint[1]-bev.shape[1]//2)*bev_resolution_m
+            ry = (bev_forward_range_m/(bev.shape[0]-1) if bev_forward_range_m is not None else bev_resolution_m)
+            y = (bev.shape[0]-1-endpoint[0])*ry
+            distance = math.hypot(x-goal_x_m, y-goal_y_m)
+            ranked.append((terrain_cost + candidate_goal_weight*len(path)*distance, path))
+        paths_costed = ranked
+
     final_num_samples = int(selected_paths[0].shape[0])
-    final_rows, final_cols = pick_final_path(
-        paths_costed,
-        best_k=int(min(max(1, int(cfg.best_k)), len(paths_costed))),
-        num_samples=final_num_samples,
-        cost_map=planner_cost,
-        alpha=float(cfg.alpha),
-        footprint_px=int(cfg.footprint_px),
-    )
+    if select_best_candidate:
+        best_path = min(paths_costed, key=lambda item: item[0])[1]
+        final_rows, final_cols = best_path[:, 0], best_path[:, 1]
+    else:
+        final_rows, final_cols = pick_final_path(
+            paths_costed,
+            best_k=int(min(max(1, int(cfg.best_k)), len(paths_costed))),
+            num_samples=final_num_samples,
+            cost_map=planner_cost,
+            alpha=float(cfg.alpha),
+            footprint_px=int(cfg.footprint_px),
+        )
     final_path_px = np.stack([np.asarray(final_rows), np.asarray(final_cols)], axis=1).astype(np.float32)
     final_path_bev = _planner_path_to_bev_path(final_path_px, src_shape=bev.shape, grid_size=int(cfg.grid_size))
     x_right, y_forward = bev_pixel_to_xy(final_path_bev[:, 0], final_path_bev[:, 1], bev.shape, float(bev_resolution_m))
+    if bev_forward_range_m is not None:
+        x_right = (final_path_bev[:, 1]-bev.shape[1]//2)*bev_resolution_m
+        y_forward = (bev.shape[0]-1-final_path_bev[:, 0])*(bev_forward_range_m/(bev.shape[0]-1))
     final_path_xy = np.stack([x_right, y_forward], axis=1).astype(np.float32)
 
     costs = np.array([float(x[0]) for x in paths_costed], dtype=np.float64)

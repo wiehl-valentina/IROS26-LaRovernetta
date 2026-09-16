@@ -1,0 +1,6 @@
+# Optional NoMaD runtime additions. NOT included in requirements.txt.
+# Install torch/torchvision compatible with SAM-TP separately.
+# See README_NOMAD.md for vint_train and diffusion_policy source installation.
+diffusers>=0.25,<0.31
+efficientnet-pytorch==0.7.1
+einops>=0.6
