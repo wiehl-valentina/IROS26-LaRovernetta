@@ -1,12 +1,17 @@
 """MapSessionBridge: programa de mapeo reusable con genie_rover + (opcional) RTAB-Map.
 
-Que hace, en una linea: explora por frontera (igual que IndoorBridge con
-`mission.search_mode: "frontier"`, sin tocar esa logica) armando el
-PersistentMap de siempre con la percepcion SAM-TP en vivo, y lo exporta
+Que hace, en una linea: explora por frontera (FrontierExploreFSM, en
+mission.py -- sin VLM ni tramos semanticos) armando el PersistentMap de
+siempre con la percepcion SAM-TP en vivo, y lo exporta
 periodicamente + al terminar a formato ROS `map_server` (yaml+pgm) --
 el mismo formato que ya sabe leer `external_map.load_ros_occupancy_map`
 para que lo reuses despues con `indoor_bridge.py` (mision de cono) o
 cualquier otro programa tuyo.
+
+MISION: esta clase NO corre la mision semantica de IndoorBridge. Pisa
+`_build_mission()` para cambiar la fuente de la meta por la exploracion por
+frontera, asi el config de mapeo no necesita `mission.segments` ni VLM. El
+resto (percepcion, mapa, planner, seguidor, recovery) es identico.
 
 Opcionalmente (`mapping.rtabmap_correction.enabled: true` en el config),
 reemplaza la pose de dead-reckoning (rueda+giro+GPS) por la pose corregida
@@ -56,6 +61,7 @@ from pathlib import Path
 import yaml
 
 from .indoor_bridge import IndoorBridge
+from .mission import FrontierExploreConfig, FrontierExploreFSM
 
 
 class MapSessionBridge(IndoorBridge):
@@ -79,6 +85,26 @@ class MapSessionBridge(IndoorBridge):
         # segundo plano el resto del proceso.
 
     # ------------------------------------------------------------- override
+
+    def _build_mission(self, mission_raw: dict, cfg: dict) -> None:
+        """Exploracion por frontera en vez de la mision semantica.
+
+        IndoorBridge._mission_goal() llama a `self.mission.update(pose, now,
+        vlm=..., corridor=..., pmap=...)`: FrontierExploreFSM tiene esa misma
+        firma e ignora vlm/corridor, asi que no hace falta tocar _step() ni
+        reintroducir un "modo de mision" en indoor_bridge.py.
+
+        sem_cfg queda con los defaults (solo se usa para el lookahead del
+        hint de pasillo, que esta FSM no consulta) y el VLM no se instancia:
+        una sesion de mapeo no tiene hitos que confirmar.
+        """
+        from .mission import SemanticMissionConfig
+
+        self.sem_cfg = SemanticMissionConfig()
+        self.vlm = None
+        self.mission = FrontierExploreFSM(
+            FrontierExploreConfig.from_dict(mission_raw))
+        print("[map_session] exploracion por frontera (sin VLM, sin tramos)")
 
     def _step(self):
         # La correccion de pose por RTAB-Map (cuando self._rtab esta activo)
@@ -105,6 +131,16 @@ class MapSessionBridge(IndoorBridge):
                 # no lo vuelve a cerrar.
                 print(f"[map_session] TF lookups: {self._rtab.lookups_ok} ok, "
                       f"{self._rtab.lookups_failed} fallidos")
+
+    def _print_summary(self) -> None:
+        # El resumen de IndoorBridge habla de tramos y de hitos del VLM, que
+        # aca no existen: se salta a la version de Bridge.
+        super(IndoorBridge, self)._print_summary()
+        s = self.pmap.stats()
+        print("  --- sesion de mapeo ---")
+        print(f"  exports del mapa:          {self._exports_done}")
+        print(f"  cobertura del mapa:        {s['cobertura'] * 100:.1f}%")
+        print(f"  celdas vistas:             {s['celdas_vistas']}")
 
     # --------------------------------------------------------------- export
 

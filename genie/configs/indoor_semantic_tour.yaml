@@ -1,13 +1,13 @@
-# Seccion `mission:` para el modo semantico. Reemplaza la seccion mission: de
-# configs/indoor_cone_search.yaml (guardalo como configs/indoor_semantic_tour.yaml
-# copiando el resto del archivo -- camera/projection/samtp/navigation/planner/
-# safety/memory/odometry/cone -- tal cual, sin tocar tu calibracion).
+# Config de la Mision Semantica Indoor (VLM + BEV Corridor).
 #
-# El circuito vive ACA, no en mission.py: cambiar el recorrido es editar esta
-# lista. Los prompts son literalmente lo que se le manda al VLM.
-
-# Config de la Misión Semántica Indoor (VLM + BEV Corridor)
-# Conserva intacta la calibración del robot (camera, projection, samtp, navigation, planner, safety, memory, odometry, cone).
+# UNICA mision del bridge indoor: ya no existe la deteccion de conos, asi que
+# este archivo no tiene seccion `cone:` ni `mission.cone_photo`. Conserva
+# intacta la calibracion del robot (camera, projection, samtp, navigation,
+# planner, safety, memory, odometry).
+#
+# El circuito vive ACA, no en mission.py: cambiar el recorrido es editar la
+# lista `mission.segments`. Los prompts son literalmente lo que se le manda
+# al VLM.
 
 rover:
   base_url: "http://localhost:8000"
@@ -141,38 +141,7 @@ memory:
   plan_forward_m: 3.0
   plan_side_m: 2.0
 
-cone:
-  backend: "color"
-  real_height_m: 0.30
-  color:
-    orange:
-      hsv_low: [2, 180, 120]
-      hsv_high: [20, 255, 255]
-      hsv_low2: null
-      hsv_high2: null
-    red:
-      hsv_low: [0, 180, 120]
-      hsv_high: [5, 255, 255]
-      hsv_low2: [175, 180, 120]
-      hsv_high2: [179, 255, 255]
-    blue:
-      hsv_low: [103, 100, 50]
-      hsv_high: [120, 255, 255]
-      hsv_low2: null
-      hsv_high2: null
-    green:
-      hsv_low: [76, 180, 40]
-      hsv_high: [94, 255, 130]
-      hsv_low2: null
-      hsv_high2: null
-    min_area_px: 250
-    min_aspect_ratio: 0.25
-    max_aspect_ratio: 1.3
-    min_fill_ratio: 0.35
-    morph_kernel: 5
-
 mission:
-  mode: "semantic_corridor"
   segment_lookahead_m: 2.5
   corridor_centering_weight: 0.6
   corridor_centering_max_m: 0.8
@@ -235,133 +204,57 @@ mission:
         min_confidence: 0.6
       on_milestone:
         side: "right"
-        look_for: "un cono de transito naranja"
+        look_for: "la salida del pasillo / el vano por el que se vuelve"
       max_distance_m: 30.0
       on_timeout: "stop"
       final: true
-  cone_photo:
-    enabled: true
-    revisit_radius_m: 1.0
-    photo_dir: "checkpoint_photos"
-
 vlm:
+  # Unico backend: Gemini (REST directo). "off" lo apaga y cada tramo termina
+  # por su fail-safe de distancia (segments[].on_timeout).
   backend: "gemini"
-  model: "gemini-1.5-flash"
-  api_key: 
-  interval_s: 1.0            # cadencia de consulta (~1 Hz)
-  interval_turn_s: 0.5       # cadencia más rápida en giros
-  timeout_s: 6.0
-  max_side_px: 640
-  jpeg_quality: 80
+
+  # gemini-2.0-flash | gemini-2.5-flash | gemini-2.5-flash-lite.
+  # OJO: los gemini-1.5-* estan retirados de la API publica -> 404.
+  model: "gemini-3.1-flash-lite"
+
+  # API key de Google AI Studio (empieza con "AIza"). Dejala VACIA aca y
+  # exporta GEMINI_API_KEY en el entorno si el config va a git.
+  api_key: ""               # usar GEMINI_API_KEY del entorno / .env
+
+  # --- cuanto se le puede preguntar ---------------------------------------
+  # Tope duro de la cuota de Gemini Flash (free tier): 15 pedidos por minuto,
+  # en ventana deslizante de 60 s. Al llegar al tope el frame se saltea.
+  max_rpm: 15
+
+  interval_s: 2.0            # piso de tiempo entre consultas (antes 1.0: la respuesta tarda 3-6 s)
+  interval_turn_s: 1.0       # piso mas corto en giros (antes 0.5)
+
+  # Disparo por MOVIMIENTO (medido sobre la pose de odometry/RTAB-Map): una
+  # consulta nueva necesita ademas medio metro de avance O 20 grados de giro
+  # desde la anterior. El OR importa: en el giro el robot pivotea sin avanzar.
+  # Un cambio de hito/tramo dispara siempre, sin esperar a moverse.
+  query_every_m: 0.5
+  query_every_deg: 20.0
+  query_max_s: 8.0           # red de seguridad si el robot queda quieto
+
+  timeout_s: 20.0           # antes 6.0: p95 medido = 6.1 s, cortaba justo ahi
+  max_side_px: 512           # antes 640: menos bytes, respuesta mas rapida
+  jpeg_quality: 70           # antes 80
   max_tokens: 128
   temperature: 0.0
+
+  # --- para ver que esta haciendo -----------------------------------------
+  check_on_start: true       # llamada de prueba al arrancar (credencial+modelo)
+  log: true                  # una linea por respuesta: veredicto, confianza, latencia
+  log_dir: "debug/vlm"       # guarda el jpg mandado y el json contestado de cada consulta
+                             # (null para no guardar nada)
 
 dashboard:
   route_status_path: "/home/pablolube/IROS26-LaRovernetta/earth-rovers-sdk/static/genie_waypoints.json"
 
-# Levantar el servidor ANTES de correr la mision, en otra terminal:
-#   pip install vllm
-#   python -m vllm.entrypoints.openai.api_server \
-#       --model Qwen/Qwen2-VL-2B-Instruct \
-#       --port 8001 --max-model-len 4096 --limit-mm-per-prompt image=1
-#
-# Va en un proceso APARTE a proposito: SAM-TP ya tiene la GPU, y un 2B
-# cargado en el mismo proceso le pelea la VRAM justo cuando el planner la
-# necesita. Probar que responde, sin robot:
-#   python -m genie_rover.Indoor.vlm_semantic --image debug/run1/00007_rgb.jpg \
-#       --prompt "¿se ve un piano?"
+# Probar que Gemini contesta, sin robot:
+
 
 # --- overlay del dashboard (opcional, igual que antes) ----------------------
 # dashboard:
 #   route_status_path: "/ruta/a/earth-rovers-sdk/static/genie_waypoints.json"
-cone:
-  # "color": heuristica HSV+forma, cero entrenamiento, para arrancar hoy.
-  # "yolo":  ultralytics YOLO, requiere checkpoint entrenado (ver doc).
-  backend: "color"
-
-  # Alto real del cono en metros. Se usa SOLO como respaldo cuando el cono
-  # NO toca el piso visible en la imagen (esta a otra altura -- arriba de un
-  # cordon/escalon/estante -- o su base esta parcialmente tapada): en vez de
-  # perder la deteccion, estima la distancia por tamaño aparente en la
-  # imagen. Ajustar al cono real que se use en la pista.
-  real_height_m: 0.30
-
-color:
-
-  # ============================================================
-  # NARANJA
-  # Referencias:
-  #   #FE1800 -> HSV [3, 255, 254]
-  #   #F59203 -> HSV [18, 252, 245]
-  # ============================================================
-  orange:
-    hsv_low: [2, 180, 120]
-    hsv_high: [20, 255, 255]
-    hsv_low2: null
-    hsv_high2: null
-
-  # ============================================================
-  # ROJO
-  # Referencias:
-  #   #DF171A -> HSV [180, 229, 223]
-  #   #D71513 -> HSV [0, 233, 215]
-  #
-  # El rojo cruza el límite 0/180 del HSV,
-  # por eso utiliza dos rangos.
-  # ============================================================
-  red:
-    hsv_low: [0, 180, 120]
-    hsv_high: [5, 255, 255]
-    hsv_low2: [175, 180, 120]
-    hsv_high2: [179, 255, 255]
-
-  # ============================================================
-  # AZUL
-  # Referencias:
-  #   #243255 -> HSV [111, 147, 85]
-  #   #233158 -> HSV [112, 154, 88]
-  # ============================================================
-  blue:
-    hsv_low: [103, 100, 50]
-    hsv_high: [120, 255, 255]
-    hsv_low2: null
-    hsv_high2: null
-
-  # ============================================================
-  # VERDE
-  # Referencias:
-  #   #005244 -> HSV [85, 255, 82]
-  #   #004638 -> HSV [84, 255, 70]
-  # ============================================================
-  green:
-    hsv_low: [76, 180, 40]
-    hsv_high: [94, 255, 130]
-    hsv_low2: null
-    hsv_high2: null
-
-  # Area minima en pixeles para no confundir
-  # ruido/manchitas con un cono real.
-  min_area_px: 250
-
-  # Relacion ancho/alto minima del blob detectado.
-  min_aspect_ratio: 0.25
-
-  # Relacion ancho/alto maxima.
-  # Filtra formas muy alargadas o muy achatadas.
-  max_aspect_ratio: 1.3
-
-  # Que tan "lleno" tiene que estar el bounding box.
-  # Filtra formas muy huecas o irregulares.
-  min_fill_ratio: 0.35
-
-  # Tamano del kernel morfologico.
-  # Limpieza de la mascara de color antes de buscar blobs.
-  morph_kernel: 5
-
-  yolo:
-    # Config para el backend alternativo (si backend: "yolo" en vez de "color").
-    weights_path: "checkpoints/cono_detection_model.pt"   # pesos del modelo YOLO entrenado.
-    class_names: ["cone"]                       # clases que reconoce el modelo.
-    conf_thresh: 0.50                           # umbral de confianza minimo.
-    device: null                                # null = autodetectar (igual que samtp).
-    img_size: 640            
