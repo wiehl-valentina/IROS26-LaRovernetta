@@ -11,7 +11,7 @@ one env var.
 | --- | --- |
 | Training code | Meta's SAM2 repo: `https://github.com/facebookresearch/sam2` — the `training/` package (NOT vendored in `./genie`, clone it separately) |
 | Training configs | **already in this repo**: `genie/sam2/configs/sam2.1_training_tiny/` — written for exactly this architecture (tiny backbone + `want_custom_prompt_encoder: 2`) |
-| Init checkpoint | `checkpoint_finetuned_v2.pt` (what this package runs) |
+| Init checkpoint s| `checkpoint_finetuned_v2.pt` (what this package runs) |
 | Labeled data | you make this — see below |
 | GPU | a real one (1024-res training; a laptop won't do). University cluster, Colab Pro, Lightning/HF cloud GPUs — a few hours on a single A100/4090-class card is enough for a small fine-tune |
 
