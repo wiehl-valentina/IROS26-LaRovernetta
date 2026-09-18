@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "name": "mexico5part2",
+  "recorded_at": "2026-09-17T20:58:55+00:00",
+  "sdk_url": "http://localhost:8000",
+  "sampling": {
+    "spacing_m": 1.0,
+    "corner_deg": 15.0,
+    "corner_min_m": 0.4,
+    "rate_hz": 5.0
+  },
+  "track_length_m": 0.0,
+  "track_fixes": 3,
+  "count": 1,
+  "waypoints": [
+    {
+      "id": 1,
+      "sequence": 1,
+      "latitude": 19.570472717285156,
+      "longitude": -98.81443786621094,
+      "timestamp": 1789678712.686,
+      "motivo": "inicio",
+      "gps_signal": 48.25
+    }
+  ]
+}

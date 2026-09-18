@@ -1,0 +1,42 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "tipo": "track"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -98.81443786621094,
+            19.570472717285156
+          ],
+          [
+            -98.81443786621094,
+            19.570472717285156
+          ],
+          [
+            -98.81443786621094,
+            19.570472717285156
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "sequence": 1,
+        "motivo": "inicio"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -98.81443786621094,
+          19.570472717285156
+        ]
+      }
+    }
+  ]
+}

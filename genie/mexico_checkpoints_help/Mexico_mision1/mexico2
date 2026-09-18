@@ -1,0 +1,206 @@
+{
+  "version": 1,
+  "name": "mexico2",
+  "recorded_at": "2026-09-17T20:28:33+00:00",
+  "sdk_url": "http://localhost:8000",
+  "sampling": {
+    "spacing_m": 1.0,
+    "corner_deg": 15.0,
+    "corner_min_m": 0.4,
+    "rate_hz": 5.0
+  },
+  "track_length_m": 15.7,
+  "track_fixes": 231,
+  "count": 19,
+  "waypoints": [
+    {
+      "id": 1,
+      "sequence": 1,
+      "latitude": 19.570219039916992,
+      "longitude": -98.81461334228516,
+      "timestamp": 1789676794.334,
+      "motivo": "inicio",
+      "gps_signal": 47.5
+    },
+    {
+      "id": 2,
+      "sequence": 2,
+      "latitude": 19.570228576660156,
+      "longitude": -98.81461334228516,
+      "timestamp": 1789676827.042,
+      "motivo": "espaciado",
+      "gps_signal": 48.75,
+      "distance_from_prev_m": 1.06
+    },
+    {
+      "id": 3,
+      "sequence": 3,
+      "latitude": 19.570232391357422,
+      "longitude": -98.81460571289062,
+      "timestamp": 1789676830.342,
+      "motivo": "curva",
+      "gps_signal": 48.75,
+      "distance_from_prev_m": 0.9
+    },
+    {
+      "id": 4,
+      "sequence": 4,
+      "latitude": 19.570236206054688,
+      "longitude": -98.81460571289062,
+      "timestamp": 1789676833.343,
+      "motivo": "curva",
+      "gps_signal": 48.75,
+      "distance_from_prev_m": 0.42
+    },
+    {
+      "id": 5,
+      "sequence": 5,
+      "latitude": 19.570240020751953,
+      "longitude": -98.8145980834961,
+      "timestamp": 1789676837.654,
+      "motivo": "curva",
+      "gps_signal": 48.5,
+      "distance_from_prev_m": 0.9
+    },
+    {
+      "id": 6,
+      "sequence": 6,
+      "latitude": 19.57024383544922,
+      "longitude": -98.8145980834961,
+      "timestamp": 1789676840.193,
+      "motivo": "curva",
+      "gps_signal": 48.75,
+      "distance_from_prev_m": 0.42
+    },
+    {
+      "id": 7,
+      "sequence": 7,
+      "latitude": 19.570253372192383,
+      "longitude": -98.81459045410156,
+      "timestamp": 1789676863.483,
+      "motivo": "espaciado",
+      "gps_signal": 48.25,
+      "distance_from_prev_m": 1.33
+    },
+    {
+      "id": 8,
+      "sequence": 8,
+      "latitude": 19.57025718688965,
+      "longitude": -98.81459045410156,
+      "timestamp": 1789676870.266,
+      "motivo": "curva",
+      "gps_signal": 47.25,
+      "distance_from_prev_m": 0.42
+    },
+    {
+      "id": 9,
+      "sequence": 9,
+      "latitude": 19.570261001586914,
+      "longitude": -98.81458282470703,
+      "timestamp": 1789676871.3,
+      "motivo": "curva",
+      "gps_signal": 46.5,
+      "distance_from_prev_m": 0.9
+    },
+    {
+      "id": 10,
+      "sequence": 10,
+      "latitude": 19.57026481628418,
+      "longitude": -98.81458282470703,
+      "timestamp": 1789676872.354,
+      "motivo": "curva",
+      "gps_signal": 48,
+      "distance_from_prev_m": 0.42
+    },
+    {
+      "id": 11,
+      "sequence": 11,
+      "latitude": 19.57027244567871,
+      "longitude": -98.8145751953125,
+      "timestamp": 1789676875.739,
+      "motivo": "espaciado",
+      "gps_signal": 47.75,
+      "distance_from_prev_m": 1.17
+    },
+    {
+      "id": 12,
+      "sequence": 12,
+      "latitude": 19.57027816772461,
+      "longitude": -98.8145751953125,
+      "timestamp": 1789676876.632,
+      "motivo": "curva",
+      "gps_signal": 48.25,
+      "distance_from_prev_m": 0.64
+    },
+    {
+      "id": 13,
+      "sequence": 13,
+      "latitude": 19.570283889770508,
+      "longitude": -98.81456756591797,
+      "timestamp": 1789676878.736,
+      "motivo": "espaciado",
+      "gps_signal": 49.25,
+      "distance_from_prev_m": 1.02
+    },
+    {
+      "id": 14,
+      "sequence": 14,
+      "latitude": 19.570287704467773,
+      "longitude": -98.81456756591797,
+      "timestamp": 1789676880.852,
+      "motivo": "curva",
+      "gps_signal": 49,
+      "distance_from_prev_m": 0.42
+    },
+    {
+      "id": 15,
+      "sequence": 15,
+      "latitude": 19.57029151916504,
+      "longitude": -98.81455993652344,
+      "timestamp": 1789676884.076,
+      "motivo": "curva",
+      "gps_signal": 49.25,
+      "distance_from_prev_m": 0.9
+    },
+    {
+      "id": 16,
+      "sequence": 16,
+      "latitude": 19.5702953338623,
+      "longitude": -98.81455993652344,
+      "timestamp": 1789676886.162,
+      "motivo": "curva",
+      "gps_signal": 48.25,
+      "distance_from_prev_m": 0.42
+    },
+    {
+      "id": 17,
+      "sequence": 17,
+      "latitude": 19.57030487060547,
+      "longitude": -98.8145523071289,
+      "timestamp": 1789676898.18,
+      "motivo": "espaciado",
+      "gps_signal": 48.75,
+      "distance_from_prev_m": 1.33
+    },
+    {
+      "id": 18,
+      "sequence": 18,
+      "latitude": 19.570308685302734,
+      "longitude": -98.8145523071289,
+      "timestamp": 1789676901.346,
+      "motivo": "curva",
+      "gps_signal": 47.75,
+      "distance_from_prev_m": 0.42
+    },
+    {
+      "id": 19,
+      "sequence": 19,
+      "latitude": 19.570310592651367,
+      "longitude": -98.81455993652344,
+      "timestamp": 1789676910.976,
+      "motivo": "curva",
+      "gps_signal": 43.75,
+      "distance_from_prev_m": 0.83
+    }
+  ]
+}

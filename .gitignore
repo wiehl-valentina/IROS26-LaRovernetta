@@ -99,3 +99,5 @@ static/*.wav
 /CLAUDE.md
 /MEMORY.md
 front.png
+genie/debug
+ML_model/.venv-data
