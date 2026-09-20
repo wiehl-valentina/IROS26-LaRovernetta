@@ -313,23 +313,7 @@ class Bridge:
         heading = self.heading_est.update(telem.latitude, telem.longitude,
                                           telem.orientation, telem.timestamp)
 
-        target = self.current_target()
-        if target is not None and heading is not None:
-            goal = goal_from_gps(telem.latitude, telem.longitude, heading,
-                                 target.latitude, target.longitude, self.goal_range_m)
-            if goal.distance_m < self.claim_radius_m:
-                ok, msg = self.client.claim_checkpoint()
-                if ok:
-                    print(f"[bridge] ✓ checkpoint #{target.sequence} conseguido: {msg}")
-                    self.refresh_checkpoints()
-                else:
-                    print(f"[bridge] cerca del checkpoint ({goal.distance_m:.1f} m) "
-                          f"pero rechazado: {msg}")
-            goal_desc = (f"cp#{target.sequence} a {goal.distance_m:.0f} m, "
-                         f"rel {goal.relative_bearing_deg:+.0f} grados")
-        else:
-            goal = type("G", (), {"x_right_m": 0.0, "y_forward_m": self.goal_range_m})()
-            goal_desc = "derecho adelante (sin meta GPS)"
+        goal, goal_desc = self._compute_goal(telem, heading)
 
         res = self.perception.process(rgb)
 
@@ -375,10 +359,7 @@ class Bridge:
         if front_is_blocked(res.traversability, self.resolution):
             self.stats.blocked += 1
             self._consecutive_blocked += 1
-            if self._consecutive_blocked >= self.obstacle_persist_frames and self.use_map:
-                self._retroceso_y_recover(res.traversability)
-            else:
-                self.send(DriveCommand(0.0, 0.0, "OBSTACULO al frente"))
+            self._on_blocked(res.traversability)
             return
         self._consecutive_blocked = 0
 
@@ -428,6 +409,41 @@ class Bridge:
         if self._send_path_command(path_robot):
             if plan is not None:
                 self._maybe_dump_debug(rgb, res, plan)
+
+    # ------------------------------------------------------------------ hooks
+    #
+    # Dos decisiones de _step() separadas en metodos para que una subclase
+    # (p. ej. bridge_mexico.BridgeMexico) pueda cambiarlas sin copiar el
+    # bucle entero. Las implementaciones de aca son el codigo que antes
+    # estaba inline en _step(): el comportamiento del bridge base no cambia.
+
+    def _compute_goal(self, telem, heading):
+        """Meta local + descripcion para el log. Tambien hace el claim del
+        checkpoint oficial cuando esta dentro de claim_radius_m."""
+        target = self.current_target()
+        if target is not None and heading is not None:
+            goal = goal_from_gps(telem.latitude, telem.longitude, heading,
+                                 target.latitude, target.longitude, self.goal_range_m)
+            if goal.distance_m < self.claim_radius_m:
+                ok, msg = self.client.claim_checkpoint()
+                if ok:
+                    print(f"[bridge] ✓ checkpoint #{target.sequence} conseguido: {msg}")
+                    self.refresh_checkpoints()
+                else:
+                    print(f"[bridge] cerca del checkpoint ({goal.distance_m:.1f} m) "
+                          f"pero rechazado: {msg}")
+            return goal, (f"cp#{target.sequence} a {goal.distance_m:.0f} m, "
+                          f"rel {goal.relative_bearing_deg:+.0f} grados")
+        goal = type("G", (), {"x_right_m": 0.0, "y_forward_m": self.goal_range_m})()
+        return goal, "derecho adelante (sin meta GPS)"
+
+    def _on_blocked(self, bev: np.ndarray) -> None:
+        """Que hacer con obstaculo al frente (front_is_blocked dio True).
+        Base: frenar, y si persiste obstacle_persist_frames, regimen cercano."""
+        if self._consecutive_blocked >= self.obstacle_persist_frames and self.use_map:
+            self._retroceso_y_recover(bev)
+        else:
+            self.send(DriveCommand(0.0, 0.0, "OBSTACULO al frente"))
 
     def _path_bank(self, bev_shape: tuple[int, int],
                    bev_resolution_m: float) -> list[np.ndarray] | None:
