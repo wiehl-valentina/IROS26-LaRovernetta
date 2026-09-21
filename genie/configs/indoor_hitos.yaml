@@ -1,0 +1,356 @@
+# Mision indoor por HITOS VISUALES, reconocidos con fotos de referencia (DINO)
+# en vez de preguntandole a un VLM.
+#
+# Diferencia con indoor_semantic_tour.yaml: alla cada hito era un prompt de
+# texto para Gemini (~1-6 s por consulta, 15 rpm de cuota, hace falta red);
+# aca cada hito es una CARPETA DE FOTOS en reference_images/<id>/ y el
+# reconocimiento corre local en ~50 ms. La calibracion del robot (camera,
+# projection, samtp, navigation, planner, safety, memory, odometry) es la
+# misma, sin tocar.
+#
+# EL RECORRIDO: 6 tramos. Un tramo = avanzar recto con el rumbo bloqueado
+# hasta ver su `milestone`, y despues hacer (o no) el giro de `on_milestone`.
+# Los hitos que solo CONFIRMAN posicion no llevan `on_milestone`: al
+# reconocerlos el rover re-bloquea el rumbo que ya trae y sigue derecho, que
+# es la regla general del recorrido.
+#
+#   tramo             milestone (confirma)   on_milestone (dispara maniobra)
+#   ----------------  ---------------------  ------------------------------
+#   t1_piano          piano                  -- sigue recto
+#   t2_puerta_izq     puerta_izquierda       gira izq -> vano_puerta_izquierda
+#   t3_sillas         tres_sillas            gira izq -> pasillo_izquierda
+#   t4_tuerca         tuerca_azul            -- sigue recto
+#   t5_cruzar_puerta  puerta_final           -- sigue recto (la cruza)
+#   t6_giro_derecha   post_puerta            gira der -> salida_puerta
+#
+# Los pares milestone+on_milestone son a proposito: "tres sillas, entonces
+# gira de a poco a la izquierda hasta encontrar el pasillo" es UN tramo, no
+# dos -- las sillas lo cierran y el pasillo es lo que se busca mientras
+# pivotea. Igual con la puerta a la izquierda y su vano.
+#
+# La puerta final, en cambio, son DOS tramos justamente para que el giro pase
+# DESPUES de cruzarla: si `puerta_final` llevara el giro, el rover empezaria
+# a pivotear apenas la ve, sin llegar a atravesar el vano.
+#
+# El campo `id` de cada milestone/on_milestone es el nombre de la carpeta de
+# fotos: milestone.id "piano" -> reference_images/piano/*.jpg
+
+rover:
+  base_url: "http://localhost:8000"
+  timeout_s: 5.0
+
+samtp:
+  config_path: "sam2/configs/sam2.1_inference_tiny/sam2.1_custom2.yaml"
+  checkpoint_path: "sam2_logs/configs/sam2.1_training_tiny/sam2_training_custom2_freezeNoneNone_f57.yaml/checkpoints/checkpoint_2.pt"
+  device: null
+  precision: "auto"
+  score_thresh: 0.0
+
+camera:
+  calibrated: true
+  image_size: [1920, 1080]
+  intrinsics:
+    - [925.265722853314, 0.0, 962.3052531643399]
+    - [0.0, 924.6288195383473, 528.3891677741947]
+    - [0.0, 0.0, 1.0]
+  dist_coeffs: [-0.26257227523222204, 0.06503885855790396, -0.00031427372195389234, -0.0011895820486559178, -0.0073726075647136185]
+  height_m: 0.150
+  pitch_down_deg: 1.85
+  pose:
+    - [-0.000313571, -0.032360666, 0.999476207, 0.000000000]
+    - [-0.999953056, 0.009689420, -0.000000000, 0.000000000]
+    - [-0.009684345, -0.999429288, -0.032362186, 0.150244633]
+    - [0.000000000, 0.000000000, 0.000000000, 1.000000000]
+
+projection:
+  ground_z: 0.0
+  resolution_m_per_px: 0.03
+  forward_range_m: 2.0
+  side_range_m: 2.0
+  max_ray_distance_m: 2.5
+  projection_downscale: 2
+
+navigation:
+  angular_sign: -1.0
+  max_linear: 0.9
+  max_angular: 0.6
+  turn_speed: 0.40
+  kp_angular: 0.45
+  lookahead_m: 1.5
+  align_threshold_deg: 90.0
+  commit_hold_s: 2.0
+  commit_min_deg: 8.0
+  commit_override_deg: 30.0
+  replan_every_m: 0.6
+  replan_min_remaining_m: 0.3
+  replan_max_s: 1.5
+  min_linear_while_planned: 0.06
+  goal_range_m: 3.5
+  claim_radius_m: 8.0
+  heading_min_displacement_m: 1.5
+  trust_orientation: false
+  orientation_offset_deg: 0.0
+  orientation_sign: 1.0
+
+planner:
+  grid_size: 200
+  unknown_cost: 0.30
+  smooth_kernel: 3
+  num_goals: 24
+  num_mid_points_per_goal: 16
+  path_num_samples: 80
+  footprint_px: 12
+  threshold_cost: 0.35
+  threshold_points_ratio: 0.02
+  number_of_points_to_filter: 60
+  alpha: 1.0
+  best_k: 10
+  use_clustering: true
+  max_clusters: 2
+  cluster_angle_threshold_deg: 40.0
+  random_seed: 42
+  include_goal_in_path_bank: false
+  include_random_goals: true
+  goal_weight: 1.0
+  uniform_path_bank: true
+  fan_max_angle_deg: 75.0
+  fan_num_headings: 31
+
+safety:
+  stale_frame_s: 2.0
+  max_consecutive_errors: 5
+  recovery_after_empty_plans: 3
+  recovery_turn_s: 1.2
+  loop_period_s: 0.2
+  max_consecutive_turns: 5
+  unstick_forward_s: 1.5
+  obstacle_persist_frames: 4
+  retroceso_min_libre_pct: 55.0
+  retroceso_min_cobertura_pct: 30.0
+  retroceso_max_m: 0.35
+  retroceso_paso_m: 0.12
+  retroceso_linear: -0.15
+  recovery_headings_deg: [90.0, -90.0, 180.0]
+  recovery_min_cobertura_pct: 25.0
+  recovery_turn_speed: 0.45
+  recovery_step_deg: 45.0
+  recovery_deg_per_s: 45.0
+  heading_search_radius_m: 2.0
+  use_vlm_recovery: false
+  vlm_recovery_timeout_s: 4.0
+  vlm_recovery_min_confidence: 0.35
+
+odometry:
+  wheel_radius_m: 0.0527
+  track_width_m: 0.15
+  left_rpm_indices: [0, 2]
+  right_rpm_indices: [1, 3]
+  rotation_sign: 1.0
+  use_gyro_for_rotation: true
+  gps_correction: false
+  min_gps_displacement_m: 1.0
+
+mapping:
+  rtabmap_correction:
+    enabled: true
+    map_frame: "map"
+    base_frame: "base_link"
+    lookup_timeout_s: 0.2
+
+memory:
+  enabled: true
+  map_size_m: 8.0
+  update_weight: 0.45
+  decay_per_s: 0.06
+  recenter_margin_m: 1.5
+  min_confidence: 0.15
+  plan_forward_m: 3.0
+  plan_side_m: 2.0
+
+mission:
+  segment_lookahead_m: 2.5
+
+  # Centrado en el pasillo: 0 = rumbo puro, 1 = centrado puro. Sube respecto
+  # del tour con VLM (0.6) porque el recorrido pide explicitamente alinearse
+  # al centro antes de meterse en un pasillo o cruzar una puerta.
+  corridor_centering_weight: 0.75
+  corridor_centering_max_m: 0.9
+
+  turn_probe_m: 1.2
+  turn_max_deg: 150.0
+
+  # Alineacion fina por geometria (BEV) al terminar un giro. align_tolerance
+  # mas chico = entra mas centrado al pasillo/puerta, a costa de tardar mas.
+  align_min_clearance_m: 1.5
+  align_tolerance_deg: 6.0
+  align_linear_scale: 0.25
+  align_max_s: 15.0
+
+  sweep_max_deg: 60.0
+  bev_row0_is_far: true
+
+  # Tras cerrar un hito, ignorar detecciones por este tiempo: evita que la
+  # misma escena dispare dos veces el tramo siguiente.
+  milestone_cooldown_s: 3.0
+
+  # Con DINO la respuesta llega en el mismo frame, asi que una observacion
+  # vieja se descarta mucho antes que con el VLM (2.5 s).
+  vlm_stale_s: 1.2
+
+  route_hint:
+    enabled: false
+    path: "configs/waypoints_sesion1.yaml"
+    heading_bias_max_deg: 25
+
+  # OJO con `min_confidence` de cada hito: hay DOS umbrales en serie y se
+  # pisan. El detector convierte la similitud coseno en una confianza donde
+  # 0.5 = justo en `vlm.confirm_threshold` y 1.0 = identico a la foto. La FSM
+  # despues exige `confidence >= min_confidence`. Si aca pusieras 0.6, un hito
+  # con score 0.75 pasaria el umbral del detector (0.72) pero la FSM lo
+  # rechazaria igual, sin decir por que: el umbral REAL pasaria a ser 0.78.
+  # Por eso queda en 0.5 en todos: el unico umbral que manda es
+  # `vlm.confirm_threshold`, que es el que calibras con tools/probar_hitos.py.
+  # (Con `backend: "gemini"` esto no aplica: ahi la confianza la da el VLM y
+  # min_confidence vuelve a ser un filtro util.)
+  segments:
+    # --- t1: arranque -> piano ------------------------------------------
+    # El piano solo confirma posicion: sin `on_milestone`, al reconocerlo el
+    # rover re-bloquea el rumbo actual y sigue derecho.
+    - id: "t1_piano"
+      milestone:
+        id: "piano"
+        prompt: "¿se ve un piano (vertical o de cola)?"
+        confirm_hits: 3
+        min_confidence: 0.5
+      max_distance_m: 25.0
+      on_timeout: "advance"
+
+    # --- t2: piano -> puerta a la izquierda ------------------------------
+    # Al reconocer la puerta pivotea a la izquierda buscando el vano, entra,
+    # y TURN_ALIGN lo centra por geometria antes de seguir recto.
+    - id: "t2_puerta_izq"
+      milestone:
+        id: "puerta_izquierda"
+        prompt: "¿se ve una puerta a la izquierda?"
+        confirm_hits: 3
+        min_confidence: 0.5
+      on_milestone:
+        side: "left"
+        id: "vano_puerta_izquierda"
+        look_for: "el vano abierto de la puerta por el que hay que entrar"
+        confirm_hits: 2
+        min_confidence: 0.5
+      max_distance_m: 20.0
+      on_timeout: "sweep"
+
+    # --- t3: pasillo -> tres sillas -> pasillo a la izquierda -------------
+    # Las sillas cierran el tramo; lo que busca MIENTRAS gira de a poco a la
+    # izquierda es la entrada del pasillo. Son un solo tramo.
+    - id: "t3_sillas"
+      milestone:
+        id: "tres_sillas"
+        prompt: "¿se ven tres sillas alineadas contra la pared?"
+        confirm_hits: 3
+        min_confidence: 0.5
+      on_milestone:
+        side: "left"
+        id: "pasillo_izquierda"
+        look_for: "la entrada del pasillo hacia la izquierda"
+        confirm_hits: 2
+        min_confidence: 0.5
+      max_distance_m: 25.0
+      on_timeout: "sweep"
+
+    # --- t4: pasillo -> tuerca azul / fin de pasillo ---------------------
+    # Igual que el piano: confirma y sigue. on_timeout "advance" para que,
+    # si la tuerca no se reconoce, el recorrido siga en vez de barrer.
+    - id: "t4_tuerca"
+      milestone:
+        id: "tuerca_azul"
+        prompt: "¿se ve la tuerca azul pintada en la pared al fondo del pasillo?"
+        confirm_hits: 3
+        min_confidence: 0.5
+      max_distance_m: 25.0
+      on_timeout: "advance"
+
+    # --- t5: -> puerta final, y CRUZARLA recto ---------------------------
+    # Sin `on_milestone` a proposito: al reconocer la puerta el rover NO
+    # gira, re-bloquea el rumbo y sigue derecho hasta atravesarla. Si aca
+    # hubiera un giro, empezaria a pivotear apenas la ve -- o sea antes de
+    # cruzarla, que es justo lo que no se quiere.
+    # Lo que lo hace pasar por el medio y no rozar los laterales es
+    # `corridor_centering_weight: 0.75`: la meta se corre al centro del
+    # espacio libre que ve el BEV, y el vano de la puerta ES ese espacio.
+    - id: "t5_cruzar_puerta"
+      milestone:
+        id: "puerta_final"
+        prompt: "¿se ve la puerta de frente, a menos de 3 metros?"
+        confirm_hits: 2
+        min_confidence: 0.5
+      max_distance_m: 18.0
+      on_timeout: "advance"
+
+    # --- t6: ya del otro lado -> girar a la derecha ----------------------
+    # `post_puerta` son las fotos de lo que la camara ve JUSTO DESPUES de
+    # cruzar el umbral: es la señal de "ya estoy adentro, ahora si gira".
+    # Recien ahi pivotea a la derecha buscando el pasillo.
+    - id: "t6_giro_derecha"
+      milestone:
+        id: "post_puerta"
+        prompt: "¿la puerta quedo atras / se ve el ambiente del otro lado?"
+        confirm_hits: 2
+        min_confidence: 0.5
+      on_milestone:
+        side: "right"
+        id: "salida_puerta"
+        look_for: "el pasillo que sale hacia la derecha"
+        confirm_hits: 2
+        min_confidence: 0.5
+      # Corto: despues de cruzar, el hito tiene que aparecer enseguida. Si a
+      # los 6 m no aparecio, algo salio mal y conviene frenar y no girar a
+      # ciegas contra una pared.
+      max_distance_m: 6.0
+      on_timeout: "stop"
+      final: true
+
+vlm:
+  # "dino"   -> solo fotos de referencia. Sin red, sin cuota, ~50 ms.
+  # "hybrid" -> DINO decide cuando esta seguro y le pregunta a Gemini solo en
+  #             la zona gris (entre reject_threshold y confirm_threshold).
+  #             Necesita GEMINI_API_KEY.
+  # "gemini" -> el backend viejo, puro VLM (ver indoor_semantic_tour.yaml).
+  backend: "dino"
+
+  # Donde viven las fotos. Una subcarpeta por hito, con el nombre = al `id`
+  # del milestone/on_milestone de arriba.
+  reference_dir: "reference_images"
+
+  model: "facebook/dinov2-small"
+  device: "auto"
+
+  # Umbrales sobre la similitud coseno [0, 1] entre el frame y la mejor foto.
+  #   >= confirm_threshold  -> el hito esta
+  #   <= reject_threshold   -> no esta
+  #   en el medio           -> zona gris (en "hybrid" desempata Gemini; en
+  #                            "dino" no confirma, que es lo seguro)
+  # Calibralos con tools/probar_hitos.py sobre frames reales antes de salir.
+  confirm_threshold: 0.72
+  reject_threshold: 0.58
+
+  # Cadencia. Mucho mas agresiva que con Gemini porque una comparacion cuesta
+  # ~50 ms y no gasta cuota: igual se exige MOVIMIENTO entre consultas porque
+  # comparar el mismo frame dos veces desde el mismo lugar no aporta nada.
+  interval_s: 0.4
+  interval_turn_s: 0.2
+  query_every_m: 0.25
+  query_every_deg: 10.0
+  query_max_s: 4.0
+
+  max_side_px: 224
+
+  log: true
+  log_dir: "debug/hitos"
+
+dashboard:
+  route_status_path: "/home/pablolube/IROS26-LaRovernetta/earth-rovers-sdk/static/genie_waypoints.json"
+
