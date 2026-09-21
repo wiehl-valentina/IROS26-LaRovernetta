@@ -9,6 +9,9 @@ enviarlos. Para que el robot se mueva de verdad hace falta pasar --go.
     # de verdad
     python -m genie_rover.bridge --config configs/frodobot_rover.yaml --go \
         --start-mission --max-seconds 120 --debug-dir debug/run1
+
+    # con ruta grabada como guia entre checkpoints oficiales (rutas/mi_ruta.json)
+    python -m genie_rover.bridge --config configs/frodobot_rover.yaml --ruta mi_ruta
 """
 
 from __future__ import annotations
@@ -46,6 +49,13 @@ from .gps_guard import GpsGuard, GpsGuardStatus
 from .odometry import Odometry, OdometryConfig, Pose, estimate_roll_pitch, wrap_rad
 from .perception import PerceptionPipeline
 from .persistent_map import MapConfig, PersistentMap
+from .route import (
+    DASHBOARD_JSON_DEFAULT,
+    DashboardOverlay,
+    RouteConfig,
+    cargar_rutas,
+    gps_valido,
+)
 from .sdk_client import Checkpoint, RoverClient, RoverError
 
 
@@ -92,7 +102,8 @@ def _safe_reset_recovery_state(b: Any) -> None:
 
 
 class Bridge:
-    def __init__(self, cfg: dict, dry_run: bool = True, debug_dir: str | None = None):
+    def __init__(self, cfg: dict, dry_run: bool = True, debug_dir: str | None = None,
+                 rutas: list[str] | None = None, dashboard_json: str | None = None):
         self.cfg = cfg
         self.dry_run = bool(dry_run)
         self.debug_dir = Path(debug_dir) if debug_dir else None
@@ -330,6 +341,33 @@ class Bridge:
         self.commit_min_deg = float(nav.get("commit_min_deg", 8.0))
         self.commit_override_deg = float(nav.get("commit_override_deg", 30.0))
 
+        # Ruta grabada (checkpoints intermedios NO obligatorios, ver route.py).
+        # Solo guia la meta local entre checkpoints oficiales: nunca se
+        # reclama en el SDK. Las rutas de --ruta tienen prioridad sobre
+        # route.files del config.
+        rcfg_raw = cfg.get("route", {}) or {}
+        rcfg = RouteConfig(**{k: v for k, v in rcfg_raw.items()
+                              if k in RouteConfig.__dataclass_fields__})
+        self.ruta = cargar_rutas(list(rutas) if rutas else list(rcfg_raw.get("files") or []), rcfg)
+        # Con el oficial mas cerca que esto, se va directo a el.
+        self.oficial_directo_m = float(rcfg_raw.get("oficial_directo_m", 15.0))
+        # Mas lejos de la ruta que esto (arranque lejos, rodeo enorme): se
+        # ignora la ruta y se va al oficial. Se retoma sola al volver cerca.
+        self.ruta_abandono_m = float(rcfg_raw.get("abandono_m", 15.0))
+        self._route_stats = {"metas_ruta": 0, "metas_oficial": 0, "ruta_ignorada": 0}
+        self._en_directo = False
+        if self.ruta is not None:
+            print(f"[ruta] total {self.ruta.total_m:.1f} m, {len(self.ruta.puntos)} puntos, "
+                  f"lookahead {rcfg.lookahead_m:.1f} m, oficial directo < {self.oficial_directo_m:.1f} m")
+
+        dash = dashboard_json or rcfg_raw.get("dashboard_json")
+        if dash is None and DASHBOARD_JSON_DEFAULT.parent.is_dir():
+            dash = DASHBOARD_JSON_DEFAULT
+        self.dashboard = (DashboardOverlay(dash, float(rcfg_raw.get("dashboard_period_s", 1.0)))
+                          if dash else None)
+        self._dash_state = "arrancando"
+        self._dash_target: dict | None = None
+
     # ------------------------------------------------------------------ ciclo
 
     def _is_front_blocked(self, bev: np.ndarray) -> bool:
@@ -371,6 +409,71 @@ class Bridge:
                 return cp
         return None
 
+    def _meta_con_ruta(self, guard_status, heading, target, oficial_goal, goal, goal_desc):
+        """Decide si la meta local sale de la ruta grabada o del checkpoint
+        oficial. Devuelve (goal, goal_desc); sin ruta cargada devuelve los
+        mismos que recibe.
+
+        Se sigue la ruta mientras: no termino, el robot esta a menos de
+        abandono_m de ella y el oficial (si hay) esta a mas de
+        oficial_directo_m. El claim nunca depende de esto: lo hace el bloque
+        del oficial en _step con la distancia real al checkpoint.
+        """
+        lat, lon = guard_status.effective_lat, guard_status.effective_lon
+        fix_ok = gps_valido(lat, lon)
+
+        if self.ruta is not None and fix_ok:
+            # El progreso solo necesita posicion: se actualiza aunque todavia
+            # no haya rumbo, y tambien mientras se va directo al oficial.
+            self.ruta.update(lat, lon, time.time())
+
+        if target is not None:
+            self._dash_target = {"lat": target.latitude, "lon": target.longitude, "kind": "oficial"}
+            self._dash_state = f"yendo al checkpoint oficial #{target.sequence}"
+        else:
+            self._dash_target = None
+            self._dash_state = "sin checkpoint pendiente"
+
+        if self.ruta is None:
+            pass
+        elif not fix_ok or heading is None:
+            self._dash_state = "esperando " + ("fix GPS" if not fix_ok else "rumbo")
+        elif self.ruta.terminada:
+            self._dash_state += " (ruta terminada)"
+        elif self.ruta.desvio_m > self.ruta_abandono_m:
+            self._route_stats["ruta_ignorada"] += 1
+            self._dash_state += f" (lejos de la ruta: {self.ruta.desvio_m:.0f} m)"
+            goal_desc += f" | ruta ignorada (desvio {self.ruta.desvio_m:.0f} m)"
+        elif oficial_goal is not None and self._directo_al_oficial(oficial_goal.distance_m):
+            goal_desc += " | directo al oficial"
+        else:
+            lat_t, lon_t = self.ruta.objetivo()
+            goal = goal_from_gps(lat, lon, heading, lat_t, lon_t, self.goal_range_m)
+            self._last_goal = goal   # el recovery alinea contra la meta que se sigue
+            self._route_stats["metas_ruta"] += 1
+            self._dash_target = {"lat": lat_t, "lon": lon_t, "kind": "ruta"}
+            self._dash_state = "siguiendo la ruta"
+            extra = f" | cp#{target.sequence} a {oficial_goal.distance_m:.0f} m" if oficial_goal else ""
+            goal_desc = (f"{self.ruta.descripcion()}, rel {goal.relative_bearing_deg:+.0f} "
+                         f"grados{extra}")
+
+        if oficial_goal is not None and self._dash_target and self._dash_target["kind"] == "oficial":
+            self._route_stats["metas_oficial"] += 1
+
+        if self.dashboard is not None:
+            self.dashboard.escribir(self.ruta, lat if fix_ok else None, lon if fix_ok else None,
+                                    self._dash_state, self._dash_target, self._latest_scanned)
+        return goal, goal_desc
+
+    def _directo_al_oficial(self, dist_m: float) -> bool:
+        """Histeresis: se entra a ir directo al oficial a oficial_directo_m y
+        solo se sale al alejarse 3 m mas. Sin esto el ruido GPS alterna entre
+        ruta y oficial en cada fix cuando la distancia ronda el umbral."""
+        salida_m = self.oficial_directo_m + 3.0
+        self._en_directo = dist_m <= (salida_m if getattr(self, "_en_directo", False)
+                                      else self.oficial_directo_m)
+        return self._en_directo
+
     def run(self, max_seconds: float | None = None) -> None:
         signal.signal(signal.SIGINT, self.request_stop)
         signal.signal(signal.SIGTERM, self.request_stop)
@@ -383,6 +486,13 @@ class Bridge:
         else:
             print(f"[bridge] Objetivo: checkpoint #{target.sequence} "
                   f"({target.latitude}, {target.longitude})")
+
+        if self.dashboard is not None:
+            # Publicar la ruta en el mapa YA: si la camara o el GPS tardan,
+            # igual se ven los puntos intermedios.
+            self.dashboard.escribir(self.ruta, None, None, "arrancando", None,
+                                    self._latest_scanned, force=True)
+            print(f"[ruta] overlay del mapa en {self.dashboard.path}")
 
         t_start = time.time()
         try:
@@ -418,6 +528,8 @@ class Bridge:
             if not self.dry_run:
                 self.client.stop()
                 self.client.stop()  # dos veces, por si se pierde un mensaje RTM
+            if self.dashboard is not None:
+                self.dashboard.apagar()
             self._print_summary()
 
     # -------------------------------------------------------------- un paso
@@ -523,6 +635,10 @@ class Bridge:
         else:
             goal = type("G", (), {"x_right_m": 0.0, "y_forward_m": self.goal_range_m})()
             goal_desc = "derecho adelante (sin meta GPS)"
+
+        oficial_goal = goal if (target is not None and heading is not None) else None
+        goal, goal_desc = self._meta_con_ruta(guard_status, heading, target, oficial_goal,
+                                              goal, goal_desc)
 
         roll = roll_pitch[0] if roll_pitch is not None else None
         pitch = roll_pitch[1] if roll_pitch is not None else None
@@ -1631,6 +1747,13 @@ class Bridge:
                 r_deg = math.degrees(self.odometry.last_roll) if self.odometry.last_roll is not None else 0.0
                 print(f"  inclinacion final:      pitch={p_deg:+.1f}°, roll={r_deg:+.1f}° (blend={self.odometry.last_blend_effective:.2f})")
 
+        if self.ruta is not None:
+            rs = self._route_stats
+            print(f"  --- ruta ---")
+            print(f"  {self.ruta.descripcion()}  reenganches={self.ruta.reenganches}  "
+                  f"terminada={self.ruta.terminada}")
+            print(f"  metas: ruta={rs['metas_ruta']}  oficial={rs['metas_oficial']}  "
+                  f"ruta ignorada por desvio={rs['ruta_ignorada']}")
 
         print(f"  errores:                {s.errors}")
         self._print_heading_diagnosis()
@@ -1692,12 +1815,20 @@ def main() -> int:
     ap.add_argument("--max-seconds", type=float, default=None,
                     help="cortar despues de N segundos (usalo siempre las primeras veces)")
     ap.add_argument("--debug-dir", default=None)
+    ap.add_argument("--ruta", nargs="*", default=None,
+                    help="rutas grabadas (checkpoints intermedios no obligatorios), en orden. "
+                         "Acepta el nombre de un archivo de rutas/ (ej. mi_ruta) o una ruta. "
+                         "Sin esto se usa route.files del config")
+    ap.add_argument("--dashboard-json", default=None,
+                    help="donde escribir el overlay del mapa del SDK "
+                         "(default: earth-rovers-sdk/static/genie_waypoints.json)")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(Path(args.config).read_text())
     _check_placeholders(cfg)
 
-    bridge = Bridge(cfg, dry_run=not args.go, debug_dir=args.debug_dir)
+    bridge = Bridge(cfg, dry_run=not args.go, debug_dir=args.debug_dir,
+                    rutas=args.ruta, dashboard_json=args.dashboard_json)
 
     if args.start_mission:
         print("[bridge] iniciando mision ...")

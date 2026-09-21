@@ -140,6 +140,28 @@ navigation:
   # cero).
   # Origen: marian (era 0.08). Subido a 0.45 para superar pendientes sin perder torque.
   min_linear_while_planned: 0.45
+route:
+  # Ruta grabada con tools/record_waypoints.py: checkpoints intermedios NO
+  # obligatorios que guian la meta local entre checkpoints oficiales. Nunca se
+  # reclaman en el SDK. Se activa con --ruta (tiene prioridad) o con files.
+  # Acepta nombres de archivos de rutas/ en la raiz del repo (ej. mi_ruta).
+  files: []
+  # Con el oficial mas cerca que esto se va directo a el. Tiene que ser mayor
+  # que checkpoint_reached_radius_m (13 m) para que la aproximacion final
+  # apunte al oficial y no a la ruta.
+  oficial_directo_m: 15.0
+  # Mas lejos de la ruta que esto: se ignora y se va al oficial. Se retoma sola
+  # cuando el robot vuelve a estar cerca.
+  abandono_m: 15.0
+  lookahead_m: 4.0          # meta = este tanto adelante del progreso sobre la ruta
+  fuera_de_ruta_m: 6.0      # mas lejos que esto: buscar reenganche adelante
+  estancado_s: 25.0         # sin progreso este tiempo: la meta salta adelante
+  salto_estancado_m: 2.0
+  fin_m: 1.5                # a esto del final la ruta se da por terminada
+  # Overlay del mapa del SDK (static/genie_waypoints.json). null = automatico
+  # (earth-rovers-sdk/static/ si existe), false = apagado.
+  dashboard_json: null
+  dashboard_period_s: 1.0
 planner:
   grid_size: 240
   # Costo de una celda nunca observada. Una celda OBSERVADA cuesta
