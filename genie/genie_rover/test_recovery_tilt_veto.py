@@ -58,10 +58,12 @@ def _build_test_stub(tilt_pitch_deg: float = 0.0, tilt_roll_deg: float = 0.0):
     stub._vlm_consecutive_calls = 0
     stub._last_vlm_call_time = 0.0
     stub.use_map = True
+    stub.use_recovery_scan = False
 
     stub.stats = types.SimpleNamespace(
         retrocesos=0, recoveries_por_mapa=0, recoveries_por_vlm=0,
-        recoveries_ciegas=0, near_regime_activations=0,
+        recoveries_ciegas=0, near_regime_activations=0, unstucks=0,
+        escaneos_360=0,
     )
     stub._stop_requested = False
 
@@ -141,7 +143,9 @@ def _build_test_stub(tilt_pitch_deg: float = 0.0, tilt_roll_deg: float = 0.0):
     for name in ("_map_free_and_coverage", "_girar_hacia", "_barrido_ciego",
                  "_preguntar_vlm", "_retroceder", "_recover_informado",
                  "_retroceso_y_recover", "_is_tilt_too_steep_for_recovery",
-                 "_get_estimated_tilt_deg", "_is_front_blocked", "_unstick"):
+                 "_get_estimated_tilt_deg", "_is_front_blocked", "_unstick",
+                 "_reset_recovery_state", "_get_goal_relative_bearing_deg",
+                 "_evaluar_candidatos_recovery_mapa", "_escanear_360"):
         if hasattr(Bridge, name):
             setattr(stub, name, types.MethodType(getattr(Bridge, name), stub))
 

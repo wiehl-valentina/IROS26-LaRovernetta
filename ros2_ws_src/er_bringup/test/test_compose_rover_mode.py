@@ -10,12 +10,15 @@ import pytest
 
 
 def get_repo_root() -> Path:
-    # Este archivo está en src/er_bringup/test/ -> sube 3 niveles hasta la raíz del workspace
-    p = Path(__file__).resolve().parent.parent.parent.parent
-    if (p / "entrypoint.sh").exists():
-        return p
-    # Fallback si se ejecuta desde /root/ros2_ws adentro del contenedor
-    return Path("/root/ros2_ws") if Path("/root/ros2_ws/entrypoint.sh").exists() else p
+    # Busca la raíz del workspace que contiene entrypoint.sh y docker-compose
+    for candidate in [
+        Path(__file__).resolve().parent.parent.parent,
+        Path(__file__).resolve().parent.parent.parent.parent,
+        Path("/root/ros2_ws"),
+    ]:
+        if (candidate / "entrypoint.sh").exists():
+            return candidate
+    return Path(__file__).resolve().parent.parent.parent
 
 
 def test_docker_compose_rover_mode_manual():

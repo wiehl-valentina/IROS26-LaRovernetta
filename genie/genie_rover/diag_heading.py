@@ -73,7 +73,7 @@ class HeadingDiagnosticLogger:
 
         # Estado de integración cinemática por ruedas (RPM)
         self.track_m: float = 0.16
-        self.wheel_radius_m: float = 0.0527  # Radio de rueda nominal Mini+
+        self.wheel_radius_m: float = 0.0475  # Ficha Mini+: diametro 95 mm -> radio 0.0475 m
         self.last_rpm_t: Optional[float] = None
         self.integrated_yaw_rpm: float = 0.0
         self.integrated_yaw_rpm_raw: float = 0.0

@@ -1,92 +1,82 @@
 # Guía de Ejecución: La Rovernetta (ROS 2 EKF + GeNIE)
 
-El sistema de La Rovernetta está compuesto por dos capas modulares que deben ejecutarse en paralelo:
-1. **Capa Sensorial (ROS 2 EKF)**: Se encarga de conectarse a la API del rover, leer los sensores crudos (IMU, GPS, Odometría), fusionarlos matemáticamente y calcular un rumbo (heading) preciso sin deriva magnética.
-2. **Cerebro Autónomo (GeNIE / Python)**: Analiza el video con Inteligencia Artificial (SAM-TP), proyecta los obstáculos en un mapa 2D usando el rumbo calculado por el EKF, planifica la ruta, y envía los comandos de los motores.
-
-A continuación, se detalla cómo instalar y ejecutar ambas capas desde cero en una computadora anfitriona (sin usar Docker).
+El sistema de La Rovernetta está compuesto por tres capas modulares que se comunican en red local:
+1. **Servidor SDK (Earth Rovers SDK)**: Conexión WebRTC/Agora con el rover, expone la API HTTP en el puerto `8000` y telemetría de sensores.
+2. **Capa Sensorial (ROS 2 EKF)**: Lee los sensores crudos del SDK (IMU, Odometría, GPS), ejecuta el Filtro de Kalman Extendido dual (`robot_localization`) y exporta el rumbo (*heading*) estimado sin deriva magnética vía UDP al puerto `9876`.
+3. **Cerebro Autónomo (GeNIE / Python)**: Analiza el video con IA (SAM-TP), proyecta los obstáculos en un mapa 2D, recibe el rumbo por UDP y despacha los comandos de velocidad angular y lineal.
 
 ---
 
-## 1. Instalación de ROS 2 (Jazzy Jalisco)
+## 1. Instalación de Dependencias de ROS 2
 
-> **Nota:** ROS 2 Jazzy requiere **Ubuntu 24.04**. Si estás en Ubuntu 22.04, deberás instalar ROS 2 Humble y reemplazar la palabra `jazzy` por `humble` en los comandos a continuación.
+Todas las dependencias de ROS 2 están autocontenidas dentro de la carpeta `ros2_ws_src/`.
 
-Abre una terminal y ejecuta los comandos oficiales para instalar ROS 2 Base y las herramientas de compilación:
-
+### Opción A: Instalación Automática en el Host (Ubuntu 22.04 / 24.04 / 26.04)
+Ejecuta el script instalador para configurar los paquetes del sistema y de Python automáticamente:
 ```bash
-# 1. Asegúrate de tener un sistema actualizado
-sudo apt update && sudo apt install software-properties-common curl -y
-
-# 2. Agrega la clave y el repositorio de ROS 2
-sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
-
-# 3. Instala ROS 2 y las dependencias de La Rovernetta
-sudo apt update
-sudo apt install ros-jazzy-ros-base python3-colcon-common-extensions ros-jazzy-robot-localization ros-jazzy-tf2-ros -y
+cd ros2_ws_src
+./install_dependencies.sh
 ```
+*(Este script detecta tu distribución de ROS 2 —Jazzy, Humble o Lyrical— e instala los paquetes necesarios como `robot-localization`, `tf2-ros`, `geographic-msgs` y `pygeomag`).*
+
+### Opción B: Modo Docker (Aislado, sin instalar ROS 2 en el host)
+Si prefieres no instalar paquetes en tu máquina host o estás en otro sistema operativo, puedes utilizar el contenedor Docker dedicado incluido en `ros2_ws_src/` (ver Sección 3).
 
 ---
 
 ## 2. Compilar el Workspace de ROS 2
 
-Una vez instalado ROS 2, debes compilar el workspace que se encuentra en la carpeta `ros2_ws_src/` de este repositorio.
-
-1. Abre una terminal en la raíz de este repositorio (`IROS26-LaRovernetta`).
-2. Ingresa a la carpeta del workspace:
-   ```bash
-   cd ros2_ws_src
-   ```
-3. Configura el entorno de ROS y compila los paquetes:
-   ```bash
-   source /opt/ros/jazzy/setup.bash
-   colcon build
-   ```
-
-*(Solo debes compilar la primera vez o cuando modifiques el código fuente dentro de `ros2_ws_src`).*
+Para compilar los paquetes de ROS 2 (`earth_rovers_sdk`, `mini_plus_localization`, `er_bringup`):
+```bash
+cd ros2_ws_src
+./build.sh
+```
+*(O directamente desde la raíz si ya tienes el entorno configurado).*
 
 ---
 
 ## 3. Flujo de Ejecución (Paso a Paso)
 
-Cada vez que vayas a correr una misión, necesitas abrir **dos terminales**. Reemplaza `IP_DEL_ROVER` por la IP real del Earth Rover en tu red (por ejemplo, `172.31.187.39`).
+Abre tres terminales para correr el sistema completo:
 
-### TERMINAL 1: Iniciar el EKF de ROS 2
-Esta terminal mantendrá vivo el filtro de Kalman.
-
+### TERMINAL 1: Servidor SDK
+Inicia el servidor local del SDK (puerto 8000):
 ```bash
-# Entrar al workspace
-cd IROS26-LaRovernetta/ros2_ws_src
-
-# Configurar el entorno (siempre necesario en una terminal nueva)
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
-
-# Lanzar el nodo puente y el EKF
-ros2 launch er_bringup localization_bypass.launch.py sdk_url:=http://IP_DEL_ROVER:8000 target_ip:=IP_DEL_ROVER
+./start_sdk_local.sh
 ```
-*Deja esta terminal corriendo.*
+*(Dashboard disponible en http://localhost:8000).*
 
-### TERMINAL 2: Iniciar el Cerebro GeNIE
-Esta terminal ejecutará la conducción autónoma.
+### TERMINAL 2: Filtro de Kalman (ROS 2 EKF)
 
+#### En máquina anfitriona (Nativo):
+Desde la raíz del repositorio:
 ```bash
-# Entrar a la carpeta de la IA
-cd IROS26-LaRovernetta/genie
+./run_ekf.sh
+```
+*(Por defecto se conecta a `http://localhost:8000` y exporta el heading a `127.0.0.1:9876`).*
 
-# Activar el entorno virtual de conda o Python (según cómo hayas instalado SAM2/Torch)
-# source .venv_genie/bin/activate
-# o 
-# conda activate sam_tp
-
-# Lanzar el rover de forma autónoma
-./run_mission.sh --go
+*Si el SDK o el rover estuvieran en otra IP remota:*
+```bash
+./run_ekf.sh http://172.31.187.39:8000 172.31.187.39
 ```
 
-**Parámetros útiles del script `run_mission.sh`:**
-* `./run_mission.sh --go`: Inicia el movimiento real de los motores.
-* `./run_mission.sh` (sin `--go`): Ejecuta en modo "Dry Run" o Simulacro. Procesará la visión y mostrará qué decidiría hacer, pero sin mandarle torque a las ruedas. Útil para debugear de forma segura en un escritorio.
+#### O vía Docker (Aislado):
+```bash
+./run_ekf_docker.sh
+```
 
-### Detención de Emergencia
-Para frenar el rover de emergencia, basta con hacer click en la **Terminal 2** (GeNIE) y presionar `Ctrl + C`. El sistema atrapará la señal y enviará un comando de frenado a cero (0) a los motores antes de cerrarse.
+### TERMINAL 3: Iniciar el Cerebro Autónomo (GeNIE)
+```bash
+# Modo Real (con movimiento motriz y activación de checkpoints):
+./run_mission.sh --go --start-mission
+
+# Modo Seguro / Dry-Run (simulacro sin torque en los motores):
+./run_mission.sh --start-mission
+```
+
+---
+
+## Detención de Emergencia
+Para frenar el rover de emergencia:
+1. Presiona `Ctrl + C` en la **Terminal 3** (GeNIE). El sistema atrapará la señal y enviará un comando de frenado a cero (0) a los motores antes de cerrarse.
+2. Como respaldo secundario, haz click en el botón **STOP** en el dashboard web en [http://localhost:8000](http://localhost:8000).

@@ -1,0 +1,27 @@
+# ==============================================================================
+# Earth Rover Mini+ — ROS 2 System (APT) Package Dependencies
+# ==============================================================================
+# Soporta distribuciones ROS 2: Jazzy (Ubuntu 24.04), Humble (Ubuntu 22.04), Lyrical (Ubuntu 26.04)
+# 
+# Uso:
+#   export ROS_DISTRO=jazzy # o humble, lyrical
+#   sudo apt-get update && sed "s/\${ROS_DISTRO}/$ROS_DISTRO/g" apt-packages.txt | grep -v '^#' | grep -v '^$' | xargs sudo apt-get install -y --no-install-recommends
+# ==============================================================================
+build-essential
+cmake
+git
+pkg-config
+python3-pip
+python3-colcon-common-extensions
+python3-rosdep
+libopencv-dev
+python3-opencv
+ros-${ROS_DISTRO}-robot-localization
+ros-${ROS_DISTRO}-tf2-ros
+ros-${ROS_DISTRO}-tf2-geometry-msgs
+ros-${ROS_DISTRO}-geographic-msgs
+ros-${ROS_DISTRO}-cv-bridge
+ros-${ROS_DISTRO}-nav-msgs
+ros-${ROS_DISTRO}-sensor-msgs
+ros-${ROS_DISTRO}-geometry-msgs
+ros-${ROS_DISTRO}-std-msgs

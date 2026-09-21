@@ -2,7 +2,7 @@
 set -e
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$DIR"
+cd "$DIR/genie"
 
 PYTHON="/home/marian/miniconda3/envs/sam_tp/bin/python3"
 

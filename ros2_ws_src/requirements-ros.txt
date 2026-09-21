@@ -1,0 +1,8 @@
+# ==============================================================================
+# Earth Rover Mini+ — Python Dependencies for ROS 2 Workspace
+# ==============================================================================
+# Nota: python3-opencv y python3-numpy se instalan vía apt (ver apt-packages.txt).
+requests>=2.32.0
+websocket-client>=1.8.0
+pygeomag>=0.1.2
+pytest>=7.0.0

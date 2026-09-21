@@ -70,6 +70,8 @@ ekf_filter_node_map:
                    false, false, false,
                    false, false, false]
     odom1_differential: false
+    # Umbral de rechazo Mahalanobis interno de robot_localization (Fase 1: defensa en profundidad)
+    odom1_rejection_threshold: 3.0
 
     imu0: /imu/data
     imu0_config: [false, false, false,
@@ -93,6 +95,10 @@ ekf_filter_node_map:
                    false, false, false]
     pose0_differential: false
     pose0_relative: false
+    # Umbral de rechazo por distancia de Mahalanobis (innovación de Kalman) contra rumbos GPS espurios.
+    # Defensa en profundidad independiente de la escala de HDOP: si la innovación de yaw supera 3.0 sigmas,
+    # el filtro descarta la actualización.
+    pose0_rejection_threshold: 3.0
 
 navsat_transform:
   ros__parameters:

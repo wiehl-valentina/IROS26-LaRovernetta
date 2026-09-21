@@ -40,7 +40,9 @@ from .navigation import (
     goal_from_gps,
     path_to_robot,
     path_to_world,
+    wrap_deg,
 )
+from .gps_guard import GpsGuard, GpsGuardStatus
 from .odometry import Odometry, OdometryConfig, Pose, estimate_roll_pitch, wrap_rad
 from .perception import PerceptionPipeline
 from .persistent_map import MapConfig, PersistentMap
@@ -58,8 +60,35 @@ class LoopStats:
     near_regime_activations: int = 0
     retrocesos: int = 0
     recoveries_por_mapa: int = 0
+    escaneos_360: int = 0
     recoveries_por_vlm: int = 0
     recoveries_ciegas: int = 0
+
+
+def _safe_reset_recovery_state(b: Any) -> None:
+    """Limpia todo el estado interno residual tras una maniobra de recuperacion,
+    asegurando que la navegacion normal inicie desde un estado limpio."""
+    if hasattr(b, "_reset_recovery_state") and callable(getattr(b, "_reset_recovery_state")):
+        try:
+            b._reset_recovery_state()
+            return
+        except Exception:
+            pass
+    if hasattr(b, "heading_est") and b.heading_est is not None:
+        try:
+            b.heading_est.reset_track()
+        except Exception:
+            pass
+    b._consecutive_turns = 0
+    if hasattr(b, "_turn_sign_history") and isinstance(b._turn_sign_history, list):
+        b._turn_sign_history.clear()
+    b._consecutive_empty = 0
+    b._consecutive_empty_recoveries = 0
+    b._commit_side = 0
+    b._commit_until = 0.0
+    b._consecutive_blocked = 0
+    b._plan_path_world = None
+    b._plan_pose = None
 
 
 class Bridge:
@@ -137,7 +166,7 @@ class Bridge:
         if self.use_map:
             odo_cfg = cfg.get("odometry", {})
             self.odometry = Odometry(OdometryConfig(
-                wheel_radius_m=float(odo_cfg.get("wheel_radius_m", 0.045)),
+                wheel_radius_m=float(odo_cfg.get("wheel_radius_m", 0.0475)),
                 track_width_m=float(odo_cfg.get("track_width_m", 0.15)),
                 left_rpm_indices=tuple(odo_cfg.get("left_rpm_indices", (0, 2))),
                 right_rpm_indices=tuple(odo_cfg.get("right_rpm_indices", (1, 3))),
@@ -184,7 +213,7 @@ class Bridge:
 
         # ---- chequeo frontal configurable (modo pendiente / falso obstaculo) ----
         self.front_near_m = float(safety.get("front_near_m", 0.32))
-        self.front_far_m = float(safety.get("front_far_m", 0.85))
+        self.front_far_m = float(safety.get("front_far_m", 1.25))
         self.front_half_width_m = float(safety.get("front_half_width_m", 0.22))
         self.front_traversable_thresh = float(safety.get("front_traversable_thresh", 0.28))
         self.front_min_free_ratio = float(safety.get("front_min_free_ratio", 0.40))
@@ -214,7 +243,11 @@ class Bridge:
         self.recovery_deg_per_s = float(safety.get("recovery_deg_per_s", 45.0))
         self.recovery_headings_deg = list(safety.get("recovery_headings_deg", [0.0, 90.0, -90.0, 180.0]))
         self.recovery_min_cobertura_pct = float(safety.get("recovery_min_cobertura_pct", 25.0))
+        self.recovery_min_libre_pct = float(safety.get("recovery_min_libre_pct", 30.0))
+        self.recovery_goal_weight = float(safety.get("recovery_goal_weight", 1.2))
+        self.recovery_clearance_weight = float(safety.get("recovery_clearance_weight", 1.0))
         self.heading_search_radius_m = float(safety.get("heading_search_radius_m", 2.0))
+        self._last_goal = None
         # Latencia de arranque de hardware (tiempo muerto medido en Test A: 1.5 - 2.5 s)
         self.recovery_startup_latency_s = float(safety.get("recovery_startup_latency_s", 2.0))
         self.recovery_turn_tolerance_deg = float(safety.get("recovery_turn_tolerance_deg", 15.0))
@@ -232,6 +265,35 @@ class Bridge:
         self._vlm_consecutive_calls = 0
         self._last_vlm_call_time = 0.0
         self._consecutive_blocked = 0
+
+        # ---- Escaneo 360° en recuperación (previo a VLM) ---------------------
+        self.use_recovery_scan = bool(safety.get("use_recovery_scan", True))
+        self.recovery_scan_deg_per_s = float(safety.get("recovery_scan_deg_per_s", 20.0))
+        self.recovery_scan_turn_speed = float(safety.get("recovery_scan_turn_speed", getattr(self, "recovery_turn_speed", 0.75)))
+        self.recovery_scan_early_exit_libre_pct = float(safety.get("recovery_scan_early_exit_libre_pct", 70.0))
+        self.recovery_scan_max_per_stuck = int(safety.get("recovery_scan_max_per_stuck", 1))
+        self.recovery_scan_min_disp_m = float(safety.get("recovery_scan_min_disp_m", 1.0))
+        self.recovery_scan_cooldown_s = float(safety.get("recovery_scan_cooldown_s", 30.0))
+        self.recovery_scan_timeout_s = float(safety.get("recovery_scan_timeout_s", 35.0))
+        self._scan_count_at_stuck = 0
+        self._last_scan_pose: Pose | None = None
+        self._last_scan_time = 0.0
+
+        # ---- Guarda contra GPS malo (Fase 1) --------------------------------
+        gg_cfg = cfg.get("gps_guard", {})
+        self.gps_guard = GpsGuard(
+            enabled=bool(gg_cfg.get("enabled", True)),
+            v_max_phys_m_s=float(gg_cfg.get("v_max_phys_m_s", 1.111)),
+            gps_jump_noise_margin_m=float(gg_cfg.get("gps_jump_noise_margin_m", 1.5)),
+            bad_fix_consecutive_thresh=int(gg_cfg.get("bad_fix_consecutive_thresh", 3)),
+            degraded_linear_scale=float(gg_cfg.get("degraded_linear_scale", 0.6)),
+            degraded_max_linear=float(gg_cfg.get("degraded_max_linear", 0.25)),
+            degraded_min_linear=float(gg_cfg.get("degraded_min_linear", 0.20)),
+            time_without_anchor_thresh_s=float(gg_cfg.get("time_without_anchor_thresh_s", 15.0)),
+            min_fix_interval_s=float(gg_cfg.get("min_fix_interval_s", 0.8)),
+            min_fix_quality=int(gg_cfg.get("min_fix_quality", 1)),
+            hdop_reject=float(gg_cfg.get("hdop_reject", 0.080)),
+        )
 
         self.stats = LoopStats()
         # Muestras de (rumbo_activo - curso_gps_confiable) para evaluar offset cinemático real
@@ -286,6 +348,12 @@ class Bridge:
         self._stop_requested = True
 
     def send(self, cmd: DriveCommand) -> None:
+        if hasattr(self, "gps_guard") and self.gps_guard is not None:
+            if self.gps_guard.level == 3:
+                cmd = DriveCommand(0.0, 0.0, f"[GPS_GUARD Nivel 3 Parada Emergencia] {cmd.reason}")
+            elif self.gps_guard.level == 2:
+                scaled_lin = float(np.clip(cmd.linear * self.gps_guard.degraded_linear_scale, -1.0, 1.0))
+                cmd = DriveCommand(scaled_lin, cmd.angular, f"[GPS_GUARD Nivel 2 Degradado x{self.gps_guard.degraded_linear_scale:.1f}] {cmd.reason}")
         tag = "DRY-RUN" if self.dry_run else "ENVIADO"
         print(f"  [{tag}] linear={cmd.linear:+.2f} angular={cmd.angular:+.2f}  {cmd.reason}")
         if not self.dry_run:
@@ -367,58 +435,9 @@ class Bridge:
             )
 
         telem = self.client.telemetry()
-        heading = self.heading_est.update(
-            telem.latitude,
-            telem.longitude,
-            telem.orientation,
-            telem.timestamp,
-            ekf_heading=getattr(telem, "ekf_heading", None),
-            ekf_timestamp=getattr(telem, "ekf_heading_time", None),
-        )
 
-        target = self.current_target()
-        if target is not None and heading is not None:
-            # Si cambió el target, restaurar el radio geodésico nominal/base
-            if self._last_target_sequence != target.sequence:
-                self._last_target_sequence = target.sequence
-                self._current_checkpoint_radius_m = self._base_checkpoint_radius_m
-
-            reached, dist_to_cp = check_checkpoint_reached(
-                telem.latitude,
-                telem.longitude,
-                target.latitude,
-                target.longitude,
-                self._current_checkpoint_radius_m,
-            )
-            goal = goal_from_gps(telem.latitude, telem.longitude, heading,
-                                 target.latitude, target.longitude, self.goal_range_m)
-            if reached:
-                ok, msg = self.client.claim_checkpoint()
-                if ok:
-                    print(f"[bridge] ✓ checkpoint #{target.sequence} alcanzado "
-                          f"({dist_to_cp:.1f} m <= {self._current_checkpoint_radius_m:.1f} m): {msg}")
-                    # Al avanzar de checkpoint con éxito, se restaura la tolerancia base
-                    self._current_checkpoint_radius_m = self._base_checkpoint_radius_m
-                    self.refresh_checkpoints()
-                else:
-                    # DETECTOR DE RECHAZO DEL SDK (portado de gps_waypoint_controller.py:396)
-                    # Si el SDK rechaza el reclamo (ej. fuera de geocerca estricta o error 422),
-                    # estrangular la tolerancia a la mitad (13.0 -> 6.5 -> 3.25m, piso 0.5m)
-                    # para obligar al rover a acercarse más antes de volver a intentar,
-                    # evitando saturar la API en cada frame.
-                    old_rad = self._current_checkpoint_radius_m
-                    self._current_checkpoint_radius_m = max(0.5, self._current_checkpoint_radius_m * 0.5)
-                    print(f"[bridge] cerca del checkpoint ({dist_to_cp:.1f} m <= {old_rad:.1f} m) "
-                          f"pero rechazado por SDK: {msg}. Estrangulando tolerancia geodésica a "
-                          f"{self._current_checkpoint_radius_m:.2f} m.")
-            goal_desc = (f"cp#{target.sequence} a {goal.distance_m:.0f} m, "
-                         f"rel {goal.relative_bearing_deg:+.0f} grados")
-        else:
-            goal = type("G", (), {"x_right_m": 0.0, "y_forward_m": self.goal_range_m})()
-            goal_desc = "derecho adelante (sin meta GPS)"
-
-        # Actualizar odometria antes de la percepcion para alimentar camera_pose
-        # con la estimacion mas fresca posible de roll y pitch.
+        # Actualizar odometria antes de la guarda y la percepcion para alimentar
+        # camera_pose con la estimacion mas fresca posible de pose, roll y pitch.
         pose_now: Pose | None = None
         roll_pitch: tuple[float, float] | None = None
         if self.odometry is not None:
@@ -432,7 +451,78 @@ class Bridge:
         elif "accels" in telem.raw:
             tilt_res = estimate_roll_pitch(telem.raw.get("accels", []))
             if tilt_res is not None:
-                roll_pitch = (tilt_res[0], tilt_res[1])
+                roll_pitch = (tilt_res["roll_rad"], tilt_res["pitch_rad"])
+
+        heading = self.heading_est.update(
+            telem.latitude,
+            telem.longitude,
+            telem.orientation,
+            telem.timestamp,
+            ekf_heading=getattr(telem, "ekf_heading", None),
+            ekf_timestamp=getattr(telem, "ekf_heading_time", None),
+        )
+
+        # Actualizar guarda contra GPS malo (Fase 1)
+        has_anchor = (self.heading_est.source != "none")
+        guard_status = self.gps_guard.update(
+            telem=telem,
+            odom_pose=self.odometry.pose if self.odometry is not None else None,
+            heading_deg=heading if heading is not None else telem.orientation,
+            has_heading_anchor=has_anchor,
+            now=now,
+        )
+
+        if guard_status.level == 2:
+            self.heading_est.reset_track()
+
+        if guard_status.level == 3:
+            self.send(DriveCommand(0.0, 0.0, f"[GPS_GUARD Nivel 3] Parada de emergencia: {guard_status.reason}"))
+            return
+
+        target = self.current_target()
+        if target is not None and heading is not None:
+            # Si cambió el target, restaurar el radio geodésico nominal/base
+            if self._last_target_sequence != target.sequence:
+                self._last_target_sequence = target.sequence
+                self._current_checkpoint_radius_m = self._base_checkpoint_radius_m
+
+            reached, dist_to_cp = check_checkpoint_reached(
+                guard_status.effective_lat,
+                guard_status.effective_lon,
+                target.latitude,
+                target.longitude,
+                self._current_checkpoint_radius_m,
+            )
+            goal = goal_from_gps(guard_status.effective_lat, guard_status.effective_lon, heading,
+                                 target.latitude, target.longitude, self.goal_range_m)
+            self._last_goal = goal
+            if reached:
+                if guard_status.can_claim_checkpoints:
+                    ok, msg = self.client.claim_checkpoint()
+                    if ok:
+                        print(f"[bridge] ✓ checkpoint #{target.sequence} alcanzado "
+                              f"({dist_to_cp:.1f} m <= {self._current_checkpoint_radius_m:.1f} m): {msg}")
+                        # Al avanzar de checkpoint con éxito, se restaura la tolerancia base
+                        self._current_checkpoint_radius_m = self._base_checkpoint_radius_m
+                        self.refresh_checkpoints()
+                    else:
+                        # DETECTOR DE RECHAZO DEL SDK (portado de gps_waypoint_controller.py:396)
+                        # Si el SDK rechaza el reclamo (ej. fuera de geocerca estricta o error 422),
+                        # estrangular la tolerancia a la mitad (13.0 -> 6.5 -> 3.25m, piso 0.5m)
+                        # para obligar al rover a acercarse más antes de volver a intentar,
+                        # evitando saturar la API en cada frame.
+                        old_rad = self._current_checkpoint_radius_m
+                        self._current_checkpoint_radius_m = max(0.5, self._current_checkpoint_radius_m * 0.5)
+                        print(f"[bridge] cerca del checkpoint ({dist_to_cp:.1f} m <= {old_rad:.1f} m) "
+                              f"pero rechazado por SDK: {msg}. Estrangulando tolerancia geodésica a "
+                              f"{self._current_checkpoint_radius_m:.2f} m.")
+                else:
+                    print(f"[bridge] Reclamo de checkpoint #{target.sequence} BLOQUEADO por GpsGuard ({guard_status.reason})")
+            goal_desc = (f"cp#{target.sequence} a {goal.distance_m:.0f} m, "
+                         f"rel {goal.relative_bearing_deg:+.0f} grados")
+        else:
+            goal = type("G", (), {"x_right_m": 0.0, "y_forward_m": self.goal_range_m})()
+            goal_desc = "derecho adelante (sin meta GPS)"
 
         roll = roll_pitch[0] if roll_pitch is not None else None
         pitch = roll_pitch[1] if roll_pitch is not None else None
@@ -623,6 +713,8 @@ class Bridge:
         """
         cmd = self.follower.command(path_robot, committed=True)
         cmd = self._apply_commit(cmd, path_robot)
+        if hasattr(self, "gps_guard") and self.gps_guard is not None:
+            cmd.linear = self.gps_guard.apply_throttle(cmd.linear)
 
         if cmd.linear == 0.0 and cmd.angular != 0.0:
             self._consecutive_turns += 1
@@ -646,18 +738,20 @@ class Bridge:
         libre: si hubiera algo delante, no habriamos llegado hasta aca.
         """
         self.stats.unstucks += 1
+        giros = getattr(self, "_consecutive_turns", 0)
+        unstick_s = float(getattr(self, "unstick_forward_s", 1.2))
         if giros > 0:
             sentido = sum(self._turn_sign_history)
             print(f"[bridge] ATASCADO: {giros} giros seguidos sin avanzar "
                   f"(sentido dominante {'izq' if sentido > 0 else 'der'}). "
-                  f"Fuerzo un avance de {self.unstick_forward_s:.1f} s.")
+                  f"Fuerzo un avance de {unstick_s:.1f} s.")
         else:
             print(f"[bridge] RECUPERACION FRONTAL: frente despejado en memoria pero sin plan viable. "
-                  f"Fuerzo un avance de {self.unstick_forward_s:.1f} s para superar zona ciega.")
+                  f"Fuerzo un avance de {unstick_s:.1f} s para superar zona ciega.")
 
         self.send(DriveCommand(self.follower.max_linear, 0.0, "avance forzado"))
         t0 = time.time()
-        while time.time() - t0 < self.unstick_forward_s and not self._stop_requested:
+        while time.time() - t0 < unstick_s and not self._stop_requested:
             time.sleep(0.15)
             try:
                 pose_now = None
@@ -683,9 +777,7 @@ class Bridge:
                 break
 
         self.send(DriveCommand(0.0, 0.0, "fin del avance forzado"))
-        self._consecutive_turns = 0
-        self._turn_sign_history.clear()
-        self.heading_est.reset_track()
+        _safe_reset_recovery_state(self)
 
     def _apply_commit(self, cmd: DriveCommand, path: np.ndarray) -> DriveCommand:
         """Evita cambiar de lado de esquive a mitad de maniobra.
@@ -734,6 +826,44 @@ class Bridge:
         return DriveCommand(cmd.linear, 0.0,
                             f"mantengo el rumbo (evito titubeo, {error_deg:+.0f} grados)")
 
+    def _reset_recovery_state(self) -> None:
+        """Limpia todo el estado interno residual tras una maniobra de recuperación,
+        asegurando que la navegación normal inicie desde un estado limpio y sin comandos
+        ni setpoints arrastrados."""
+        _safe_reset_recovery_state(self)
+
+    def _get_goal_relative_bearing_deg(self) -> float:
+        """Devuelve el rumbo relativo al checkpoint objetivo en grados [-180, 180).
+        0° = exactamente al frente, +90° = derecha, -90° = izquierda, 180° = detrás.
+        Si no hay meta disponible o determinable, asume 0.0° (frente).
+        """
+        if hasattr(self, "_goal_relative_bearing_deg") and self._goal_relative_bearing_deg is not None:
+            return float(wrap_deg(self._goal_relative_bearing_deg))
+
+        if hasattr(self, "_last_goal") and self._last_goal is not None:
+            rel = getattr(self._last_goal, "relative_bearing_deg", None)
+            if rel is not None:
+                return float(wrap_deg(rel))
+
+        if hasattr(self, "current_target"):
+            try:
+                target = self.current_target()
+                if target is not None and getattr(self, "heading_est", None) is not None and hasattr(self, "client"):
+                    heading = self.heading_est.heading()
+                    if heading is not None:
+                        t_telem = self.client.telemetry()
+                        if getattr(t_telem, "latitude", 0.0) != 0.0 or getattr(t_telem, "longitude", 0.0) != 0.0:
+                            fwd = self.plan_forward_m if getattr(self, "use_map", False) else getattr(self, "forward_range", 3.0)
+                            g = goal_from_gps(
+                                t_telem.latitude, t_telem.longitude, heading,
+                                target.latitude, target.longitude, max_range_m=fwd,
+                            )
+                            return float(wrap_deg(g.relative_bearing_deg))
+            except Exception:
+                pass
+
+        return 0.0
+
     def _recover(self) -> None:
         """Recuperacion tras varios planes vacios seguidos: buscar un rumbo
         transitable. Informada por mapa+VLM cuando hay memoria espacial
@@ -747,10 +877,7 @@ class Bridge:
             self._recover_informado()
         else:
             self._barrido_ciego()
-        self.heading_est.reset_track()  # el track GPS previo ya no dice el rumbo
-        self._consecutive_empty = 0
-        self._plan_path_world = None
-        self._plan_pose = None
+        _safe_reset_recovery_state(self)
 
     def _get_estimated_tilt_deg(self) -> tuple[float, float] | None:
         """Devuelve (|pitch_deg|, |roll_deg|) si hay estimacion vigente, o None."""
@@ -824,6 +951,7 @@ class Bridge:
             time.sleep(0.1)
 
         self.send(DriveCommand(0.0, 0.0, "fin del barrido"))
+        _safe_reset_recovery_state(self)
 
     # ---------------------------------------------------------- regimen cercano
 
@@ -894,16 +1022,7 @@ class Bridge:
             print("[bridge]   detras no parece seguro (o sin datos suficientes), salteo el retroceso")
 
         self._recover_informado()
-
-        self.heading_est.reset_track()
-        self._consecutive_turns = 0
-        self._turn_sign_history.clear()
-        self._consecutive_empty = 0
-        self._consecutive_empty_recoveries = 0
-        self._commit_side = 0
-        self._consecutive_blocked = 0
-        self._plan_path_world = None
-        self._plan_pose = None
+        _safe_reset_recovery_state(self)
 
     def _map_free_and_coverage(self, pose: Pose, heading_rel_deg: float,
                                radius_m: float) -> tuple[float, float]:
@@ -943,6 +1062,14 @@ class Bridge:
         start = self.odometry.pose
         start_pose = Pose(start.x, start.y, start.theta)
         recorrido = 0.0
+
+        # Durante la maniobra de retroceso, invalidamos cualquier plan cacheado y
+        # reseteamos el commit lateral: el comando angular se fija estrictamente en 0.0
+        # (recto). El PathFollower no interviene en este tramo.
+        self._plan_path_world = None
+        self._plan_pose = None
+        self._commit_side = 0
+        self._commit_until = 0.0
 
         while recorrido < self.retroceso_max_m and not self._stop_requested:
             falta_m = self.retroceso_max_m - recorrido
@@ -991,46 +1118,306 @@ class Bridge:
 
         self.send(DriveCommand(0.0, 0.0, "fin del retroceso"))
 
-    def _recover_informado(self) -> None:
-        """Elige un rumbo de escape en tres pasos, del mas barato al mas caro:
-        mapa persistente (sin red, sin latencia) -> VLM (si el mapa no dio un
-        candidato confiable) -> barrido ciego (ultimo recurso).
+    def _evaluar_candidatos_recovery_mapa(self, veto_tilt: bool, razon_tilt: str) -> dict | None:
+        """Evalúa los rumbos candidatos en self.recovery_headings_deg usando el mapa
+        persistente y la ponderación bilateral hacia la meta (Score = w_clearance * libre + w_goal * align).
+        Devuelve el mejor candidato (dict) o None si ninguno es viable.
         """
         assert self.pmap is not None and self.odometry is not None
         pose = self.odometry.pose
 
-        veto_tilt, razon_tilt = self._is_tilt_too_steep_for_recovery()
-
-        mejor_heading, mejor_libre = None, -1.0
         consecutive_recoveries = getattr(self, "_consecutive_empty_recoveries", 0)
+        goal_rel_deg = self._get_goal_relative_bearing_deg() if hasattr(self, "_get_goal_relative_bearing_deg") else 0.0
+
+        min_libre = float(getattr(self, "recovery_min_libre_pct", 30.0))
+        min_cob = float(getattr(self, "recovery_min_cobertura_pct", 25.0))
+        w_goal = float(getattr(self, "recovery_goal_weight", 1.2))
+        w_clear = float(getattr(self, "recovery_clearance_weight", 1.0))
+
+        candidatos_evaluados = []
+
         for h in self.recovery_headings_deg:
+            h_flt = float(h)
+            is_180 = abs(abs(h_flt) - 180.0) < 1.0
+
             # Si hay inclinacion peligrosa, vetamos el rumbo 180° (atras) por riesgo de vuelco
-            if veto_tilt and abs(abs(float(h)) - 180.0) < 1.0:
+            if veto_tilt and is_180:
                 print(f"[bridge]   rumbo 180° VETADO por pendiente ({razon_tilt})")
                 continue
 
             # Anti-bucle para rumbo 0°: Si ya tuvimos recuperaciones consecutivas por planes vacios
             # sin avance, vetamos 0° para obligar a una rotacion real que cambie la perspectiva
-            if consecutive_recoveries >= 2 and abs(float(h)) < 1e-6:
+            if consecutive_recoveries >= 2 and abs(h_flt) < 1e-6:
                 print("[bridge]   rumbo 0° OMITIDO (reintentos consecutivos de recuperacion sin avance)")
                 continue
 
-            libre_pct, cobertura_pct = self._map_free_and_coverage(pose, float(h), self.heading_search_radius_m)
-            print(f"[bridge]   rumbo {h:+.0f} grados: libre={libre_pct:.0f}% cobertura={cobertura_pct:.0f}%")
-            if cobertura_pct >= self.recovery_min_cobertura_pct and libre_pct > mejor_libre:
-                mejor_heading, mejor_libre = float(h), libre_pct
+            libre_pct, cobertura_pct = self._map_free_and_coverage(pose, h_flt, self.heading_search_radius_m)
 
-        if mejor_heading is not None:
-            print(f"[bridge]   elijo rumbo {mejor_heading:+.0f} grados por mapa (libre={mejor_libre:.0f}%)")
+            # Ponderación hacia la meta:
+            diff_deg = abs(wrap_deg(h_flt - goal_rel_deg))
+            goal_align = (math.cos(math.radians(diff_deg)) + 1.0) / 2.0
+            clear_score = libre_pct / 100.0
+            score = (w_clear * clear_score) + (w_goal * goal_align)
+
+            has_clearance = (cobertura_pct >= min_cob and libre_pct >= min_libre)
+
+            print(f"[bridge]   rumbo {h_flt:+.0f} grados: libre={libre_pct:.0f}% cobertura={cobertura_pct:.0f}% "
+                  f"(align_meta={goal_align:.2f}, score={score:.2f})")
+
+            candidatos_evaluados.append({
+                "heading": h_flt,
+                "is_180": is_180,
+                "libre_pct": libre_pct,
+                "cobertura_pct": cobertura_pct,
+                "has_clearance": has_clearance,
+                "goal_align": goal_align,
+                "score": score,
+            })
+
+        # Selección:
+        # Prioridad 1: Rumbos frontales / laterales (no 180°) con clearance suficiente
+        viables_laterales = [c for c in candidatos_evaluados if not c["is_180"] and c["has_clearance"]]
+
+        if viables_laterales:
+            mejor = max(viables_laterales, key=lambda c: (c["score"], c["libre_pct"]))
+            print(f"[bridge]   elijo rumbo lateral/frontal {mejor['heading']:+.0f} grados por mapa "
+                  f"(libre={mejor['libre_pct']:.0f}%, align_meta={mejor['goal_align']:.2f}, score={mejor['score']:.2f})")
+            return mejor
+
+        # Prioridad 2: 180° SOLO como último recurso si ningún rumbo lateral tiene clearance
+        candidatos_180 = [c for c in candidatos_evaluados if c["is_180"] and c["has_clearance"]]
+        if candidatos_180:
+            mejor = candidatos_180[0]
+            print(f"[bridge]   ningun rumbo lateral con clearance suficiente; elijo rumbo 180° como ultimo recurso "
+                  f"(libre={mejor['libre_pct']:.0f}%)")
+            return mejor
+
+        return None
+
+    def _escanear_360(self) -> bool:
+        """Ejecuta una maniobra continua de giro de 360° sobre el propio eje,
+        integrando observaciones en el mapa persistente para repoblarlo en todas
+        las direcciones.
+
+        Comportamiento:
+        1. Sentido de giro: Determinado por el bearing relativo al checkpoint objetivo
+           (antihorario si bearing < 0, horario si bearing >= 0), asegurando que los
+           primeros grados cubran la zona más prometedora.
+        2. Sincronización frame/pose crítica: Cada frame capturado se proyecta al BEV
+           usando el theta exacto del instante de captura (pose_at(frame_ts)), evitando
+           la distorsión angular acumulada por la latencia del pipeline (~283 ms @ 20°/s).
+        3. Corte anticipado: Tras superar recovery_startup_latency_s y un giro inicial,
+           evalúa continuamente el rumbo frontal (0° relativo). Si encuentra una salida
+           claramente despejada (libre >= recovery_scan_early_exit_libre_pct y
+           cobertura >= recovery_min_cobertura_pct), corta el giro de inmediato y arranca
+           hacia allí con _unstick(), devolviendo True.
+        4. Si completa los 360° sin corte anticipado, frena y devuelve False para que
+           el invocador reintente la evaluación bilateral de mapa con datos frescos.
+        """
+        assert self.odometry is not None and self.pmap is not None
+
+        # Veto de inclinación defensivo
+        veto_tilt, razon_tilt = self._is_tilt_too_steep_for_recovery()
+        if veto_tilt:
+            print(f"[bridge]   escaneo 360° VETADO por pendiente ({razon_tilt})")
+            return False
+
+        if hasattr(self, "stats") and hasattr(self.stats, "escaneos_360"):
+            self.stats.escaneos_360 += 1
+
+        # 1. Sentido de giro hacia la meta (Paso 1)
+        goal_rel_deg = self._get_goal_relative_bearing_deg() if hasattr(self, "_get_goal_relative_bearing_deg") else 0.0
+        turn_dir = -1.0 if goal_rel_deg < 0.0 else 1.0
+        sentido_str = "antihorario (hacia meta izq)" if turn_dir < 0.0 else "horario (hacia meta der)"
+        print(f"[bridge] INICIO ESCANEO 360°: sentido {sentido_str} (bearing_meta={goal_rel_deg:+.1f}°)")
+
+        base_speed = float(getattr(self, "recovery_scan_turn_speed", getattr(self, "recovery_turn_speed", 0.75)))
+        cmd_ang = self.follower.angular_sign * math.copysign(base_speed, turn_dir)
+        cmd_ang = float(np.clip(cmd_ang, -1.0, 1.0))
+
+        startup_lat_s = float(getattr(self, "recovery_startup_latency_s", 2.0))
+        deg_per_s = max(float(getattr(self, "recovery_scan_deg_per_s", 20.0)), 1.0)
+        early_exit_libre_thresh = float(getattr(self, "recovery_scan_early_exit_libre_pct", 70.0))
+        min_cob = float(getattr(self, "recovery_min_cobertura_pct", 25.0))
+
+        target_mag_deg = 360.0
+        expected_s = startup_lat_s + (target_mag_deg / deg_per_s)
+        timeout_s = float(getattr(self, "recovery_scan_timeout_s", max(25.0, expected_s * 1.5)))
+
+        t_start = time.time()
+        girado_real_deg = 0.0
+        last_theta = self.odometry.pose.theta
+
+        while not self._stop_requested:
+            now = time.time()
+            elapsed_s = now - t_start
+
+            # Métricas efectivas de giro (sin contar latencia de arranque) para calibración en campo
+            t_efectivo_s = max(0.001, elapsed_s - startup_lat_s) if elapsed_s > startup_lat_s else 0.001
+            omega_real_dps = girado_real_deg / t_efectivo_s
+
+            # Chequeo continuo de inclinación
+            veto_tilt, razon_tilt = self._is_tilt_too_steep_for_recovery()
+            if veto_tilt:
+                print(f"[bridge]   inclinacion peligrosa detectada durante escaneo 360° ({razon_tilt}), aborto (girado real: {girado_real_deg:.1f}°, omega_real: {omega_real_dps:.1f}°/s)")
+                break
+
+            # Timeout de seguridad
+            if elapsed_s >= timeout_s:
+                print(f"[bridge]   TIMEOUT de escaneo 360° ({elapsed_s:.1f}s >= {timeout_s:.1f}s, girado real: {girado_real_deg:.1f}°, omega_real: {omega_real_dps:.1f}°/s en {t_efectivo_s:.1f}s efectivos)")
+                break
+
+            # Comando angular continuo sostenido (Paso 1)
+            progreso_str = f"escaneo 360° [{girado_real_deg:.1f}°/360°] @ {deg_per_s:.0f}°/s (medida={omega_real_dps:.1f}°/s)"
+            self.send(DriveCommand(0.0, cmd_ang, progreso_str))
+
+            # Capturar frame y telemetría (Paso 2)
+            try:
+                rgb, frame_ts = self.client.front_frame()
+            except Exception as exc:
+                print(f"[bridge]   error capturando frame durante escaneo: {exc}")
+                break
+
+            t_telem = self.client.telemetry()
+            pose_now = self.odometry.update(
+                t_telem.raw,
+                ekf_heading=getattr(t_telem, "ekf_heading", None),
+                ekf_timestamp=getattr(t_telem, "ekf_heading_time", None),
+                now=now,
+            )
+
+            # Sincronización crítica de pose (Paso 2):
+            # Usar la pose del instante de captura (frame_ts) para que la proyeccion BEV
+            # coincida con la orientacion real de la camara, no la retrasada por inferencia.
+            if hasattr(self.odometry, "pose_at") and frame_ts > 0.0:
+                pose_capture = self.odometry.pose_at(frame_ts)
+            else:
+                pose_capture = Pose(pose_now.x, pose_now.y, pose_now.theta)
+
+            # Acumular rotación física medida por odometría
+            d_th = wrap_rad(pose_now.theta - last_theta)
+            last_theta = pose_now.theta
+            girado_real_deg += math.degrees(abs(d_th))
+
+            # Procesar percepción BEV con roll y pitch actuales
+            roll_pitch = self.odometry.current_roll_pitch(now=now) if hasattr(self.odometry, "current_roll_pitch") else None
+            r = roll_pitch[0] if roll_pitch is not None else None
+            p = roll_pitch[1] if roll_pitch is not None else None
+            res = self.perception.process(rgb, roll_rad=r, pitch_rad=p)
+
+            # Integrar observación en el mapa persistente con pose_capture
+            if self.use_map and self.pmap is not None:
+                self.pmap.integrate(res.traversability, res.observed, pose_capture,
+                                    self.forward_range, self.side_range, t=frame_ts)
+
+            # Chequeo de corte anticipado ante salida claramente buena (Paso 3):
+            # Solo tras superar la latencia de arranque del hardware y haber iniciado rotacion real
+            if elapsed_s >= startup_lat_s and girado_real_deg >= 15.0:
+                # Evaluamos lo que el robot tiene AL FRENTE (rumbo 0° relativo a pose_now)
+                libre_pct, cobertura_pct = self._map_free_and_coverage(pose_now, 0.0, self.heading_search_radius_m)
+                if cobertura_pct >= min_cob and libre_pct >= early_exit_libre_thresh:
+                    print(f"[bridge]   CORTE ANTICIPADO de escaneo 360° tras girar {girado_real_deg:.1f}° en {t_efectivo_s:.1f}s efectivos "
+                          f"(omega_real={omega_real_dps:.1f}°/s): frente claramente libre (libre={libre_pct:.1f}% >= {early_exit_libre_thresh:.1f}%, "
+                          f"cobertura={cobertura_pct:.1f}%). Arrancando hacia la salida.")
+                    self.send(DriveCommand(0.0, 0.0, "corte anticipado de escaneo 360"))
+                    self._unstick()
+                    return True
+
+            # Condición de fin de vuelta completa (360° alcanzados dentro de tolerancia)
+            tol_deg = float(getattr(self, "recovery_turn_tolerance_deg", 15.0))
+            if girado_real_deg >= (target_mag_deg - tol_deg) and elapsed_s >= (startup_lat_s * 0.5):
+                print(f"[bridge]   escaneo 360° completado por odometria: {girado_real_deg:.1f}° girados en {elapsed_s:.1f}s "
+                      f"({t_efectivo_s:.1f}s efectivos de giro, omega_real={omega_real_dps:.1f}°/s)")
+                break
+
+        t_efectivo_s = max(0.001, (time.time() - t_start) - startup_lat_s)
+        omega_final = girado_real_deg / t_efectivo_s
+        print(f"[bridge]   fin de escaneo 360: {girado_real_deg:.1f}° acumulados (omega_real_final={omega_final:.1f}°/s)")
+        self.send(DriveCommand(0.0, 0.0, "fin de escaneo 360"))
+        return False
+
+    def _recover_informado(self) -> None:
+        """Cascada de recuperación informada en 4 niveles:
+        (1) Mapa persistente inicial (bilateral ponderado hacia la meta)
+        (2) Escaneo 360° continuo con corte anticipado -> reintento de mapa con datos frescos
+        (3) VLM (orientación semántica multimodal)
+        (4) Barrido ciego condicional (último recurso).
+        """
+        assert self.pmap is not None and self.odometry is not None
+
+        veto_tilt, razon_tilt = self._is_tilt_too_steep_for_recovery()
+
+        # NIVEL 1: Mapa persistente inicial
+        eval_fn = getattr(self, "_evaluar_candidatos_recovery_mapa", None)
+        candidato = eval_fn(veto_tilt, razon_tilt) if eval_fn is not None else Bridge._evaluar_candidatos_recovery_mapa(self, veto_tilt, razon_tilt)
+        if candidato is not None:
+            mejor_heading = candidato["heading"]
+            mejor_libre = candidato["libre_pct"]
+            print(f"[bridge] [NIVEL 1] elijo rumbo {mejor_heading:+.0f} grados por mapa persistente (libre={mejor_libre:.0f}%, score={candidato['score']:.2f})")
             self.stats.recoveries_por_mapa += 1
             if abs(mejor_heading) < 1e-6:
-                # Rumbo 0° significa que el mapa ve el frente despejado.
-                # Un giro de 0° seria un no-op que dejaria al robot estancado en el mismo lugar;
-                # para recuperar el avance se ejecuta un avance forzado verificado.
                 self._unstick()
             else:
                 self._girar_hacia(mejor_heading)
             return
+
+        print("[bridge] [NIVEL 1] mapa persistente sin rumbo viable (falta cobertura o clearance)")
+
+        # NIVEL 1.5: Escaneo 360° para repoblar mapa persistente (Paso 1 - 5)
+        puede_escanear = False
+        if getattr(self, "use_recovery_scan", True) and not veto_tilt:
+            # Chequeo anti-bucle (Paso 5)
+            # Resetear contador si el rover avanzó la distancia mínima requerida
+            if self.odometry is not None and self._last_scan_pose is not None:
+                disp = math.hypot(self.odometry.pose.x - self._last_scan_pose.x,
+                                  self.odometry.pose.y - self._last_scan_pose.y)
+                if disp >= getattr(self, "recovery_scan_min_disp_m", 1.0):
+                    self._scan_count_at_stuck = 0
+
+            now = time.time()
+            max_per_stuck = getattr(self, "recovery_scan_max_per_stuck", 1)
+            cooldown_s = getattr(self, "recovery_scan_cooldown_s", 30.0)
+            scan_count = getattr(self, "_scan_count_at_stuck", 0)
+            last_scan_time = getattr(self, "_last_scan_time", 0.0)
+
+            if scan_count >= max_per_stuck:
+                print(f"[bridge] [ESCANEO 360°] OMITIDO: limite alcanzado ({scan_count}/{max_per_stuck}) "
+                      f"en este atascamiento. Salteo directo a VLM.")
+            elif (now - last_scan_time) < cooldown_s:
+                print(f"[bridge] [ESCANEO 360°] OMITIDO: en cooldown ({now - last_scan_time:.1f}s < {cooldown_s:.1f}s). "
+                      f"Salteo directo a VLM.")
+            else:
+                puede_escanear = True
+        elif veto_tilt:
+            print(f"[bridge] [ESCANEO 360°] VETADO por pendiente ({razon_tilt}), salteo directo a VLM")
+
+        if puede_escanear:
+            self._scan_count_at_stuck = getattr(self, "_scan_count_at_stuck", 0) + 1
+            self._last_scan_time = time.time()
+            if self.odometry is not None:
+                self._last_scan_pose = Pose(self.odometry.pose.x, self.odometry.pose.y, self.odometry.pose.theta)
+
+            scan_fn = getattr(self, "_escanear_360", None)
+            corte_anticipado = scan_fn() if scan_fn is not None else Bridge._escanear_360(self)
+            if corte_anticipado:
+                print("[bridge] [ESCANEO 360°] recuperacion exitosa por corte anticipado")
+                return
+
+            # Reintento del mapa con datos frescos (Paso 4)
+            print("[bridge] [REINTENTO MAPA] evaluando rumbos con mapa persistente repoblado tras escaneo 360°...")
+            candidato_reintento = eval_fn(veto_tilt, razon_tilt) if eval_fn is not None else Bridge._evaluar_candidatos_recovery_mapa(self, veto_tilt, razon_tilt)
+            if candidato_reintento is not None:
+                mejor_heading = candidato_reintento["heading"]
+                mejor_libre = candidato_reintento["libre_pct"]
+                print(f"[bridge] [REINTENTO MAPA] EXITOSO: elijo rumbo {mejor_heading:+.0f} grados (libre={mejor_libre:.0f}%, score={candidato_reintento['score']:.2f})")
+                self.stats.recoveries_por_mapa += 1
+                if abs(mejor_heading) < 1e-6:
+                    self._unstick()
+                else:
+                    self._girar_hacia(mejor_heading)
+                return
+
+            print("[bridge] [REINTENTO MAPA] tampoco encontro salida viable tras repoblar mapa. Avanzando a VLM...")
 
         if self.use_vlm_recovery:
             decision = self._preguntar_vlm()
@@ -1224,7 +1611,9 @@ class Bridge:
         print(f"  desatascos forzados:    {s.unstucks}")
         print(f"  regimen cercano:        {s.near_regime_activations} "
               f"(retrocesos: {s.retrocesos})")
+        escaneos = getattr(s, "escaneos_360", 0)
         print(f"  recuperaciones:         mapa={s.recoveries_por_mapa}  "
+              f"escaneo_360={escaneos}  "
               f"vlm={s.recoveries_por_vlm}  ciegas={s.recoveries_ciegas}")
         if self.pmap is not None and self.odometry is not None:
             st = self.pmap.stats()

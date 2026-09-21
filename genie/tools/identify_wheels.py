@@ -114,7 +114,7 @@ def main() -> int:
 
     print("\nPone esto en configs/frodobot_rover.yaml:\n")
     print("odometry:")
-    print(f"  wheel_radius_m: 0.045")
+    print(f"  wheel_radius_m: 0.0475")
     print(f"  track_width_m: 0.15")
     print(f"  left_rpm_indices: {lado_b}")
     print(f"  right_rpm_indices: {lado_a}")
