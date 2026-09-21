@@ -20,7 +20,6 @@ setup(
     maintainer_email='rover@frodobots.com',
     description='Launch scripts for Earth Rover system',
     license='MIT',
-    tests_require=['pytest'],
     entry_points={
         'console_scripts': [],
     },

@@ -25,6 +25,7 @@ Autoprueba (no necesita robot):
 
 from __future__ import annotations
 
+from collections import deque
 import math
 import time
 from dataclasses import dataclass, field
@@ -63,7 +64,7 @@ def wrap_rad(a: float) -> float:
 
 @dataclass
 class OdometryConfig:
-    wheel_radius_m: float = 0.045
+    wheel_radius_m: float = 0.0475  # Ficha Mini+: diametro 95 mm -> radio 0.0475 m
     track_width_m: float = 0.15
     left_rpm_indices: tuple[int, ...] = (0, 2)
     right_rpm_indices: tuple[int, ...] = (1, 3)
@@ -215,6 +216,7 @@ class Odometry:
         self.tilt_gate_open: bool = False
         self.last_tilt_time: float | None = None
         self.last_blend_effective: float = cfg.heading_blend
+        self._pose_history: deque[tuple[float, Pose]] = deque(maxlen=500)
 
 
     # ------------------------------------------------------------------ ruedas
@@ -399,6 +401,7 @@ class Odometry:
             self.pose.theta = wrap_rad(self.pose.theta + w * dt)
             self.distance_travelled += abs(v) * dt
             self.samples_integrated += 1
+            self._pose_history.append((t, Pose(self.pose.x, self.pose.y, self.pose.theta)))
 
         if self.cfg.gps_correction:
             self._maybe_correct_with_gps(telemetry_raw)
@@ -406,6 +409,9 @@ class Odometry:
             ekf_h = ekf_heading if ekf_heading is not None else telemetry_raw.get("ekf_heading")
             ekf_t = ekf_timestamp if ekf_timestamp is not None else telemetry_raw.get("ekf_heading_time", telemetry_raw.get("ekf_timestamp"))
             self._maybe_correct_with_ekf_heading(ekf_h, ekf_t, now=now)
+
+        t_post = now if now is not None else (tiempos[-1] if tiempos else time.time())
+        self._pose_history.append((t_post, Pose(self.pose.x, self.pose.y, self.pose.theta)))
         return self.pose
 
     # --------------------------------------------------------------------- GPS
@@ -556,6 +562,42 @@ class Odometry:
         self.tilt_gate_open = False
         self.last_tilt_time = None
         self.last_blend_effective = self.cfg.heading_blend
+        self._pose_history.clear()
+
+    def pose_at(self, timestamp: float) -> Pose:
+        """Devuelve la pose estimada del robot en el instante 'timestamp'.
+
+        Si timestamp cae dentro del historial disponible, interpola linealmente
+        (x, y) y la orientacion angular theta (con wrap_rad) entre las dos muestras
+        mas cercanas. Si timestamp es anterior al historial devuelve la mas vieja;
+        si es posterior o no hay historial, devuelve una copia de la pose actual.
+        """
+        if not self._pose_history:
+            return Pose(self.pose.x, self.pose.y, self.pose.theta)
+
+        if timestamp <= self._pose_history[0][0]:
+            p = self._pose_history[0][1]
+            return Pose(p.x, p.y, p.theta)
+
+        if timestamp >= self._pose_history[-1][0]:
+            p = self._pose_history[-1][1]
+            return Pose(p.x, p.y, p.theta)
+
+        for i in range(1, len(self._pose_history)):
+            t1, p1 = self._pose_history[i]
+            if timestamp <= t1:
+                t0, p0 = self._pose_history[i - 1]
+                if t1 <= t0:
+                    return Pose(p1.x, p1.y, p1.theta)
+                alpha = (timestamp - t0) / (t1 - t0)
+                x = p0.x + alpha * (p1.x - p0.x)
+                y = p0.y + alpha * (p1.y - p0.y)
+                d_theta = wrap_rad(p1.theta - p0.theta)
+                theta = wrap_rad(p0.theta + alpha * d_theta)
+                return Pose(x, y, theta)
+
+        p = self._pose_history[-1][1]
+        return Pose(p.x, p.y, p.theta)
 
     def current_roll_pitch(self, now: float | None = None,
                            max_staleness_s: float | None = None) -> tuple[float, float] | None:

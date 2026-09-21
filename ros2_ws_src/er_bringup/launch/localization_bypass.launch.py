@@ -11,17 +11,17 @@ def generate_launch_description():
 
     sdk_url_arg = DeclareLaunchArgument(
         'sdk_url',
-        default_value='http://host.docker.internal:8000',
+        default_value=os.environ.get('SDK_URL', 'http://localhost:8000'),
         description='URL del servidor HTTP del SDK'
     )
     target_ip_arg = DeclareLaunchArgument(
         'target_ip',
-        default_value='127.0.0.1',
+        default_value=os.environ.get('TARGET_IP', '127.0.0.1'),
         description='IP de destino para exportar el socket UDP'
     )
     target_port_arg = DeclareLaunchArgument(
         'target_port',
-        default_value='9876',
+        default_value=os.environ.get('TARGET_PORT', '9876'),
         description='Puerto UDP de destino'
     )
 

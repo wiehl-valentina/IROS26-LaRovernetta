@@ -32,7 +32,7 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import BatteryState, Image, Imu, NavSatFix, NavSatStatus
-from std_msgs.msg import Float32, String
+from std_msgs.msg import Bool, Float32, String
 
 CONTROL_RATE_HZ = 10.0
 CMD_VEL_TIMEOUT_S = 0.5
@@ -223,6 +223,13 @@ class EarthRoverBridge(Node):
         self.declare_parameter("mag_calibration_file", "")
         self.declare_parameter("mag_untrusted_yaw_covariance", 1.0e6)
 
+        # Parámetros de Guarda contra GPS malo (Fase 1)
+        self.declare_parameter("gps_guard_enabled", True)
+        self.declare_parameter("gps_v_max_phys_m_s", 1.111)
+        self.declare_parameter("gps_jump_noise_margin_m", 1.5)
+        self.declare_parameter("gps_bad_fix_consecutive_thresh", 3)
+        self.declare_parameter("gps_min_fix_interval_s", 0.8)
+
         self._odom_pose_covariance = self.get_parameter(
             "odom_pose_covariance"
         ).value
@@ -296,8 +303,18 @@ class EarthRoverBridge(Node):
             self.get_parameter("mag_untrusted_yaw_covariance").value
         )
 
-        # Cargar archivos de calibración JSON si existen (Brief 15 / O.4 y Fase 1)
-        self._load_inertial_calibration_files()
+        self._gps_guard_enabled = bool(self.get_parameter("gps_guard_enabled").value)
+        self._gps_v_max_phys_m_s = float(self.get_parameter("gps_v_max_phys_m_s").value)
+        self._gps_jump_noise_margin_m = float(self.get_parameter("gps_jump_noise_margin_m").value)
+        self._gps_bad_fix_consecutive_thresh = int(self.get_parameter("gps_bad_fix_consecutive_thresh").value)
+        self._gps_min_fix_interval_s = float(self.get_parameter("gps_min_fix_interval_s").value)
+
+        # Estado de guarda contra GPS malo (Fase 1)
+        self._last_published_gps_stamp = None
+        self._last_published_gps_lat = None
+        self._last_published_gps_lon = None
+        self._consecutive_bad_gps = 0
+        self._gps_guard_level = 1
 
         self._latest_cmd = None
         self._last_cmd_at = 0.0
@@ -325,6 +342,9 @@ class EarthRoverBridge(Node):
         self._mag_confidence_score = 1.0
         self._last_mag_diag = None
 
+        # Cargar archivos de calibración JSON si existen (Brief 15 / O.4 y Fase 1)
+        self._load_inertial_calibration_files()
+
         # Integración WMM/IGRF dinámica
         self._geo_model = pygeomag.GeoMag()
         self.declare_parameter("mag_dynamic_update_dist_m", 1000.0)
@@ -341,6 +361,10 @@ class EarthRoverBridge(Node):
         self._hard_iron_offset_counts = 2278.1
 
         self.create_subscription(Twist, "cmd_vel", self._on_cmd_vel, command_qos)
+        self._gps_mag_conflict = False
+        self.create_subscription(
+            Bool, "/earth_rover/gps_mag_conflict", self._on_gps_mag_conflict, filter_qos
+        )
 
         self._session = requests.Session()
         self._running = True
@@ -352,23 +376,43 @@ class EarthRoverBridge(Node):
 
         self.get_logger().info(f"Bridging Earth Rovers SDK at {self.sdk_url}")
 
+    def _find_calibration_file(self, filename: str) -> str | None:
+        """Busca un archivo de calibración sin depender de nombres de usuario ni rutas fijas."""
+        import os
+        # 1. Intentar mediante el share directory del paquete instalado
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            share_dir = get_package_share_directory("earth_rovers_sdk")
+            cand = os.path.join(share_dir, "config", filename)
+            if os.path.isfile(cand):
+                return cand
+        except Exception:
+            pass
+
+        # 2. Búsqueda en árbol fuente relativo al script y directorio de trabajo
+        this_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates = [
+            os.path.join(this_dir, "..", "config", filename),
+            os.path.join(this_dir, "..", "..", "config", filename),
+            os.path.join(this_dir, "..", "..", "..", "config", filename),
+            os.path.join(os.getcwd(), "config", filename),
+            os.path.join(os.getcwd(), "ros2_ws_src", "earth_rovers_sdk", "config", filename),
+            os.path.join(os.getcwd(), "earth_rovers_sdk", "config", filename),
+            f"/root/ros2_ws/config/{filename}",
+            f"/root/ros2_ws/src/earth_rovers_sdk/config/{filename}",
+        ]
+        for cand in candidates:
+            if os.path.isfile(cand):
+                return cand
+        return None
+
     def _load_inertial_calibration_files(self):
-        """Carga archivos de calibración de sesgo gyro_bias.json y accel_bias.json (Brief 15 / O.4)."""
+        """Carga archivos de calibración de sesgo gyro_bias.json, accel_bias.json y mag_calibration.json."""
         import os
         # 1. Calibración de Giróscopo
         gyro_file = str(self.get_parameter("gyro_bias_file").value).strip()
-        if not gyro_file:
-            candidates = [
-                os.path.join(os.getcwd(), "config", "gyro_bias.json"),
-                "/root/ros2_ws/config/gyro_bias.json",
-                "/home/marian/ros2_ws/config/gyro_bias.json",
-                os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config", "gyro_bias.json"),
-                os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "config", "gyro_bias.json"),
-            ]
-            for cand in candidates:
-                if os.path.isfile(cand):
-                    gyro_file = cand
-                    break
+        if not gyro_file or not os.path.isfile(gyro_file):
+            gyro_file = self._find_calibration_file("gyro_bias.json")
 
         if gyro_file and os.path.isfile(gyro_file):
             try:
@@ -391,18 +435,8 @@ class EarthRoverBridge(Node):
 
         # 2. Calibración de Acelerómetro
         accel_file = str(self.get_parameter("accel_bias_file").value).strip()
-        if not accel_file:
-            candidates = [
-                os.path.join(os.getcwd(), "config", "accel_bias.json"),
-                "/root/ros2_ws/config/accel_bias.json",
-                "/home/marian/ros2_ws/config/accel_bias.json",
-                os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config", "accel_bias.json"),
-                os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "config", "accel_bias.json"),
-            ]
-            for cand in candidates:
-                if os.path.isfile(cand):
-                    accel_file = cand
-                    break
+        if not accel_file or not os.path.isfile(accel_file):
+            accel_file = self._find_calibration_file("accel_bias.json")
 
         if accel_file and os.path.isfile(accel_file):
             try:
@@ -425,18 +459,8 @@ class EarthRoverBridge(Node):
 
         # 3. Calibración de Magnetómetro (Fase 1)
         mag_file = str(self.get_parameter("mag_calibration_file").value).strip()
-        if not mag_file:
-            candidates = [
-                os.path.join(os.getcwd(), "config", "mag_calibration.json"),
-                "/root/ros2_ws/config/mag_calibration.json",
-                "/home/marian/ros2_ws/config/mag_calibration.json",
-                os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config", "mag_calibration.json"),
-                os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "config", "mag_calibration.json"),
-            ]
-            for cand in candidates:
-                if os.path.isfile(cand):
-                    mag_file = cand
-                    break
+        if not mag_file or not os.path.isfile(mag_file):
+            mag_file = self._find_calibration_file("mag_calibration.json")
 
         if mag_file and os.path.isfile(mag_file):
             try:
@@ -474,6 +498,9 @@ class EarthRoverBridge(Node):
             self._last_cmd_at = time.monotonic()
             self._last_cmd_rx_ros_sec = self.get_clock().now().nanoseconds / 1e9
             self._stopped = False
+
+    def _on_gps_mag_conflict(self, msg: Bool):
+        self._gps_mag_conflict = bool(msg.data)
 
     def _control_tick(self):
         with self._cmd_lock:
@@ -792,7 +819,11 @@ class EarthRoverBridge(Node):
                 return
         
         # Calcular fecha decimal actual para el modelo WMM
-        now_dt = datetime.utcnow()
+        try:
+            from datetime import timezone
+            now_dt = datetime.now(timezone.utc)
+        except Exception:
+            now_dt = datetime.utcnow()
         year = now_dt.year
         day_of_year = now_dt.timetuple().tm_yday
         is_leap = 1 if (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)) else 0
@@ -824,75 +855,114 @@ class EarthRoverBridge(Node):
         now = self.get_clock().now().to_msg()
 
         # ---------------------------------------------------------
-        # 1. GNSS (GPS) CON COVARIANZA DINÁMICA AVANZADA
+        # 1. GNSS (GPS) CON COVARIANZA DINÁMICA AVANZADA Y GUARDA (Fase 1)
         # ---------------------------------------------------------
         lat, lng = data.get("latitude"), data.get("longitude")
         if lat is not None and lng is not None:
-            gps = NavSatFix()
-            gps.header.stamp = now
-            gps.header.frame_id = "earth_rover_gps"
+            lat_f = float(lat)
+            lng_f = float(lng)
+            gps_ts = float(data.get("gps_timestamp") or data.get("timestamp") or 0.0)
 
-            # 1.1 Extracción de Metadatos del Hardware
-            gps_signal = data.get("gps_signal")   # Cantidad de satélites
-            fix_quality = data.get("fix_quality") # Flag NMEA oficial de la placa
-            
-            try:
-                hdop = float(data.get("hdop", 1.0))
-            except (TypeError, ValueError):
-                hdop = 1.0
+            # Paso 1.1: Deduplicación por timestamp y coordenadas (tasa efectiva 1 Hz)
+            is_duplicate = False
+            if self._gps_guard_enabled and self._last_published_gps_stamp is not None and gps_ts > 0.0:
+                dt_ts = gps_ts - self._last_published_gps_stamp
+                if dt_ts <= 0.0 or (lat_f == self._last_published_gps_lat and lng_f == self._last_published_gps_lon and dt_ts < self._gps_min_fix_interval_s):
+                    is_duplicate = True
 
-            # 1.2 Máquina de Estados de Validación de Fix
-            is_fix_valid = False
-            
-            if fix_quality is not None:
-                # Prioridad Absoluta: El hardware reporta si logró resolver la ecuación
-                if int(fix_quality) > 0:
-                    is_fix_valid = True
-            elif gps_signal is not None:
-                # Respaldo: Heurística matemática si el hardware no expone fix_quality
+            if not is_duplicate:
+                gps = NavSatFix()
+                if gps_ts > 0.0:
+                    sec = int(gps_ts)
+                    nanosec = int((gps_ts - sec) * 1e9)
+                    gps.header.stamp.sec = sec
+                    gps.header.stamp.nanosec = nanosec
+                else:
+                    gps.header.stamp = now
+                gps.header.frame_id = "earth_rover_gps"
+
+                # 1.1 Extracción de Metadatos del Hardware
+                gps_signal = data.get("gps_signal")   # Calidad de señal en porcentaje (%)
+                fix_quality = data.get("fix_quality") # Flag NMEA oficial de la placa (0=sin fix, 1=autónomo, 2=DGPS, 4=RTK fijo, 5=RTK float)
+                
                 try:
-                    sats = float(gps_signal)
-                    # 4 satélites es el mínimo algebraico real para resolver x, y, z, t
-                    if sats >= 4.0: 
-                        is_fix_valid = True
-                    
-                    # Generación de HDOP sintético si el SDK no lo empaqueta
-                    if "hdop" not in data:
-                        hdop = max(1.0, 10.0 / (sats + 1e-6))
+                    hdop = float(data.get("hdop", 1.0))
                 except (TypeError, ValueError):
-                    pass
+                    hdop = 1.0
 
-            if is_fix_valid:
-                gps.status.status = NavSatStatus.STATUS_FIX
-                # Actualizar referencia magnética si el rover se desplazó
-                self._update_dynamic_mag_reference(float(lat), float(lng))
-            else:
-                gps.status.status = NavSatStatus.STATUS_NO_FIX
-                hdop = 50.0 # Castigo masivo a la covarianza ante pérdida de anclaje
+                # 1.2 Máquina de Estados de Validación de Fix
+                is_fix_valid = False
+                
+                if fix_quality is not None:
+                    # Prioridad Absoluta: El hardware reporta si logró resolver la ecuación
+                    if int(fix_quality) > 0:
+                        is_fix_valid = True
+                elif gps_signal is not None:
+                    # Respaldo si el hardware no expone fix_quality: señal positiva
+                    try:
+                        sig = float(gps_signal)
+                        if sig > 0.0: 
+                            is_fix_valid = True
+                    except (TypeError, ValueError):
+                        pass
 
-            gps.status.service = NavSatStatus.SERVICE_GPS
-            gps.latitude = float(lat)
-            gps.longitude = float(lng)
+                # Paso 1.2: Detección física de saltos
+                is_jump = False
+                if self._gps_guard_enabled and self._last_published_gps_lat is not None and self._last_published_gps_lon is not None:
+                    dt_jump = gps_ts - self._last_published_gps_stamp if (gps_ts > 0 and self._last_published_gps_stamp) else 1.0
+                    if dt_jump <= 0.0:
+                        dt_jump = 1.0
+                    d_max_allowed = self._gps_v_max_phys_m_s * dt_jump + self._gps_jump_noise_margin_m
+                    d_meas = self._haversine_dist(self._last_published_gps_lat, self._last_published_gps_lon, lat_f, lng_f)
+                    if d_meas > d_max_allowed:
+                        is_jump = True
+                        self.get_logger().warning(
+                            f"[GPS_GUARD_ROS2] Salto GNSS descartado: dist={d_meas:.2f}m > d_max={d_max_allowed:.2f}m (dt={dt_jump:.2f}s).",
+                            throttle_duration_sec=1.0
+                        )
 
-            # 1.3 Escalado Tensorial de Covarianza
-            # Multiplicamos la matriz original completa por HDOP^2 mediante list comprehension.
-            # Esto preserva el tensor original inyectado por ROS 2 intacto.
-            hdop_factor = hdop ** 2
-            gps.position_covariance = [
-                cov * hdop_factor for cov in self._gps_position_covariance
-            ]
-            # Cambiamos a APPROXIMATED porque el HDOP es una dilución geométrica, no una varianza directa
-            gps.position_covariance_type = NavSatFix.COVARIANCE_TYPE_APPROXIMATED
-            
-            # 1.4 Guarda de Seguridad del Grafo Computacional
-            if is_fix_valid and hdop < 20.0:
-                self.gps_pub.publish(gps)
-            else:
-                self.get_logger().warn(
-                    f"GNSS descartado (HDOP: {hdop:.1f}, Sats: {gps_signal}, Fix: {fix_quality}). "
-                    "Forzando EKF a Dead-Reckoning.",
-                    throttle_duration_sec=2.0
-                )
+                # Paso 1.4: Comportamiento escalonado
+                is_bad = is_jump or not is_fix_valid or hdop >= 20.0
+                if is_bad:
+                    self._consecutive_bad_gps += 1
+                    if self._consecutive_bad_gps >= self._gps_bad_fix_consecutive_thresh:
+                        if self._gps_guard_level < 2:
+                            self._gps_guard_level = 2
+                            self.get_logger().warning(
+                                f"[GPS_GUARD_ROS2] NIVEL 1 -> NIVEL 2: GPS malo sostenido ({self._consecutive_bad_gps} fixes malos seguidos). "
+                                "Forzando EKF a Dead-Reckoning y bloqueando /gps/fix.",
+                                throttle_duration_sec=2.0
+                            )
+                    else:
+                        self.get_logger().warning(
+                            f"[GPS_GUARD_ROS2] Fix malo/salto aislado descartado ({self._consecutive_bad_gps}/{self._gps_bad_fix_consecutive_thresh}).",
+                            throttle_duration_sec=1.0
+                        )
+                else:
+                    if self._gps_guard_level > 1:
+                        self.get_logger().info(
+                            f"[GPS_GUARD_ROS2] NIVEL {self._gps_guard_level} -> NIVEL 1: Fix GPS válido recuperado ({lat_f:.7f}, {lng_f:.7f})."
+                        )
+                    self._gps_guard_level = 1
+                    self._consecutive_bad_gps = 0
+                    self._last_published_gps_lat = lat_f
+                    self._last_published_gps_lon = lng_f
+                    self._last_published_gps_stamp = gps_ts if gps_ts > 0.0 else time.time()
+
+                    gps.status.status = NavSatStatus.STATUS_FIX
+                    self._update_dynamic_mag_reference(lat_f, lng_f)
+                    gps.status.service = NavSatStatus.SERVICE_GPS
+                    gps.latitude = lat_f
+                    gps.longitude = lng_f
+
+                    # 1.3 Escalado Tensorial de Covarianza
+                    hdop_factor = hdop ** 2
+                    gps.position_covariance = [
+                        cov * hdop_factor for cov in self._gps_position_covariance
+                    ]
+                    gps.position_covariance_type = NavSatFix.COVARIANCE_TYPE_APPROXIMATED
+
+                    self.gps_pub.publish(gps)
 
         # ---------------------------------------------------------
         # 2. ORIENTACIÓN MAGNÉTICA (Compass)
@@ -1087,6 +1157,9 @@ class EarthRoverBridge(Node):
                 mag_conf, cov_yaw, _ = self._evaluate_magnetic_gate(
                     mx_last, my_last, mz_last, omega_z_val, accel_gate_open=gate_open
                 )
+                if getattr(self, "_gps_mag_conflict", False):
+                    cov_yaw = float(self._mag_untrusted_yaw_covariance)
+                    mag_conf = 0.0
             except Exception as e:
                 self.get_logger().error(f"Error evaluando compuerta magnética: {e}")
 
@@ -1141,7 +1214,10 @@ class EarthRoverBridge(Node):
         speed_m_s = None
         if speed is not None:
             try:
-                speed_m_s = float(speed)
+                # El campo 'speed' de la telemetría del SDK se reporta en km/h (confirmado empíricamente en Test D:
+                # a ~112 RPM da speed=1.91 km/h, equivalente a 0.53 m/s).
+                # Conversión estándar a m/s para odometría de ROS 2 (REP-103):
+                speed_m_s = float(speed) / 3.6
             except (TypeError, ValueError):
                 speed_m_s = None
 

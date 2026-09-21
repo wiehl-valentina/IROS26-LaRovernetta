@@ -18,9 +18,16 @@ def generate_launch_description():
         for base in [os.getcwd(), os.environ.get('ROS_WORKSPACE', '')]:
             if not base:
                 continue
-            src_candidate = os.path.join(base, 'src', 'mini_plus_localization', 'config', 'datum_resolved.yaml')
-            if os.path.isfile(src_candidate):
-                datum_resolved_yaml = src_candidate
+            candidates = [
+                os.path.join(base, 'ros2_ws_src', 'mini_plus_localization', 'config', 'datum_resolved.yaml'),
+                os.path.join(base, 'mini_plus_localization', 'config', 'datum_resolved.yaml'),
+                os.path.join(base, 'src', 'mini_plus_localization', 'config', 'datum_resolved.yaml'),
+            ]
+            for cand in candidates:
+                if os.path.isfile(cand):
+                    datum_resolved_yaml = cand
+                    break
+            if os.path.isfile(datum_resolved_yaml):
                 break
 
     datum_found = os.path.isfile(datum_resolved_yaml)

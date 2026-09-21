@@ -67,7 +67,7 @@ navigation:
   #   +1.0  si angular positivo hace girar a la DERECHA
   angular_sign: -1.0
 
-  max_linear: 0.25       # Origen: marian (era 1.0). Velocidad acotada para mayor control en pendiente.
+  max_linear: 0.4       # Origen: marian (era 1.0). Velocidad acotada para mayor control en pendiente.
   max_angular: 0.65      # Origen: marian (era 0.45). Mayor autoridad angular para vencer roce lateral.
   turn_speed: 0.55       # Origen: marian (era 0.40). Giro nominal calibrado con par suficiente.
   # Ganancia del giro: angular = kp_angular * radianes(error). Con 0.9 el
@@ -189,14 +189,18 @@ safety:
   vlm_recovery_min_confidence: 0.35
 
   # Obstaculo persistente: frames seguidos de bloqueo antes de evaluar retroceso/recovery.
-  # Origen: marian (era 4). Subido a 7 para filtrar falsos positivos transitorios causados
-  # por oscilaciones / cabeceo de camara en rampa.
-  obstacle_persist_frames: 7
+  # Recalibrado: bajado de 7 a 4 (conservador, recupera el baseline previo). A velocidad actual
+  # (~0.45 m/s) y 5 Hz (0.2s/frame), 4 frames confirman en 0.8s recorriendo ~0.36m (contra 1.4s y 0.63m
+  # que tardaba con 7), filtrando aún perturbaciones transitorias de cabeceo (1-2 frames) en rampa.
+  obstacle_persist_frames: 4
 
   # Chequeo frontal calibrado para pendientes (evita falsos obstaculos por deformacion IPM):
   # Origen: marian (calibrado para rampas y pasto sin falsos positivos).
   front_near_m: 0.40           # Origen: marian (era 0.32). Aleja el límite cercano para evitar distorsión IPM al pie del chasis en rampa.
-  front_far_m: 0.85
+  # Subido de 0.85 a 1.25 m: lookahead visual ampliado para que la distancia de detección (1.25m)
+  # supere holgadamente el avance durante la confirmación (0.36m) + frenado (0.15m), deteniéndose
+  # a ~0.74m del obstáculo (por encima del umbral crítico de 0.60m donde el BEV pierde perspectiva).
+  front_far_m: 1.25
   front_half_width_m: 0.22
   front_traversable_thresh: 0.26 # Origen: intermedio (era 0.22) para detectar obstáculos débiles que el planner ignoró.
   front_min_free_ratio: 0.35     # Origen: intermedio (era 0.30). Requiere 65% del parche bloqueado.
@@ -225,8 +229,22 @@ safety:
   # Escalado a recovery_turn_speed = 0.75: ~18.0 deg/s.
   # Provee torque contundente para desatasque y giros en pendiente/pasto denso.
   recovery_deg_per_s: 18.0
-  recovery_headings_deg: [0.0, 90.0, -90.0, 180.0]
+  # Rumbos evaluados en recuperación: frente (0°), desvíos bilaterales (±45°, ±90°) y escape trasero (180°).
+  recovery_headings_deg: [0.0, 45.0, -45.0, 90.0, -90.0, 180.0]
   recovery_min_cobertura_pct: 25.0
+  # Umbral mínimo de transitabilidad libre para considerar viable un rumbo lateral por mapa.
+  # Derivación geométrica: en una ventana de búsqueda de 2.0m x 1.2m (ancho=1.2m), el chasis
+  # del rover mide ~0.44m (front_half_width_m=0.22m). Un corredor libre de ancho chasis
+  # representa ~36.7% del ancho total. Con obstáculos que invaden lateral o diagonalmente
+  # la ventana de extracción BEV, pasajes transitables reales arrojan entre 30% y 45% de libre.
+  # Un umbral de 30.0% garantiza que huecos navegables (ej. 34%, 40%) califiquen como viables
+  # y compitan por goal_align en vez de caer en 180°, mientras que callejones cerrados (<25%)
+  # son descartados.
+  recovery_min_libre_pct: 30.0
+  # Ponderación en score = w_clearance * (libre%/100) + w_goal * ((cos(heading - bearing_meta) + 1)/2)
+  # Prioriza rodear el obstáculo hacia el lado que acerca al checkpoint:
+  recovery_goal_weight: 1.2
+  recovery_clearance_weight: 1.0
   heading_search_radius_m: 2.0
 
   # Latencia de arranque de hardware (tiempo muerto entre comando y movimiento rotatorio fisico efectivo).
@@ -247,9 +265,38 @@ safety:
   vlm_recovery_max_retries: 2
   vlm_recovery_cooldown_s: 10.0
 
+  # ---- Escaneo 360° en recuperación (previo a VLM) --------------------------
+  # Inserta un escaneo continuo de 360° sobre el propio eje entre el nivel 1 de mapa
+  # y el VLM, repoblando el mapa persistente para reintentar rumbos con datos frescos.
+  use_recovery_scan: true
+  # Velocidad angular nominal estimada del escaneo en grados/segundo.
+  # Derivación: a ~3.5 Hz del pipeline BEV (283ms/frame), 20°/s deja ~5.7° entre observaciones
+  # consecutivas, resolución angular suficiente para no perderse un pasaje libre;
+  # la vuelta completa tarda ~18s.
+  recovery_scan_deg_per_s: 20.0
+  # Comando angular normalizado [0, 1] para la maniobra de escaneo continuo.
+  # ASUMIDO: interpolado de dos puntos de giro motorizado de 360° en campo (cmd 0.20 -> 31.4s, ~11.5°/s;
+  # cmd 0.45 -> 11.75s, ~30.6°/s; k ≈ 76.72°/s por unidad). Para 20.0°/s resulta: 0.20 + 8.54/76.72 ≈ 0.31.
+  # Pendiente de recalibrar con corridas reales: la referencia incluye latencia de arranque y se midió sobre piedras.
+  recovery_scan_turn_speed: 0.31
+  # Umbral de transitabilidad libre al frente para corte anticipado durante el escaneo.
+  # Derivación: debe ser marcadamente más exigente que recovery_min_libre_pct=30.0 (viable),
+  # porque cortar temprano decide con menos información que la vuelta completa. 70.0%
+  # representa un pasaje claramente despejado.
+  recovery_scan_early_exit_libre_pct: 70.0
+  # Límite de escaneos 360° repetidos en el mismo atascamiento antes de saltear directo a VLM.
+  # Evita bucles costosos de 18s si el robot está encajonado.
+  recovery_scan_max_per_stuck: 1
+  # Distancia mínima de avance (en metros) para resetear el contador de escaneos por atascamiento.
+  recovery_scan_min_disp_m: 1.0
+  # Cooldown temporal mínimo entre escaneos 360° (en segundos).
+  recovery_scan_cooldown_s: 30.0
+  # Timeout de seguridad para escaneo 360° (segundos).
+  recovery_scan_timeout_s: 35.0
+
 
 odometry:
-  wheel_radius_m: 0.0527
+  wheel_radius_m: 0.0475  # Ficha Mini+: diametro 95 mm -> radio 0.0475 m (112 RPM -> 0.557 m/s)
   track_width_m: 0.15
   left_rpm_indices: [0, 2]
   right_rpm_indices: [1, 3]
@@ -306,3 +353,43 @@ memory:
   min_confidence: 0.15
   plan_forward_m: 3.0
   plan_side_m: 2.0
+
+# Guarda contra GPS malo, deduplicación y comportamiento escalonado (Fase 1)
+gps_guard:
+  enabled: true
+  # Velocidad máxima física del chasis del rover (4.0 km/h / 3.6 ≈ 1.111 m/s).
+  # Ningún desplazamiento físico entre fixes consecutivos puede exceder v_max_phys * dt.
+  v_max_phys_m_s: 1.111
+  # Margen de ruido e incertidumbre GNSS a 2-sigma en recepción autónoma/DGPS (metros).
+  # Umbral de salto físico: d_max(dt) = v_max_phys * dt + gps_jump_noise_margin_m.
+  # Para dt=1.0s: d_max = 1.111*1.0 + 1.5 = 2.61m.
+  gps_jump_noise_margin_m: 1.5
+  # Cantidad de fixes malos consecutivos requeridos para escalar de Nivel 1 a Nivel 2 (Modo Degradado).
+  # 1-2 fixes aíslan outliers esporádicos; >=3 confirma fallo o degradación sostenida.
+  bad_fix_consecutive_thresh: 3
+  # Modo Degradado (Nivel 2): Techo y piso al acelerador absoluto lineal.
+  # La zona muerta de fricción de los motores del Mini+ está en ~0.15 de acelerador absoluto.
+  # Un escalado multiplicativo (ej. 0.6) sobre comandos típicos de 0.27-0.40 mandaría 0.16-0.24,
+  # cayendo en el límite de la zona muerta y corriendo riesgo de calado en pasto o pendiente.
+  # Se aplica un techo absoluto (degraded_max_linear) para limitar el avance a ciegas y un
+  # piso mínimo (degraded_min_linear) por encima de la zona muerta (~0.15) si hay comando de avance.
+  degraded_max_linear: 0.25  # Techo absoluto de acelerador en Nivel 2
+  degraded_min_linear: 0.20  # Piso absoluto garantizado sobre la zona muerta (~0.15) solo si cmd > deadband_linear
+  deadband_linear: 0.15      # Zona muerta de fricción de motores del Mini+
+  # ASUMIDO: Factor 0.6 (40% de reducción). Con acelerador nominal 0.35, 0.35*0.6 = 0.21,
+  # garantizando operación sobre el piso de la zona muerta (0.15-0.20) sin calar los motores;
+  # 0.5 daría 0.175 (riesgo de estancamiento en pasto/tierra) y 0.7 no mitigaría suficiente la inercia.
+  degraded_linear_scale: 0.6
+  # ASUMIDO: Tiempo máximo sin anclaje de rumbo en modo degradado antes de frenar (Nivel 3).
+  # Con deriva típica de giróscopo debiasado (~0.05 - 0.1 °/s), 15s acumula ~1-2° de error.
+  # Requiere calibración en campo en zona de sombra satelital prolongada.
+  time_without_anchor_thresh_s: 15.0
+  # Intervalo temporal mínimo entre fixes para deduplicación (segundos).
+  # El receptor GNSS emite fixes a 1 Hz (~1.0s). Telemetría a 2-10 Hz dentro de <0.8s se deduplica.
+  min_fix_interval_s: 0.8
+  # Calidad mínima de fix requerida (NMEA fix_quality: 0=inválido/sin fix, 1=autónomo, 2=DGPS, 4=RTK fijo, 5=RTK float).
+  # Campo real reportado por el hardware en la telemetría del SDK ('fix_quality'). Fixes con calidad menor a 1 son descartados.
+  min_fix_quality: 1
+  # ASUMIDO: Umbral de rechazo por HDOP. Telemetría de Test D registró ~0.012 (óptimo).
+  # Debe calibrarse empíricamente en sitios con multicamino o cielo obstruido.
+  hdop_reject: 0.080

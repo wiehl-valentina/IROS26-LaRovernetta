@@ -32,7 +32,7 @@ class Telemetry:
     latitude: float
     longitude: float
     orientation: float
-    speed: float
+    speed: float  # Velocidad reportada por el SDK en km/h (medido en Test D: ~1.95 km/h ≈ 0.54 m/s)
     battery: float
     gps_signal: float
     timestamp: float
@@ -41,6 +41,12 @@ class Telemetry:
     fix_quality: int = 0
     ekf_heading: float | None = None
     ekf_heading_time: float | None = None
+    gps_timestamp: float | None = None
+
+    @property
+    def speed_m_s(self) -> float:
+        """Velocidad en m/s convertida desde km/h del SDK (v_m_s = speed / 3.6)."""
+        return self.speed / 3.6
 
 
 @dataclass
@@ -138,6 +144,8 @@ class RoverClient:
 
         # Orientation cruda de la brújula/magnetómetro del SDK
         raw_orientation = float(d.get("orientation", 0.0))
+        raw_gps_ts = d.get("gps_timestamp")
+        gps_timestamp_val = float(raw_gps_ts) if raw_gps_ts is not None else None
 
         return Telemetry(
             latitude=float(d.get("latitude", 0.0)),
@@ -152,6 +160,7 @@ class RoverClient:
             fix_quality=fix_q_val,
             ekf_heading=self.ekf_heading,
             ekf_heading_time=self.ekf_heading_time,
+            gps_timestamp=gps_timestamp_val,
         )
 
     # ---------------------------------------------------------------- control
