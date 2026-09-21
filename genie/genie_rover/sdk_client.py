@@ -103,15 +103,15 @@ class RoverClient:
 
     def rear_frame(self) -> tuple[np.ndarray, float]:
         """Devuelve (imagen RGB HxWx3 uint8, timestamp unix)."""
-        r = self.session.get(f"{self.base_url}/feed?view=rear", timeout=self.timeout)
+        # /v2/rear devuelve un solo frame en JSON. No usar /feed?view=rear: es un
+        # stream MJPEG infinito y requests.get queda bloqueado leyéndolo para siempre.
+        r = self.session.get(f"{self.base_url}/v2/rear", timeout=self.timeout)
         r.raise_for_status()
-        import cv2
-        arr = np.frombuffer(r.content, np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if img is None:
-            raise RoverError("Frame trasero corrupto")
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        return img_rgb, time.time()
+        data = r.json()
+        b64 = data.get("rear_frame")
+        if not b64:
+            raise RoverError("El SDK no devolvio 'rear_frame' (camara trasera no disponible?)")
+        return _decode_b64_image(b64), float(data.get("timestamp", time.time()))
 
     def front_frame(self) -> tuple[np.ndarray, float]:
         """Devuelve (imagen RGB HxWx3 uint8, timestamp unix)."""
