@@ -99,3 +99,7 @@ static/*.wav
 /CLAUDE.md
 /MEMORY.md
 front.png
+genie/debug
+genie/debug/Gaborone/00001_mapa.png
+ML_model/.venv-data
+ros2_ws_src
