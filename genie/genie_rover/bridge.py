@@ -47,6 +47,7 @@ from .odometry import Odometry, OdometryConfig, Pose, estimate_roll_pitch, wrap_
 from .perception import PerceptionPipeline
 from .persistent_map import MapConfig, PersistentMap
 from .sdk_client import Checkpoint, RoverClient, RoverError
+from .velocity_governor import GovernorConfig, VelocityGovernor
 
 
 @dataclass
@@ -63,6 +64,8 @@ class LoopStats:
     escaneos_360: int = 0
     recoveries_por_vlm: int = 0
     recoveries_ciegas: int = 0
+    governor_clamps: int = 0
+    governor_stops: int = 0
 
 
 def _safe_reset_recovery_state(b: Any) -> None:
@@ -132,6 +135,9 @@ class Bridge:
         self._base_checkpoint_radius_m = self.checkpoint_reached_radius_m
         self._current_checkpoint_radius_m = self.checkpoint_reached_radius_m
         self._last_target_sequence: int | None = None
+        self.pre_claim_dwell_s = float(nav.get("pre_claim_dwell_s", 2.0))
+        self._dwell_start_time: float | None = None
+        self._dwell_target_seq: int | None = None
 
         # ---- replanificacion por disparo espacial -------------------------
         # plan_on_bev (GeNIE) no corre en cada frame: solo cuando el robot
@@ -218,6 +224,20 @@ class Bridge:
         self.front_traversable_thresh = float(safety.get("front_traversable_thresh", 0.28))
         self.front_min_free_ratio = float(safety.get("front_min_free_ratio", 0.40))
         self.allow_reverse = bool(safety.get("allow_reverse", False))
+
+        # ---- Gobernador dinámico de velocidad por latencia P95 (Física de frenado) ----
+        gov_enabled = bool(safety.get("governor_enabled", True))
+        self.governor = VelocityGovernor(GovernorConfig(
+            enabled=gov_enabled,
+            window_size=int(safety.get("governor_window_size", 30)),
+            a_brake=float(safety.get("governor_a_brake", 1.5)),
+            cmd_latency_s=float(safety.get("governor_cmd_latency_s", 2.0)),
+            d_horizon_m=float(safety.get("governor_d_horizon_m", self.front_far_m)),
+            margin=float(safety.get("governor_margin", 1.2)),
+            min_speed_mps=float(safety.get("governor_min_speed_mps", 0.10)),
+            max_linear_speed_mps=float(safety.get("governor_max_linear_mps", 0.557)),
+            alpha_up=float(safety.get("governor_alpha_up", 0.25)),
+        ))
 
         # ---- regimen cercano ------------------------------------------------
         # Por debajo de ~0.6 m el BEV instantaneo deja de ser una fuente de
@@ -423,6 +443,7 @@ class Bridge:
     # -------------------------------------------------------------- un paso
 
     def _step(self) -> None:
+        t_step_start = time.time()
         rgb, frame_ts = self.client.front_frame()
         now = time.time()
         if frame_ts != self._last_frame_ts:
@@ -480,11 +501,15 @@ class Bridge:
             return
 
         target = self.current_target()
+        reached = False
+        dist_to_cp = 0.0
         if target is not None and heading is not None:
             # Si cambió el target, restaurar el radio geodésico nominal/base
             if self._last_target_sequence != target.sequence:
                 self._last_target_sequence = target.sequence
                 self._current_checkpoint_radius_m = self._base_checkpoint_radius_m
+                self._dwell_start_time = None
+                self._dwell_target_seq = None
 
             reached, dist_to_cp = check_checkpoint_reached(
                 guard_status.effective_lat,
@@ -496,31 +521,15 @@ class Bridge:
             goal = goal_from_gps(guard_status.effective_lat, guard_status.effective_lon, heading,
                                  target.latitude, target.longitude, self.goal_range_m)
             self._last_goal = goal
-            if reached:
-                if guard_status.can_claim_checkpoints:
-                    ok, msg = self.client.claim_checkpoint()
-                    if ok:
-                        print(f"[bridge] ✓ checkpoint #{target.sequence} alcanzado "
-                              f"({dist_to_cp:.1f} m <= {self._current_checkpoint_radius_m:.1f} m): {msg}")
-                        # Al avanzar de checkpoint con éxito, se restaura la tolerancia base
-                        self._current_checkpoint_radius_m = self._base_checkpoint_radius_m
-                        self.refresh_checkpoints()
-                    else:
-                        # DETECTOR DE RECHAZO DEL SDK (portado de gps_waypoint_controller.py:396)
-                        # Si el SDK rechaza el reclamo (ej. fuera de geocerca estricta o error 422),
-                        # estrangular la tolerancia a la mitad (13.0 -> 6.5 -> 3.25m, piso 0.5m)
-                        # para obligar al rover a acercarse más antes de volver a intentar,
-                        # evitando saturar la API en cada frame.
-                        old_rad = self._current_checkpoint_radius_m
-                        self._current_checkpoint_radius_m = max(0.5, self._current_checkpoint_radius_m * 0.5)
-                        print(f"[bridge] cerca del checkpoint ({dist_to_cp:.1f} m <= {old_rad:.1f} m) "
-                              f"pero rechazado por SDK: {msg}. Estrangulando tolerancia geodésica a "
-                              f"{self._current_checkpoint_radius_m:.2f} m.")
-                else:
-                    print(f"[bridge] Reclamo de checkpoint #{target.sequence} BLOQUEADO por GpsGuard ({guard_status.reason})")
+            if not reached or not guard_status.can_claim_checkpoints:
+                self._dwell_start_time = None
+                self._dwell_target_seq = None
+
             goal_desc = (f"cp#{target.sequence} a {goal.distance_m:.0f} m, "
                          f"rel {goal.relative_bearing_deg:+.0f} grados")
         else:
+            self._dwell_start_time = None
+            self._dwell_target_seq = None
             goal = type("G", (), {"x_right_m": 0.0, "y_forward_m": self.goal_range_m})()
             goal_desc = "derecho adelante (sin meta GPS)"
 
@@ -589,12 +598,70 @@ class Bridge:
         if self._is_front_blocked(res.traversability):
             self.stats.blocked += 1
             self._consecutive_blocked += 1
+            # Si había un dwell pre-reclamo en curso, se aborta inmediatamente por presencia de obstáculo
+            if self._dwell_start_time is not None:
+                print(f"[bridge] Dwell pre-reclamo cp#{target.sequence if target else '?'} ABORTADO por obstáculo al frente")
+                self._dwell_start_time = None
+                self._dwell_target_seq = None
             if self._consecutive_blocked >= self.obstacle_persist_frames and self.use_map:
                 self._retroceso_y_recover(res.traversability)
             else:
                 self.send(DriveCommand(0.0, 0.0, "OBSTACULO al frente"))
             return
         self._consecutive_blocked = 0
+
+        # ---- Evaluación de llegada a Checkpoint y Dwell Pre-Reclamo ----
+        if target is not None and reached:
+            if not guard_status.can_claim_checkpoints:
+                self._dwell_start_time = None
+                self._dwell_target_seq = None
+                print(f"[bridge] Reclamo de checkpoint #{target.sequence} BLOQUEADO por GpsGuard ({guard_status.reason})")
+            else:
+                # Frente despejado y rover dentro del radio de reclamo
+                if self._dwell_start_time is None or self._dwell_target_seq != target.sequence:
+                    self._dwell_start_time = now
+                    self._dwell_target_seq = target.sequence
+                    print(f"[bridge] Checkpoint #{target.sequence} alcanzado ({dist_to_cp:.1f} m <= {self._current_checkpoint_radius_m:.1f} m). "
+                          f"Iniciando reposo pre-reclamo ({self.pre_claim_dwell_s:.1f} s)...")
+                    self.send(DriveCommand(0.0, 0.0, f"[Pre-Claim] Frenando rover para estabilizacion cp#{target.sequence} (0.0s/{self.pre_claim_dwell_s:.1f}s)"))
+                    if hasattr(self, "governor") and self.governor is not None:
+                        self.governor.update(time.time() - t_step_start)
+                    return
+
+                dwell_elapsed = now - self._dwell_start_time
+                if dwell_elapsed < self.pre_claim_dwell_s:
+                    self.send(DriveCommand(0.0, 0.0, f"[Pre-Claim] Estabilizando cp#{target.sequence} ({dwell_elapsed:.1f}s/{self.pre_claim_dwell_s:.1f}s)"))
+                    if hasattr(self, "governor") and self.governor is not None:
+                        self.governor.update(time.time() - t_step_start)
+                    return
+
+                # Dwell cumplido con frente despejado: ejecutar reclamo
+                print(f"[bridge] Reposo pre-reclamo ({dwell_elapsed:.1f} s >= {self.pre_claim_dwell_s:.1f} s) completado para cp#{target.sequence}. Reclamando...")
+                self._dwell_start_time = None
+                self._dwell_target_seq = None
+                ok, msg = self.client.claim_checkpoint()
+                if ok:
+                    print(f"[bridge] ✓ checkpoint #{target.sequence} alcanzado "
+                          f"({dist_to_cp:.1f} m <= {self._current_checkpoint_radius_m:.1f} m): {msg}")
+                    # Al avanzar de checkpoint con éxito, se restaura la tolerancia base
+                    self._current_checkpoint_radius_m = self._base_checkpoint_radius_m
+                    self.refresh_checkpoints()
+                    self.send(DriveCommand(0.0, 0.0, f"[Pre-Claim] Checkpoint #{target.sequence} reclamado con éxito"))
+                    if hasattr(self, "governor") and self.governor is not None:
+                        self.governor.update(time.time() - t_step_start)
+                    return
+                else:
+                    # DETECTOR DE RECHAZO DEL SDK (portado de gps_waypoint_controller.py:396)
+                    # Si el SDK rechaza el reclamo (ej. fuera de geocerca estricta o error 422),
+                    # estrangular la tolerancia a la mitad (13.0 -> 6.5 -> 3.25m, piso 0.5m)
+                    # para obligar al rover a acercarse más antes de volver a intentar,
+                    # evitando saturar la API en cada frame.
+                    old_rad = self._current_checkpoint_radius_m
+                    self._current_checkpoint_radius_m = max(0.5, self._current_checkpoint_radius_m * 0.5)
+                    print(f"[bridge] cerca del checkpoint ({dist_to_cp:.1f} m <= {old_rad:.1f} m) "
+                          f"pero rechazado por SDK: {msg}. Estrangulando tolerancia geodésica a "
+                          f"{self._current_checkpoint_radius_m:.2f} m.")
+
 
         # ---- disparo espacial: solo llamar a GeNIE si hace falta ----------
         need_replan = True
@@ -639,6 +706,10 @@ class Bridge:
             path_robot = path
         else:
             path_robot = path_to_robot(self._plan_path_world, pose_now)
+
+        step_duration = time.time() - t_step_start
+        if hasattr(self, "governor") and self.governor is not None:
+            self.governor.update(step_duration)
 
         if self._send_path_command(path_robot):
             if plan is not None:
@@ -707,14 +778,40 @@ class Bridge:
         y anti-bucle, y lo manda. Devuelve False si disparo _unstick(), que ya
         mando su propio comando.
 
+        Jerarquía de prioridades de modulación de velocidad lineal:
+        1. PRIORIDAD 1 (Parada Absoluta): Dwell pre-reclamo, Nivel 3 de GpsGuard, u Obstáculo frontal.
+           Fuerzan comando de parada (0.0, 0.0) y bypass total de planificación/seguimiento de trayectoria.
+        2. PRIORIDAD 2 (Guarda de GPS Degradada - Nivel 2): Acota el rango admisible [min_linear, max_linear]
+           (e.g. <= 0.25) para prevenir pérdida de rumbo con GNSS ruidoso.
+        3. PRIORIDAD 3 (Gobernador de Velocidad por Latencia): Aplica clamp descendente min(linear, v_safe_throttle)
+           por física cuadrática de frenado y latencia P95 del ciclo. Si v_safe < umbral, corta a 0.0 (Stop & Wait).
+        Composición: Pre-claim dwell anula el envío antes de llegar aquí. En navegación activa, rige la intersección
+        más restrictiva entre GpsGuard y Gobernador (mínimo de ambos clamps), garantizando que ninguna guarda
+        pueda acelerar por encima de lo exigido por la otra.
+
         Un comando con linear=0 y angular!=0 es "girar en el lugar". Si eso
         se repite, el robot esta atrapado: cada giro le muestra una escena
         que vuelve a pedir girar, y sin memoria no sale solo.
         """
         cmd = self.follower.command(path_robot, committed=True)
         cmd = self._apply_commit(cmd, path_robot)
+
+        # Prioridad 2: Guarda de GPS en modo degradado (Nivel 2)
         if hasattr(self, "gps_guard") and self.gps_guard is not None:
             cmd.linear = self.gps_guard.apply_throttle(cmd.linear)
+
+        # Prioridad 3: Gobernador de velocidad por latencia P95 (aplica clamp descendente min())
+        if hasattr(self, "governor") and self.governor is not None and self.governor.cfg.enabled:
+            linear_before = cmd.linear
+            cmd.linear = self.governor.apply_throttle_limit(cmd.linear)
+            if linear_before > 0.0 and cmd.linear == 0.0:
+                self.stats.governor_stops += 1
+                v_safe_val = self.governor.filtered_v_safe
+                v_safe_str = f"{v_safe_val:.2f}m/s" if v_safe_val is not None else "0m/s"
+                cmd.reason = f"[GOBERNADOR STOP&WAIT (v_safe={v_safe_str})] {cmd.reason}"
+            elif linear_before > cmd.linear:
+                self.stats.governor_clamps += 1
+                cmd.reason = f"[GOBERNADOR ({linear_before:.2f}->{cmd.linear:.2f})] {cmd.reason}"
 
         if cmd.linear == 0.0 and cmd.angular != 0.0:
             self._consecutive_turns += 1
@@ -1631,6 +1728,16 @@ class Bridge:
                 r_deg = math.degrees(self.odometry.last_roll) if self.odometry.last_roll is not None else 0.0
                 print(f"  inclinacion final:      pitch={p_deg:+.1f}°, roll={r_deg:+.1f}° (blend={self.odometry.last_blend_effective:.2f})")
 
+        if hasattr(self, "governor") and self.governor is not None and self.governor.cfg.enabled:
+            print(f"  --- gobernador de velocidad ---")
+            print(f"  t_plan_p95:             {self.governor.compute_t_plan_p95():.3f} s")
+            v_safe = self.governor.filtered_v_safe
+            v_str = f"{v_safe:.2f} m/s" if v_safe is not None else "N/A"
+            th_lim = self.governor.filtered_throttle_limit
+            th_str = f"{th_lim:.2f}" if th_lim is not None else "N/A"
+            print(f"  v_safe / throttle lim:  {v_str} / {th_str}")
+            print(f"  recortes de velocidad:  {getattr(s, 'governor_clamps', 0)}")
+            print(f"  cortes Stop & Wait:     {getattr(s, 'governor_stops', 0)}")
 
         print(f"  errores:                {s.errors}")
         self._print_heading_diagnosis()

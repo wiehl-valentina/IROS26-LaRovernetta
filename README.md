@@ -2,6 +2,10 @@
 
 Este repositorio contiene el sistema de control, percepción y planificación para los rovers de **Earth Rover Challenge (Frodobots)**.
 
+> [!TIP]
+> **Arquitectura y Documentación Técnica Interna:**  
+> Para una explicación exhaustiva del stack de navegación autónoma, modelos físicos de frenado cuadrático, gobernador por latencia P95, calibración de huella analítica y gestión geodésica de checkpoints, consultar [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ---
 
 ## 1. Instalación y Configuración del Entorno
