@@ -450,9 +450,14 @@ def build_detector(cfg_vlm: dict):
     """Devuelve el detector que pide `vlm.backend` del config.
 
     "dino"/"hybrid" -> HitoDetector (con SemanticVlm adentro si es hybrid)
+    "manual"        -> ManualHitos: los hitos se confirman con Enter
     cualquier otro  -> SemanticVlm, el de siempre
     """
     backend = str((cfg_vlm or {}).get("backend", "gemini")).lower()
+
+    if backend == "manual":
+        from .manual_hitos import ManualHitos
+        return ManualHitos()
 
     if backend not in ("dino", "hybrid"):
         from .vlm_semantic import SemanticVlm, VlmConfig

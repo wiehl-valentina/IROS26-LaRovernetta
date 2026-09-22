@@ -559,10 +559,12 @@ def main() -> int:
                     help="enviar comandos de verdad (sin esto es simulacro)")
     ap.add_argument("--max-seconds", type=float, default=None)
     ap.add_argument("--debug-dir", default=None)
-    ap.add_argument("--vlm-backend", choices=["dino", "hybrid", "gemini", "off"], default=None,
-                    help="pisa vlm.backend del config. 'off' corre el recorrido "
-                         "sin VLM: cada tramo termina por su fail-safe de "
-                         "distancia (segments[].on_timeout)")
+    ap.add_argument("--vlm-backend", choices=["dino", "hybrid", "gemini", "manual", "off"],
+                    default=None,
+                    help="pisa vlm.backend del config. 'manual' confirma cada "
+                         "hito con Enter (ensayo sin el lugar). 'off' corre el "
+                         "recorrido sin VLM: cada tramo termina por su "
+                         "fail-safe de distancia (segments[].on_timeout)")
     ap.add_argument("--vlm-model", default=None,
                     help="pisa vlm.model del config (ej. gemini-2.5-flash)")
     ap.add_argument("--vlm-log-dir", default=None,

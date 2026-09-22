@@ -192,9 +192,12 @@ mission:
   # misma escena dispare dos veces el tramo siguiente.
   milestone_cooldown_s: 3.0
 
-  # Con DINO la respuesta llega en el mismo frame, asi que una observacion
-  # vieja se descarta mucho antes que con el VLM (2.5 s).
-  vlm_stale_s: 1.2
+  # La respuesta de DINO llega en la iteracion SIGUIENTE (corre en un hilo) y
+  # lleva la hora del frame que se comparo: tiene que sobrevivir al menos una
+  # vuelta del lazo. Con SAM en CPU una vuelta tarda ~2.5 s; con 1.2 s todas
+  # las respuestas llegaban "vencidas" y la mision ignoraba cada SI de DINO.
+  # Con GPU (lazo de ~0.2 s) se puede bajar a ~1.5.
+  vlm_stale_s: 5.0
 
   route_hint:
     enabled: false
@@ -223,13 +226,13 @@ mission:
       milestone:
         id: "piano"
         prompt: "¿se ve un piano (vertical o de cola)?"
-        confirm_hits: 3
+        confirm_hits: 1
         min_confidence: 0.5
       on_milestone:
         side: "left"
         id: "vano_puerta_izquierda"
         look_for: "el vano abierto de la puerta por el que hay que entrar"
-        confirm_hits: 2
+        confirm_hits: 1
         min_confidence: 0.5
       max_distance_m: 20.0
       on_timeout: "sweep"
@@ -241,13 +244,13 @@ mission:
       milestone:
         id: "tres_sillas"
         prompt: "¿se ven tres sillas alineadas contra la pared?"
-        confirm_hits: 3
+        confirm_hits: 1
         min_confidence: 0.5
       on_milestone:
         side: "left"
         id: "pasillo_izquierda"
         look_for: "la entrada del pasillo hacia la izquierda"
-        confirm_hits: 2
+        confirm_hits: 1
         min_confidence: 0.5
       max_distance_m: 25.0
       on_timeout: "sweep"
@@ -260,13 +263,13 @@ mission:
       milestone:
         id: "tuerca_azul"
         prompt: "¿se ve la tuerca azul pintada en la pared al fondo del pasillo?"
-        confirm_hits: 3
+        confirm_hits: 1
         min_confidence: 0.5
       on_milestone:
         side: "left"
         id: "pasillo_tuerca"
         look_for: "el pasillo que sale hacia la izquierda despues de la tuerca"
-        confirm_hits: 2
+        confirm_hits: 1
         min_confidence: 0.5
       max_distance_m: 25.0
       on_timeout: "sweep"
@@ -283,7 +286,7 @@ mission:
       milestone:
         id: "puerta_final"
         prompt: "¿se ve la puerta de frente, a menos de 3 metros?"
-        confirm_hits: 2
+        confirm_hits: 1
         min_confidence: 0.5
       max_distance_m: 18.0
       on_timeout: "advance"
@@ -296,13 +299,13 @@ mission:
       milestone:
         id: "post_puerta"
         prompt: "¿la puerta quedo atras / se ve el ambiente del otro lado?"
-        confirm_hits: 2
+        confirm_hits: 1
         min_confidence: 0.5
       on_milestone:
         side: "right"
         id: "salida_puerta"
         look_for: "el pasillo que sale hacia la derecha"
-        confirm_hits: 2
+        confirm_hits: 1
         min_confidence: 0.5
       # Corto: despues de cruzar, el hito tiene que aparecer enseguida. Si a
       # los 6 m no aparecio, algo salio mal y conviene frenar y no girar a
