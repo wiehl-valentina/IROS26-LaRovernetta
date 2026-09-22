@@ -13,3 +13,5 @@ Datasets/
 maps/
 genie/maps/
 ML_model/.venv-data/
+ros2_ws_src
+
