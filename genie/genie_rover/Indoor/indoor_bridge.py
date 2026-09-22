@@ -77,7 +77,7 @@ from .mission import (
     SemanticState,
     corridor_hint_from_bev,
 )
-from .vlm_semantic import SemanticVlm, VlmConfig
+from .hito_detector import build_detector
 from .rtabmap_pose_bridge import RtabmapPoseBridge
 from ..navigation import DriveCommand, front_is_blocked
 from ..odometry import Pose
@@ -167,7 +167,8 @@ class IndoorBridge(Bridge):
         self.sem_cfg = SemanticMissionConfig.from_dict(mission_raw)
         self.mission = SemanticMissionFSM(self.sem_cfg)
 
-        self.vlm = SemanticVlm(VlmConfig.from_dict(cfg.get("vlm", {})))
+        # "dino"/"hybrid" -> fotos de referencia; "gemini"/"off" -> VLM
+        self.vlm = build_detector(cfg.get("vlm", {}))
         tramos = ", ".join(seg.id for seg in self.sem_cfg.segments)
         print(f"[indoor_bridge] mision semantica: {len(self.sem_cfg.segments)} "
               f"tramo(s) [{tramos}], VLM backend={self.vlm.cfg.backend}")
@@ -558,7 +559,7 @@ def main() -> int:
                     help="enviar comandos de verdad (sin esto es simulacro)")
     ap.add_argument("--max-seconds", type=float, default=None)
     ap.add_argument("--debug-dir", default=None)
-    ap.add_argument("--vlm-backend", choices=["gemini", "off"], default=None,
+    ap.add_argument("--vlm-backend", choices=["dino", "hybrid", "gemini", "off"], default=None,
                     help="pisa vlm.backend del config. 'off' corre el recorrido "
                          "sin VLM: cada tramo termina por su fail-safe de "
                          "distancia (segments[].on_timeout)")

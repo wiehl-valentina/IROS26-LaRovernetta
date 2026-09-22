@@ -8,7 +8,7 @@
 # projection, samtp, navigation, planner, safety, memory, odometry) es la
 # misma, sin tocar.
 #
-# EL RECORRIDO: 6 tramos. Un tramo = avanzar recto con el rumbo bloqueado
+# EL RECORRIDO: 5 tramos. Un tramo = avanzar recto con el rumbo bloqueado
 # hasta ver su `milestone`, y despues hacer (o no) el giro de `on_milestone`.
 # Los hitos que solo CONFIRMAN posicion no llevan `on_milestone`: al
 # reconocerlos el rover re-bloquea el rumbo que ya trae y sigue derecho, que
@@ -16,17 +16,16 @@
 #
 #   tramo             milestone (confirma)   on_milestone (dispara maniobra)
 #   ----------------  ---------------------  ------------------------------
-#   t1_piano          piano                  -- sigue recto
-#   t2_puerta_izq     puerta_izquierda       gira izq -> vano_puerta_izquierda
-#   t3_sillas         tres_sillas            gira izq -> pasillo_izquierda
-#   t4_tuerca         tuerca_azul            -- sigue recto
-#   t5_cruzar_puerta  puerta_final           -- sigue recto (la cruza)
-#   t6_giro_derecha   post_puerta            gira der -> salida_puerta
+#   t1_piano          piano                  gira izq -> vano_puerta_izquierda
+#   t2_sillas         tres_sillas            gira izq -> pasillo_izquierda
+#   t3_tuerca         tuerca_azul            gira izq -> pasillo_tuerca
+#   t4_cruzar_puerta  puerta_final           -- sigue recto (la cruza)
+#   t5_giro_derecha   post_puerta            gira der -> salida_puerta
 #
 # Los pares milestone+on_milestone son a proposito: "tres sillas, entonces
 # gira de a poco a la izquierda hasta encontrar el pasillo" es UN tramo, no
 # dos -- las sillas lo cierran y el pasillo es lo que se busca mientras
-# pivotea. Igual con la puerta a la izquierda y su vano.
+# pivotea. Igual con el piano y la puerta del pasillo a su izquierda.
 #
 # La puerta final, en cambio, son DOS tramos justamente para que el giro pase
 # DESPUES de cruzarla: si `puerta_final` llevara el giro, el rover empezaria
@@ -213,25 +212,17 @@ mission:
   # (Con `backend: "gemini"` esto no aplica: ahi la confianza la da el VLM y
   # min_confidence vuelve a ser un filtro util.)
   segments:
-    # --- t1: arranque -> piano ------------------------------------------
-    # El piano solo confirma posicion: sin `on_milestone`, al reconocerlo el
-    # rover re-bloquea el rumbo actual y sigue derecho.
+    # --- t1: arranque -> piano -> puerta del pasillo a la izquierda --------
+    # El piano NO se pasa: al reconocerlo el rover pivotea a la izquierda
+    # buscando la puerta del pasillo, y corta el giro cuando la ve centrada
+    # (fotos de vano_puerta_izquierda). TURN_ALIGN lo centra en el pasillo y
+    # sigue recto hasta las sillas. Las fotos de `puerta_izquierda/` (la
+    # puerta a mitad de giro) quedan sin usar a proposito: como meta del giro
+    # lo cortarian antes de quedar alineado.
     - id: "t1_piano"
       milestone:
         id: "piano"
         prompt: "¿se ve un piano (vertical o de cola)?"
-        confirm_hits: 3
-        min_confidence: 0.5
-      max_distance_m: 25.0
-      on_timeout: "advance"
-
-    # --- t2: piano -> puerta a la izquierda ------------------------------
-    # Al reconocer la puerta pivotea a la izquierda buscando el vano, entra,
-    # y TURN_ALIGN lo centra por geometria antes de seguir recto.
-    - id: "t2_puerta_izq"
-      milestone:
-        id: "puerta_izquierda"
-        prompt: "¿se ve una puerta a la izquierda?"
         confirm_hits: 3
         min_confidence: 0.5
       on_milestone:
@@ -243,10 +234,10 @@ mission:
       max_distance_m: 20.0
       on_timeout: "sweep"
 
-    # --- t3: pasillo -> tres sillas -> pasillo a la izquierda -------------
+    # --- t2: pasillo -> tres sillas -> pasillo a la izquierda -------------
     # Las sillas cierran el tramo; lo que busca MIENTRAS gira de a poco a la
     # izquierda es la entrada del pasillo. Son un solo tramo.
-    - id: "t3_sillas"
+    - id: "t2_sillas"
       milestone:
         id: "tres_sillas"
         prompt: "¿se ven tres sillas alineadas contra la pared?"
@@ -261,19 +252,26 @@ mission:
       max_distance_m: 25.0
       on_timeout: "sweep"
 
-    # --- t4: pasillo -> tuerca azul / fin de pasillo ---------------------
-    # Igual que el piano: confirma y sigue. on_timeout "advance" para que,
-    # si la tuerca no se reconoce, el recorrido siga en vez de barrer.
-    - id: "t4_tuerca"
+    # --- t3: pasillo -> tuerca azul -> pasillo a la izquierda --------------
+    # Igual que las sillas: al reconocer la tuerca pivotea a la izquierda
+    # hasta ver el pasillo nuevo (fotos de pasillo_tuerca), se centra y sigue
+    # recto hasta la puerta final.
+    - id: "t3_tuerca"
       milestone:
         id: "tuerca_azul"
         prompt: "¿se ve la tuerca azul pintada en la pared al fondo del pasillo?"
         confirm_hits: 3
         min_confidence: 0.5
+      on_milestone:
+        side: "left"
+        id: "pasillo_tuerca"
+        look_for: "el pasillo que sale hacia la izquierda despues de la tuerca"
+        confirm_hits: 2
+        min_confidence: 0.5
       max_distance_m: 25.0
-      on_timeout: "advance"
+      on_timeout: "sweep"
 
-    # --- t5: -> puerta final, y CRUZARLA recto ---------------------------
+    # --- t4: -> puerta final, y CRUZARLA recto ---------------------------
     # Sin `on_milestone` a proposito: al reconocer la puerta el rover NO
     # gira, re-bloquea el rumbo y sigue derecho hasta atravesarla. Si aca
     # hubiera un giro, empezaria a pivotear apenas la ve -- o sea antes de
@@ -281,7 +279,7 @@ mission:
     # Lo que lo hace pasar por el medio y no rozar los laterales es
     # `corridor_centering_weight: 0.75`: la meta se corre al centro del
     # espacio libre que ve el BEV, y el vano de la puerta ES ese espacio.
-    - id: "t5_cruzar_puerta"
+    - id: "t4_cruzar_puerta"
       milestone:
         id: "puerta_final"
         prompt: "¿se ve la puerta de frente, a menos de 3 metros?"
@@ -290,11 +288,11 @@ mission:
       max_distance_m: 18.0
       on_timeout: "advance"
 
-    # --- t6: ya del otro lado -> girar a la derecha ----------------------
+    # --- t5: ya del otro lado -> girar a la derecha ----------------------
     # `post_puerta` son las fotos de lo que la camara ve JUSTO DESPUES de
     # cruzar el umbral: es la señal de "ya estoy adentro, ahora si gira".
     # Recien ahi pivotea a la derecha buscando el pasillo.
-    - id: "t6_giro_derecha"
+    - id: "t5_giro_derecha"
       milestone:
         id: "post_puerta"
         prompt: "¿la puerta quedo atras / se ve el ambiente del otro lado?"
