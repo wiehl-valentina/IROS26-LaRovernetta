@@ -1,0 +1,32 @@
+[0.576s] Invoking command in '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/earth_rovers_sdk': PYTHONPATH=/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/earth_rovers_sdk build --build-base /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build install --record /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/install.log --install-scripts $base/lib/earth_rovers_sdk --single-version-externally-managed
+[0.764s] running egg_info
+[0.764s] creating ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info
+[0.765s] writing ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/PKG-INFO
+[0.765s] writing dependency_links to ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/dependency_links.txt
+[0.766s] writing entry points to ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/entry_points.txt
+[0.766s] writing requirements to ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/requires.txt
+[0.766s] writing top-level names to ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/top_level.txt
+[0.766s] writing manifest file '../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/SOURCES.txt'
+[0.767s] reading manifest file '../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/SOURCES.txt'
+[0.768s] writing manifest file '../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/SOURCES.txt'
+[0.768s] running build
+[0.768s] running build_py
+[0.768s] creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build
+[0.769s] creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib
+[0.769s] creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib/earth_rovers_sdk
+[0.770s] copying earth_rovers_sdk/__init__.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib/earth_rovers_sdk
+[0.770s] copying earth_rovers_sdk/bridge_node.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib/earth_rovers_sdk
+[0.770s] running install
+[0.771s] running install_lib
+[0.772s] creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk
+[0.773s] copying /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib/earth_rovers_sdk/__init__.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk
+[0.773s] copying /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib/earth_rovers_sdk/bridge_node.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk
+[0.773s] byte-compiling /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk/__init__.py to __init__.cpython-310.pyc
+[0.773s] byte-compiling /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk/bridge_node.py to bridge_node.cpython-310.pyc
+[0.783s] running install_egg_info
+[0.784s] Copying ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info to /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk-0.0.0-py3.10.egg-info
+[0.786s] running install_scripts
+[0.803s] Installing bridge_node script to /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/earth_rovers_sdk
+[0.803s] Installing earth_rover_bridge script to /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/earth_rovers_sdk
+[0.804s] writing list of installed files to '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/install.log'
+[0.837s] Invoked command in '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/earth_rovers_sdk' returned '0': PYTHONPATH=/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/earth_rovers_sdk build --build-base /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build install --record /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/install.log --install-scripts $base/lib/earth_rovers_sdk --single-version-externally-managed

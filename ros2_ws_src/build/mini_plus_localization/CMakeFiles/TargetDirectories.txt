@@ -1,0 +1,9 @@
+/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization/CMakeFiles/uninstall.dir
+/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization/CMakeFiles/mini_plus_localization_uninstall.dir
+/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization/CMakeFiles/test.dir
+/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization/CMakeFiles/edit_cache.dir
+/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization/CMakeFiles/rebuild_cache.dir
+/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization/CMakeFiles/list_install_components.dir
+/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization/CMakeFiles/install.dir
+/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization/CMakeFiles/install/local.dir
+/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization/CMakeFiles/install/strip.dir

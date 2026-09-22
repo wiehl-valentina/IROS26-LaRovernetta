@@ -1,0 +1,4 @@
+[console_scripts]
+bridge_node = earth_rovers_sdk.bridge_node:main
+earth_rover_bridge = earth_rovers_sdk.bridge_node:main
+

@@ -1,0 +1,2 @@
+# Hashes of file build rules.
+c4d4aa4defb580a64c8cd2c8f71eb236 CMakeFiles/mini_plus_localization_uninstall

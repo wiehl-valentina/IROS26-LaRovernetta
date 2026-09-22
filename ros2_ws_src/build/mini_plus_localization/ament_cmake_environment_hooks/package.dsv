@@ -1,0 +1,4 @@
+source;share/mini_plus_localization/local_setup.bash
+source;share/mini_plus_localization/local_setup.dsv
+source;share/mini_plus_localization/local_setup.sh
+source;share/mini_plus_localization/local_setup.zsh

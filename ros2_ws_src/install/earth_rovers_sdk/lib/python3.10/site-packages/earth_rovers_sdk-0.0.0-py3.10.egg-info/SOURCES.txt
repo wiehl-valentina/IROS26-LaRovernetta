@@ -1,0 +1,10 @@
+setup.cfg
+setup.py
+../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/PKG-INFO
+../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/SOURCES.txt
+../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/dependency_links.txt
+../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/entry_points.txt
+../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/requires.txt
+../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/top_level.txt
+earth_rovers_sdk/__init__.py
+earth_rovers_sdk/bridge_node.py

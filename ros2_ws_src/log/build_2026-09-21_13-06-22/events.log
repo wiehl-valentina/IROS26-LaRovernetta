@@ -1,0 +1,171 @@
+[0.000000] (-) TimerEvent: {}
+[0.000377] (earth_rovers_sdk) JobQueued: {'identifier': 'earth_rovers_sdk', 'dependencies': OrderedDict()}
+[0.000565] (er_bringup) JobQueued: {'identifier': 'er_bringup', 'dependencies': OrderedDict()}
+[0.000612] (mini_plus_localization) JobQueued: {'identifier': 'mini_plus_localization', 'dependencies': OrderedDict()}
+[0.001022] (earth_rovers_sdk) JobStarted: {'identifier': 'earth_rovers_sdk'}
+[0.009029] (er_bringup) JobStarted: {'identifier': 'er_bringup'}
+[0.014855] (mini_plus_localization) JobStarted: {'identifier': 'mini_plus_localization'}
+[0.099748] (-) TimerEvent: {}
+[0.200219] (-) TimerEvent: {}
+[0.250578] (mini_plus_localization) JobProgress: {'identifier': 'mini_plus_localization', 'progress': 'cmake'}
+[0.252979] (mini_plus_localization) Command: {'cmd': ['/usr/bin/cmake', '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/mini_plus_localization', '-DCMAKE_INSTALL_PREFIX=/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization'], 'cwd': '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization', 'env': OrderedDict([('USER', 'pablolube'), ('SHLVL', '0'), ('LD_LIBRARY_PATH', '/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib'), ('HOME', '/home/pablolube'), ('ROS_PYTHON_VERSION', '3'), ('LC_CTYPE', 'C.UTF-8'), ('PYTHONNOUSERSITE', '1'), ('ROS_DISTRO', 'humble'), ('_', '/usr/bin/colcon'), ('ROS_VERSION', '2'), ('TERM', 'xterm'), ('ROS_LOCALHOST_ONLY', '0'), ('PATH', '/opt/ros/humble/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'), ('AMENT_PREFIX_PATH', '/opt/ros/humble'), ('PWD', '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization'), ('PYTHONPATH', '/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages'), ('COLCON', '1'), ('CMAKE_PREFIX_PATH', '/opt/ros/humble')]), 'shell': False}
+[0.300507] (-) TimerEvent: {}
+[0.303583] (mini_plus_localization) StdoutLine: {'line': b'-- The C compiler identification is GNU 11.4.0\n'}
+[0.353323] (mini_plus_localization) StdoutLine: {'line': b'-- The CXX compiler identification is GNU 11.4.0\n'}
+[0.359665] (mini_plus_localization) StdoutLine: {'line': b'-- Detecting C compiler ABI info\n'}
+[0.400654] (-) TimerEvent: {}
+[0.424462] (mini_plus_localization) StdoutLine: {'line': b'-- Detecting C compiler ABI info - done\n'}
+[0.429809] (mini_plus_localization) StdoutLine: {'line': b'-- Check for working C compiler: /usr/bin/cc - skipped\n'}
+[0.430273] (mini_plus_localization) StdoutLine: {'line': b'-- Detecting C compile features\n'}
+[0.430500] (mini_plus_localization) StdoutLine: {'line': b'-- Detecting C compile features - done\n'}
+[0.432969] (mini_plus_localization) StdoutLine: {'line': b'-- Detecting CXX compiler ABI info\n'}
+[0.500813] (-) TimerEvent: {}
+[0.507172] (mini_plus_localization) StdoutLine: {'line': b'-- Detecting CXX compiler ABI info - done\n'}
+[0.512661] (mini_plus_localization) StdoutLine: {'line': b'-- Check for working CXX compiler: /usr/bin/c++ - skipped\n'}
+[0.513044] (mini_plus_localization) StdoutLine: {'line': b'-- Detecting CXX compile features\n'}
+[0.513278] (mini_plus_localization) StdoutLine: {'line': b'-- Detecting CXX compile features - done\n'}
+[0.515320] (mini_plus_localization) StdoutLine: {'line': b'-- Found ament_cmake: 1.3.14 (/opt/ros/humble/share/ament_cmake/cmake)\n'}
+[0.573344] (earth_rovers_sdk) Command: {'cmd': ['/usr/bin/python3', '-W', 'ignore:setup.py install is deprecated', '-W', 'ignore:easy_install command is deprecated', 'setup.py', 'egg_info', '--egg-base', '../build/earth_rovers_sdk', 'build', '--build-base', '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build', 'install', '--record', '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/install.log', '--install-scripts', '$base/lib/earth_rovers_sdk', '--single-version-externally-managed'], 'cwd': '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/earth_rovers_sdk', 'env': OrderedDict([('USER', 'pablolube'), ('SHLVL', '0'), ('LD_LIBRARY_PATH', '/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib'), ('HOME', '/home/pablolube'), ('ROS_PYTHON_VERSION', '3'), ('LC_CTYPE', 'C.UTF-8'), ('PYTHONNOUSERSITE', '1'), ('ROS_DISTRO', 'humble'), ('_', '/usr/bin/colcon'), ('ROS_VERSION', '2'), ('TERM', 'xterm'), ('ROS_LOCALHOST_ONLY', '0'), ('PATH', '/opt/ros/humble/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'), ('AMENT_PREFIX_PATH', '/opt/ros/humble'), ('PWD', '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk'), ('PYTHONPATH', '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages:/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages'), ('COLCON', '1')]), 'shell': False}
+[0.577320] (er_bringup) Command: {'cmd': ['/usr/bin/python3', '-W', 'ignore:setup.py install is deprecated', '-W', 'ignore:easy_install command is deprecated', 'setup.py', 'egg_info', '--egg-base', '../build/er_bringup', 'build', '--build-base', '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build', 'install', '--record', '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/install.log', '--install-scripts', '$base/lib/er_bringup', '--single-version-externally-managed', 'install_data'], 'cwd': '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/er_bringup', 'env': OrderedDict([('USER', 'pablolube'), ('SHLVL', '0'), ('LD_LIBRARY_PATH', '/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib'), ('HOME', '/home/pablolube'), ('ROS_PYTHON_VERSION', '3'), ('LC_CTYPE', 'C.UTF-8'), ('PYTHONNOUSERSITE', '1'), ('ROS_DISTRO', 'humble'), ('_', '/usr/bin/colcon'), ('ROS_VERSION', '2'), ('TERM', 'xterm'), ('ROS_LOCALHOST_ONLY', '0'), ('PATH', '/opt/ros/humble/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'), ('AMENT_PREFIX_PATH', '/opt/ros/humble'), ('PWD', '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup'), ('PYTHONPATH', '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/lib/python3.10/site-packages:/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages'), ('COLCON', '1')]), 'shell': False}
+[0.600959] (-) TimerEvent: {}
+[0.647720] (mini_plus_localization) StdoutLine: {'line': b'-- Found Python3: /usr/bin/python3 (found version "3.10.12") found components: Interpreter \n'}
+[0.701112] (-) TimerEvent: {}
+[0.724535] (mini_plus_localization) StdoutLine: {'line': b'-- Found rclcpp: 16.0.19 (/opt/ros/humble/share/rclcpp/cmake)\n'}
+[0.756182] (mini_plus_localization) StdoutLine: {'line': b'-- Found rosidl_generator_c: 3.1.9 (/opt/ros/humble/share/rosidl_generator_c/cmake)\n'}
+[0.760048] (mini_plus_localization) StdoutLine: {'line': b'-- Found rosidl_adapter: 3.1.9 (/opt/ros/humble/share/rosidl_adapter/cmake)\n'}
+[0.764942] (earth_rovers_sdk) StdoutLine: {'line': b'running egg_info\n'}
+[0.765386] (earth_rovers_sdk) StdoutLine: {'line': b'creating ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info\n'}
+[0.766049] (earth_rovers_sdk) StdoutLine: {'line': b'writing ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/PKG-INFO\n'}
+[0.766373] (earth_rovers_sdk) StdoutLine: {'line': b'writing dependency_links to ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/dependency_links.txt\n'}
+[0.767064] (earth_rovers_sdk) StdoutLine: {'line': b'writing entry points to ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/entry_points.txt\n'}
+[0.767183] (earth_rovers_sdk) StdoutLine: {'line': b'writing requirements to ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/requires.txt\n'}
+[0.767289] (earth_rovers_sdk) StdoutLine: {'line': b'writing top-level names to ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/top_level.txt\n'}
+[0.767408] (mini_plus_localization) StdoutLine: {'line': b'-- Found rosidl_generator_cpp: 3.1.9 (/opt/ros/humble/share/rosidl_generator_cpp/cmake)\n'}
+[0.767469] (earth_rovers_sdk) StdoutLine: {'line': b"writing manifest file '../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/SOURCES.txt'\n"}
+[0.768183] (earth_rovers_sdk) StdoutLine: {'line': b"reading manifest file '../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/SOURCES.txt'\n"}
+[0.768716] (earth_rovers_sdk) StdoutLine: {'line': b"writing manifest file '../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/SOURCES.txt'\n"}
+[0.769041] (earth_rovers_sdk) StdoutLine: {'line': b'running build\n'}
+[0.769362] (earth_rovers_sdk) StdoutLine: {'line': b'running build_py\n'}
+[0.769422] (earth_rovers_sdk) StdoutLine: {'line': b'creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build\n'}
+[0.769688] (earth_rovers_sdk) StdoutLine: {'line': b'creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib\n'}
+[0.770084] (earth_rovers_sdk) StdoutLine: {'line': b'creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib/earth_rovers_sdk\n'}
+[0.770541] (earth_rovers_sdk) StdoutLine: {'line': b'copying earth_rovers_sdk/__init__.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib/earth_rovers_sdk\n'}
+[0.770732] (earth_rovers_sdk) StdoutLine: {'line': b'copying earth_rovers_sdk/bridge_node.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib/earth_rovers_sdk\n'}
+[0.771049] (earth_rovers_sdk) StdoutLine: {'line': b'running install\n'}
+[0.771375] (earth_rovers_sdk) StdoutLine: {'line': b'running install_lib\n'}
+[0.771629] (er_bringup) StdoutLine: {'line': b'running egg_info\n'}
+[0.771941] (er_bringup) StdoutLine: {'line': b'creating ../build/er_bringup/er_bringup.egg-info\n'}
+[0.772469] (er_bringup) StdoutLine: {'line': b'writing ../build/er_bringup/er_bringup.egg-info/PKG-INFO\n'}
+[0.772671] (earth_rovers_sdk) StdoutLine: {'line': b'creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk\n'}
+[0.773082] (er_bringup) StdoutLine: {'line': b'writing dependency_links to ../build/er_bringup/er_bringup.egg-info/dependency_links.txt\n'}
+[0.773369] (er_bringup) StdoutLine: {'line': b'writing entry points to ../build/er_bringup/er_bringup.egg-info/entry_points.txt\n'}
+[0.773429] (er_bringup) StdoutLine: {'line': b'writing requirements to ../build/er_bringup/er_bringup.egg-info/requires.txt\n'}
+[0.773480] (er_bringup) StdoutLine: {'line': b'writing top-level names to ../build/er_bringup/er_bringup.egg-info/top_level.txt\n'}
+[0.773527] (er_bringup) StdoutLine: {'line': b"writing manifest file '../build/er_bringup/er_bringup.egg-info/SOURCES.txt'\n"}
+[0.773572] (earth_rovers_sdk) StdoutLine: {'line': b'copying /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib/earth_rovers_sdk/__init__.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk\n'}
+[0.773668] (earth_rovers_sdk) StdoutLine: {'line': b'copying /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib/earth_rovers_sdk/bridge_node.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk\n'}
+[0.773888] (earth_rovers_sdk) StdoutLine: {'line': b'byte-compiling /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk/__init__.py to __init__.cpython-310.pyc\n'}
+[0.774280] (earth_rovers_sdk) StdoutLine: {'line': b'byte-compiling /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk/bridge_node.py to bridge_node.cpython-310.pyc\n'}
+[0.774666] (er_bringup) StdoutLine: {'line': b"reading manifest file '../build/er_bringup/er_bringup.egg-info/SOURCES.txt'\n"}
+[0.775247] (er_bringup) StdoutLine: {'line': b"writing manifest file '../build/er_bringup/er_bringup.egg-info/SOURCES.txt'\n"}
+[0.775654] (er_bringup) StdoutLine: {'line': b'running build\n'}
+[0.775713] (er_bringup) StdoutLine: {'line': b'running build_py\n'}
+[0.775759] (er_bringup) StdoutLine: {'line': b'creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build\n'}
+[0.775913] (er_bringup) StdoutLine: {'line': b'creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build/lib\n'}
+[0.776247] (mini_plus_localization) StdoutLine: {'line': b'-- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c\n'}
+[0.776531] (er_bringup) StdoutLine: {'line': b'creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build/lib/er_bringup\n'}
+[0.776715] (er_bringup) StdoutLine: {'line': b'copying er_bringup/__init__.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build/lib/er_bringup\n'}
+[0.776897] (er_bringup) StdoutLine: {'line': b'running install\n'}
+[0.777201] (er_bringup) StdoutLine: {'line': b'running install_lib\n'}
+[0.777927] (er_bringup) StdoutLine: {'line': b'creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/lib/python3.10/site-packages/er_bringup\n'}
+[0.778454] (er_bringup) StdoutLine: {'line': b'copying /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build/lib/er_bringup/__init__.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/lib/python3.10/site-packages/er_bringup\n'}
+[0.778945] (er_bringup) StdoutLine: {'line': b'byte-compiling /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/lib/python3.10/site-packages/er_bringup/__init__.py to __init__.cpython-310.pyc\n'}
+[0.779527] (er_bringup) StdoutLine: {'line': b'running install_data\n'}
+[0.779753] (er_bringup) StdoutLine: {'line': b'creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/ament_index\n'}
+[0.779997] (er_bringup) StdoutLine: {'line': b'creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/ament_index/resource_index\n'}
+[0.780382] (er_bringup) StdoutLine: {'line': b'creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/ament_index/resource_index/packages\n'}
+[0.781147] (er_bringup) StdoutLine: {'line': b'copying resource/er_bringup -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/ament_index/resource_index/packages\n'}
+[0.781528] (er_bringup) StdoutLine: {'line': b'copying package.xml -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup\n'}
+[0.781685] (er_bringup) StdoutLine: {'line': b'creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup/launch\n'}
+[0.782104] (er_bringup) StdoutLine: {'line': b'copying launch/localization_bypass.launch.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup/launch\n'}
+[0.782438] (er_bringup) StdoutLine: {'line': b'copying launch/mission1.launch.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup/launch\n'}
+[0.782647] (er_bringup) StdoutLine: {'line': b'copying launch/offline_pipeline_test.launch.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup/launch\n'}
+[0.782928] (er_bringup) StdoutLine: {'line': b'copying launch/mission_manager.launch.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup/launch\n'}
+[0.782985] (er_bringup) StdoutLine: {'line': b'running install_egg_info\n'}
+[0.783785] (earth_rovers_sdk) StdoutLine: {'line': b'running install_egg_info\n'}
+[0.784367] (er_bringup) StdoutLine: {'line': b'Copying ../build/er_bringup/er_bringup.egg-info to /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/lib/python3.10/site-packages/er_bringup-0.1.0-py3.10.egg-info\n'}
+[0.785242] (earth_rovers_sdk) StdoutLine: {'line': b'Copying ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info to /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk-0.0.0-py3.10.egg-info\n'}
+[0.785743] (er_bringup) StdoutLine: {'line': b'running install_scripts\n'}
+[0.786568] (earth_rovers_sdk) StdoutLine: {'line': b'running install_scripts\n'}
+[0.788723] (mini_plus_localization) StdoutLine: {'line': b'-- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp\n'}
+[0.801345] (-) TimerEvent: {}
+[0.803631] (earth_rovers_sdk) StdoutLine: {'line': b'Installing bridge_node script to /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/earth_rovers_sdk\n'}
+[0.804287] (earth_rovers_sdk) StdoutLine: {'line': b'Installing earth_rover_bridge script to /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/earth_rovers_sdk\n'}
+[0.804659] (earth_rovers_sdk) StdoutLine: {'line': b"writing list of installed files to '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/install.log'\n"}
+[0.806013] (er_bringup) StdoutLine: {'line': b"writing list of installed files to '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/install.log'\n"}
+[0.825013] (mini_plus_localization) StdoutLine: {'line': b'-- Found rmw_implementation_cmake: 6.1.3 (/opt/ros/humble/share/rmw_implementation_cmake/cmake)\n'}
+[0.827249] (mini_plus_localization) StdoutLine: {'line': b'-- Found rmw_fastrtps_cpp: 6.2.10 (/opt/ros/humble/share/rmw_fastrtps_cpp/cmake)\n'}
+[0.837589] (earth_rovers_sdk) CommandEnded: {'returncode': 0}
+[0.848493] (earth_rovers_sdk) JobEnded: {'identifier': 'earth_rovers_sdk', 'rc': 0}
+[0.849805] (er_bringup) CommandEnded: {'returncode': 0}
+[0.856173] (er_bringup) JobEnded: {'identifier': 'er_bringup', 'rc': 0}
+[0.901154] (mini_plus_localization) StdoutLine: {'line': b'-- Found OpenSSL: /usr/lib/x86_64-linux-gnu/libcrypto.so (found version "3.0.2")  \n'}
+[0.901405] (-) TimerEvent: {}
+[0.920135] (mini_plus_localization) StdoutLine: {'line': b'-- Found FastRTPS: /opt/ros/humble/include  \n'}
+[0.951001] (mini_plus_localization) StdoutLine: {'line': b"-- Using RMW implementation 'rmw_fastrtps_cpp' as default\n"}
+[0.958485] (mini_plus_localization) StdoutLine: {'line': b'-- Looking for pthread.h\n'}
+[1.001604] (-) TimerEvent: {}
+[1.024515] (mini_plus_localization) StdoutLine: {'line': b'-- Looking for pthread.h - found\n'}
+[1.024878] (mini_plus_localization) StdoutLine: {'line': b'-- Performing Test CMAKE_HAVE_LIBC_PTHREAD\n'}
+[1.094443] (mini_plus_localization) StdoutLine: {'line': b'-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success\n'}
+[1.095354] (mini_plus_localization) StdoutLine: {'line': b'-- Found Threads: TRUE  \n'}
+[1.101786] (-) TimerEvent: {}
+[1.142047] (mini_plus_localization) StdoutLine: {'line': b'-- Found robot_localization: 3.5.4 (/opt/ros/humble/share/robot_localization/cmake)\n'}
+[1.201955] (-) TimerEvent: {}
+[1.202320] (mini_plus_localization) StdoutLine: {'line': b'-- Found cv_bridge: 3.2.1 (/opt/ros/humble/share/cv_bridge/cmake)\n'}
+[1.224987] (mini_plus_localization) StdoutLine: {'line': b'-- Found ament_lint_auto: 0.12.15 (/opt/ros/humble/share/ament_lint_auto/cmake)\n'}
+[1.292235] (mini_plus_localization) StdoutLine: {'line': b"-- Added test 'flake8' to check Python code syntax and style conventions\n"}
+[1.293092] (mini_plus_localization) StdoutLine: {'line': b"-- Added test 'lint_cmake' to check CMake code style\n"}
+[1.293874] (mini_plus_localization) StdoutLine: {'line': b"-- Added test 'pep257' to check Python code against some of the docstring style conventions in PEP 257\n"}
+[1.295626] (mini_plus_localization) StdoutLine: {'line': b"-- Added test 'xmllint' to check XML markup files\n"}
+[1.297529] (mini_plus_localization) StdoutLine: {'line': b'-- Configuring done\n'}
+[1.302089] (-) TimerEvent: {}
+[1.306878] (mini_plus_localization) StdoutLine: {'line': b'-- Generating done\n'}
+[1.310056] (mini_plus_localization) StdoutLine: {'line': b'-- Build files have been written to: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization\n'}
+[1.320517] (mini_plus_localization) CommandEnded: {'returncode': 0}
+[1.322208] (mini_plus_localization) JobProgress: {'identifier': 'mini_plus_localization', 'progress': 'build'}
+[1.322457] (mini_plus_localization) Command: {'cmd': ['/usr/bin/cmake', '--build', '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization', '--', '-j16', '-l16'], 'cwd': '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization', 'env': OrderedDict([('USER', 'pablolube'), ('SHLVL', '0'), ('LD_LIBRARY_PATH', '/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib'), ('HOME', '/home/pablolube'), ('ROS_PYTHON_VERSION', '3'), ('LC_CTYPE', 'C.UTF-8'), ('PYTHONNOUSERSITE', '1'), ('ROS_DISTRO', 'humble'), ('_', '/usr/bin/colcon'), ('ROS_VERSION', '2'), ('TERM', 'xterm'), ('ROS_LOCALHOST_ONLY', '0'), ('PATH', '/opt/ros/humble/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'), ('AMENT_PREFIX_PATH', '/opt/ros/humble'), ('PWD', '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization'), ('PYTHONPATH', '/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages'), ('COLCON', '1'), ('CMAKE_PREFIX_PATH', '/opt/ros/humble')]), 'shell': False}
+[1.359274] (mini_plus_localization) CommandEnded: {'returncode': 0}
+[1.360339] (mini_plus_localization) JobProgress: {'identifier': 'mini_plus_localization', 'progress': 'install'}
+[1.367770] (mini_plus_localization) Command: {'cmd': ['/usr/bin/cmake', '--install', '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization'], 'cwd': '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization', 'env': OrderedDict([('USER', 'pablolube'), ('SHLVL', '0'), ('LD_LIBRARY_PATH', '/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib'), ('HOME', '/home/pablolube'), ('ROS_PYTHON_VERSION', '3'), ('LC_CTYPE', 'C.UTF-8'), ('PYTHONNOUSERSITE', '1'), ('ROS_DISTRO', 'humble'), ('_', '/usr/bin/colcon'), ('ROS_VERSION', '2'), ('TERM', 'xterm'), ('ROS_LOCALHOST_ONLY', '0'), ('PATH', '/opt/ros/humble/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'), ('AMENT_PREFIX_PATH', '/opt/ros/humble'), ('PWD', '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization'), ('PYTHONPATH', '/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages'), ('COLCON', '1'), ('CMAKE_PREFIX_PATH', '/opt/ros/humble')]), 'shell': False}
+[1.375088] (mini_plus_localization) StdoutLine: {'line': b'-- Install configuration: ""\n'}
+[1.375359] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/config\n'}
+[1.376936] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/config/datum_resolved.yaml\n'}
+[1.377149] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/config/ekf.yaml\n'}
+[1.377324] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/launch\n'}
+[1.377826] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/launch/ekf.launch.py\n'}
+[1.378185] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/urdf\n'}
+[1.378450] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/urdf/mini_plus.urdf\n'}
+[1.378622] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/worlds\n'}
+[1.379014] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/worlds/test_track.world\n'}
+[1.380036] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/lib/mini_plus_localization/ekf_heading_bridge.py\n'}
+[1.380208] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/lib/mini_plus_localization/gps_course_heading_bridge.py\n'}
+[1.380443] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/lib/mini_plus_localization/udp_heading_exporter.py\n'}
+[1.381691] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/ament_index/resource_index/package_run_dependencies/mini_plus_localization\n'}
+[1.382295] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/ament_index/resource_index/parent_prefix_path/mini_plus_localization\n'}
+[1.382923] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/environment/ament_prefix_path.sh\n'}
+[1.383143] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/environment/ament_prefix_path.dsv\n'}
+[1.383324] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/environment/path.sh\n'}
+[1.383511] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/environment/path.dsv\n'}
+[1.383699] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/local_setup.bash\n'}
+[1.383885] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/local_setup.sh\n'}
+[1.384159] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/local_setup.zsh\n'}
+[1.384413] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/local_setup.dsv\n'}
+[1.384731] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/package.dsv\n'}
+[1.385184] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/ament_index/resource_index/packages/mini_plus_localization\n'}
+[1.385681] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/cmake/mini_plus_localizationConfig.cmake\n'}
+[1.385856] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/cmake/mini_plus_localizationConfig-version.cmake\n'}
+[1.386079] (mini_plus_localization) StdoutLine: {'line': b'-- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/package.xml\n'}
+[1.387944] (mini_plus_localization) CommandEnded: {'returncode': 0}
+[1.400869] (mini_plus_localization) JobEnded: {'identifier': 'mini_plus_localization', 'rc': 0}
+[1.401731] (-) EventReactorShutdown: {}

@@ -1,0 +1,17 @@
+package.xml
+setup.cfg
+setup.py
+../build/er_bringup/er_bringup.egg-info/PKG-INFO
+../build/er_bringup/er_bringup.egg-info/SOURCES.txt
+../build/er_bringup/er_bringup.egg-info/dependency_links.txt
+../build/er_bringup/er_bringup.egg-info/entry_points.txt
+../build/er_bringup/er_bringup.egg-info/requires.txt
+../build/er_bringup/er_bringup.egg-info/top_level.txt
+../build/er_bringup/er_bringup.egg-info/zip-safe
+er_bringup/__init__.py
+launch/localization_bypass.launch.py
+launch/mission1.launch.py
+launch/mission_manager.launch.py
+launch/offline_pipeline_test.launch.py
+resource/er_bringup
+test/test_compose_rover_mode.py

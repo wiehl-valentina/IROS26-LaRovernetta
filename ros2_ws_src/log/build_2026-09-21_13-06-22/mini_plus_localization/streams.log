@@ -1,0 +1,74 @@
+[0.240s] Invoking command in '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/mini_plus_localization -DCMAKE_INSTALL_PREFIX=/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization
+[0.289s] -- The C compiler identification is GNU 11.4.0
+[0.339s] -- The CXX compiler identification is GNU 11.4.0
+[0.345s] -- Detecting C compiler ABI info
+[0.410s] -- Detecting C compiler ABI info - done
+[0.415s] -- Check for working C compiler: /usr/bin/cc - skipped
+[0.415s] -- Detecting C compile features
+[0.416s] -- Detecting C compile features - done
+[0.418s] -- Detecting CXX compiler ABI info
+[0.492s] -- Detecting CXX compiler ABI info - done
+[0.498s] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+[0.498s] -- Detecting CXX compile features
+[0.498s] -- Detecting CXX compile features - done
+[0.501s] -- Found ament_cmake: 1.3.14 (/opt/ros/humble/share/ament_cmake/cmake)
+[0.633s] -- Found Python3: /usr/bin/python3 (found version "3.10.12") found components: Interpreter 
+[0.710s] -- Found rclcpp: 16.0.19 (/opt/ros/humble/share/rclcpp/cmake)
+[0.741s] -- Found rosidl_generator_c: 3.1.9 (/opt/ros/humble/share/rosidl_generator_c/cmake)
+[0.745s] -- Found rosidl_adapter: 3.1.9 (/opt/ros/humble/share/rosidl_adapter/cmake)
+[0.753s] -- Found rosidl_generator_cpp: 3.1.9 (/opt/ros/humble/share/rosidl_generator_cpp/cmake)
+[0.762s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[0.774s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[0.810s] -- Found rmw_implementation_cmake: 6.1.3 (/opt/ros/humble/share/rmw_implementation_cmake/cmake)
+[0.813s] -- Found rmw_fastrtps_cpp: 6.2.10 (/opt/ros/humble/share/rmw_fastrtps_cpp/cmake)
+[0.886s] -- Found OpenSSL: /usr/lib/x86_64-linux-gnu/libcrypto.so (found version "3.0.2")  
+[0.905s] -- Found FastRTPS: /opt/ros/humble/include  
+[0.936s] -- Using RMW implementation 'rmw_fastrtps_cpp' as default
+[0.944s] -- Looking for pthread.h
+[1.010s] -- Looking for pthread.h - found
+[1.010s] -- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+[1.080s] -- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+[1.081s] -- Found Threads: TRUE  
+[1.127s] -- Found robot_localization: 3.5.4 (/opt/ros/humble/share/robot_localization/cmake)
+[1.188s] -- Found cv_bridge: 3.2.1 (/opt/ros/humble/share/cv_bridge/cmake)
+[1.210s] -- Found ament_lint_auto: 0.12.15 (/opt/ros/humble/share/ament_lint_auto/cmake)
+[1.278s] -- Added test 'flake8' to check Python code syntax and style conventions
+[1.278s] -- Added test 'lint_cmake' to check CMake code style
+[1.279s] -- Added test 'pep257' to check Python code against some of the docstring style conventions in PEP 257
+[1.281s] -- Added test 'xmllint' to check XML markup files
+[1.283s] -- Configuring done
+[1.292s] -- Generating done
+[1.295s] -- Build files have been written to: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization
+[1.306s] Invoked command in '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/mini_plus_localization -DCMAKE_INSTALL_PREFIX=/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization
+[1.308s] Invoking command in '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization -- -j16 -l16
+[1.345s] Invoked command in '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization -- -j16 -l16
+[1.354s] Invoking command in '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization
+[1.360s] -- Install configuration: ""
+[1.361s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/config
+[1.362s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/config/datum_resolved.yaml
+[1.362s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/config/ekf.yaml
+[1.363s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/launch
+[1.363s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/launch/ekf.launch.py
+[1.363s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/urdf
+[1.364s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/urdf/mini_plus.urdf
+[1.364s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/worlds
+[1.364s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/worlds/test_track.world
+[1.365s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/lib/mini_plus_localization/ekf_heading_bridge.py
+[1.365s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/lib/mini_plus_localization/gps_course_heading_bridge.py
+[1.366s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/lib/mini_plus_localization/udp_heading_exporter.py
+[1.367s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/ament_index/resource_index/package_run_dependencies/mini_plus_localization
+[1.367s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/ament_index/resource_index/parent_prefix_path/mini_plus_localization
+[1.368s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/environment/ament_prefix_path.sh
+[1.368s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/environment/ament_prefix_path.dsv
+[1.368s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/environment/path.sh
+[1.369s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/environment/path.dsv
+[1.369s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/local_setup.bash
+[1.369s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/local_setup.sh
+[1.369s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/local_setup.zsh
+[1.370s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/local_setup.dsv
+[1.370s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/package.dsv
+[1.370s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/ament_index/resource_index/packages/mini_plus_localization
+[1.371s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/cmake/mini_plus_localizationConfig.cmake
+[1.371s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/cmake/mini_plus_localizationConfig-version.cmake
+[1.371s] -- Installing: /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/mini_plus_localization/share/mini_plus_localization/package.xml
+[1.374s] Invoked command in '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/mini_plus_localization

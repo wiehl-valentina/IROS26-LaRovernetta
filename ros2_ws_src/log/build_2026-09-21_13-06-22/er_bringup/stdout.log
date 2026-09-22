@@ -1,0 +1,36 @@
+running egg_info
+creating ../build/er_bringup/er_bringup.egg-info
+writing ../build/er_bringup/er_bringup.egg-info/PKG-INFO
+writing dependency_links to ../build/er_bringup/er_bringup.egg-info/dependency_links.txt
+writing entry points to ../build/er_bringup/er_bringup.egg-info/entry_points.txt
+writing requirements to ../build/er_bringup/er_bringup.egg-info/requires.txt
+writing top-level names to ../build/er_bringup/er_bringup.egg-info/top_level.txt
+writing manifest file '../build/er_bringup/er_bringup.egg-info/SOURCES.txt'
+reading manifest file '../build/er_bringup/er_bringup.egg-info/SOURCES.txt'
+writing manifest file '../build/er_bringup/er_bringup.egg-info/SOURCES.txt'
+running build
+running build_py
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build/lib
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build/lib/er_bringup
+copying er_bringup/__init__.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build/lib/er_bringup
+running install
+running install_lib
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/lib/python3.10/site-packages/er_bringup
+copying /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build/lib/er_bringup/__init__.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/lib/python3.10/site-packages/er_bringup
+byte-compiling /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/lib/python3.10/site-packages/er_bringup/__init__.py to __init__.cpython-310.pyc
+running install_data
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/ament_index
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/ament_index/resource_index
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/ament_index/resource_index/packages
+copying resource/er_bringup -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/ament_index/resource_index/packages
+copying package.xml -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup/launch
+copying launch/localization_bypass.launch.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup/launch
+copying launch/mission1.launch.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup/launch
+copying launch/offline_pipeline_test.launch.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup/launch
+copying launch/mission_manager.launch.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup/launch
+running install_egg_info
+Copying ../build/er_bringup/er_bringup.egg-info to /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/lib/python3.10/site-packages/er_bringup-0.1.0-py3.10.egg-info
+running install_scripts
+writing list of installed files to '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/install.log'
