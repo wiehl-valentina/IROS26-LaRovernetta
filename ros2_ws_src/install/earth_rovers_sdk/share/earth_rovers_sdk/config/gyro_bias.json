@@ -1,0 +1,18 @@
+{
+  "_comment": "Inertial calibration for Mini+ Rover. Updated 2026-09-11 from Test A 60s stationary telemetry capture. gyro_bias_z calibrated to +1.027725 deg/s (+0.0179372 rad/s).",
+  "date": "2026-09-11",
+  "conditions": "Rover stationary and level on horizontal surface (Test A)",
+  "capture_duration_s": 60.0,
+  "num_samples": 600,
+  "units": "rad/s",
+  "gyro_bias_x": -0.091933,
+  "gyro_bias_y": -0.017092,
+  "gyro_bias_z": 0.0179372,
+  "std_x_rad_s": 0.000824,
+  "std_y_rad_s": 0.001108,
+  "std_z_rad_s": 0.000902,
+  "gyro_bias_x_deg_s": -5.2674,
+  "gyro_bias_y_deg_s": -0.9793,
+  "gyro_bias_z_deg_s": 1.027725,
+  "drift_gz_120s_deg_s": 0.0043
+}

@@ -1,0 +1,37 @@
+[1.068s] Invoking command in '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/er_bringup': PYTHONPATH=/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/er_bringup build --build-base /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build install --record /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/install.log --install-scripts $base/lib/er_bringup --single-version-externally-managed install_data
+[1.353s] running egg_info
+[1.353s] creating ../build/er_bringup/er_bringup.egg-info
+[1.368s] writing ../build/er_bringup/er_bringup.egg-info/PKG-INFO
+[1.368s] writing dependency_links to ../build/er_bringup/er_bringup.egg-info/dependency_links.txt
+[1.369s] writing requirements to ../build/er_bringup/er_bringup.egg-info/requires.txt
+[1.369s] writing top-level names to ../build/er_bringup/er_bringup.egg-info/top_level.txt
+[1.369s] writing manifest file '../build/er_bringup/er_bringup.egg-info/SOURCES.txt'
+[1.400s] reading manifest file '../build/er_bringup/er_bringup.egg-info/SOURCES.txt'
+[1.401s] writing manifest file '../build/er_bringup/er_bringup.egg-info/SOURCES.txt'
+[1.401s] running build
+[1.401s] running build_py
+[1.402s] creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build
+[1.402s] creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build/lib
+[1.402s] creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build/lib/er_bringup
+[1.403s] copying er_bringup/__init__.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build/lib/er_bringup
+[1.403s] running install
+[1.407s] running install_lib
+[1.422s] creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/lib/python3.10/site-packages/er_bringup
+[1.422s] copying /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build/lib/er_bringup/__init__.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/lib/python3.10/site-packages/er_bringup
+[1.423s] byte-compiling /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/lib/python3.10/site-packages/er_bringup/__init__.py to __init__.cpython-310.pyc
+[1.423s] running install_data
+[1.424s] creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/ament_index
+[1.424s] creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/ament_index/resource_index
+[1.424s] creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/ament_index/resource_index/packages
+[1.425s] copying resource/er_bringup -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/ament_index/resource_index/packages
+[1.425s] copying package.xml -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup
+[1.425s] creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup/launch
+[1.426s] copying launch/localization_bypass.launch.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup/launch
+[1.426s] copying launch/mission1.launch.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup/launch
+[1.426s] copying launch/offline_pipeline_test.launch.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup/launch
+[1.426s] copying launch/mission_manager.launch.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/share/er_bringup/launch
+[1.426s] running install_egg_info
+[1.440s] Copying ../build/er_bringup/er_bringup.egg-info to /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/lib/python3.10/site-packages/er_bringup-0.1.0-py3.10.egg-info
+[1.441s] running install_scripts
+[1.558s] writing list of installed files to '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/install.log'
+[1.586s] Invoked command in '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/er_bringup' returned '0': PYTHONPATH=/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/er_bringup/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/er_bringup build --build-base /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/build install --record /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/er_bringup/install.log --install-scripts $base/lib/er_bringup --single-version-externally-managed install_data

@@ -1,0 +1,13 @@
+# ==============================================================================
+# Datum dinámico resuelto determinísticamente a partir del Checkpoint inicial (#1)
+# Generado automáticamente por tools/mission_prep/resolve_datum.py
+# ==============================================================================
+navsat_transform:
+  ros__parameters:
+    datum: [30.48243713, 114.30264280, 0.0]
+    wait_for_datum: false
+
+navsat_transform_node:
+  ros__parameters:
+    datum: [30.48243713, 114.30264280, 0.0]
+    wait_for_datum: false

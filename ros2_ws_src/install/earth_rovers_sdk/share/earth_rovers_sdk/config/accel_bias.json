@@ -1,0 +1,26 @@
+{
+  "_comment": "Calibracion de acelerometro para Mini+ Rover. Recalibrado 2026-09-08 tras detectar que el SDK entrega telemetria normalizada en ~1.0g (accel_scale_factor=1.0). Medido con rover quieto y nivelado en superficie plana horizontal (890 muestras, 90.12s). La calibracion previa con raw_mean_norm_g=1.9615 y accel_scale_factor_applied=0.5098 correspondia a un comportamiento obsoleto del SDK y queda deprecada.",
+  "date": "2026-09-08",
+  "conditions": "Rover estacionario y nivelado en superficie plana horizontal",
+  "capture_duration_s": 90.12,
+  "num_samples": 890,
+  "units": "g",
+  "accel_scale_factor_applied": 1.0,
+  "raw_mean_norm_g": 1.039879,
+  "raw_std_norm_g": 0.003539,
+  "accel_bias_x": 0.001780,
+  "accel_bias_y": 0.005508,
+  "accel_bias_z": 0.039854,
+  "std_x_g": 0.003556,
+  "std_y_g": 0.002451,
+  "std_z_g": 0.003542,
+  "legacy_obsolete_calibration": {
+    "_note": "Calibracion obsoleta previa (norma ~1.96g / escala 0.5098)",
+    "date": "2026-09-08",
+    "accel_scale_factor_applied": 0.5098,
+    "raw_mean_norm_g": 1.9615,
+    "accel_bias_x": 0.020440,
+    "accel_bias_y": 0.000159,
+    "accel_bias_z": 0.000210
+  }
+}

@@ -1,0 +1,177 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="mini_plus_test_track">
+
+    <!-- Iluminación y Sol -->
+    <include>
+      <uri>model://sun</uri>
+    </include>
+
+    <!-- Plano Horizontal Base -->
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <physics type="ode">
+      <max_step_size>0.002</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>500</real_time_update_rate>
+    </physics>
+
+    <!-- Coordenadas Geográficas de Referencia (Ciudad de México / Hipódromo) -->
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <latitude_deg>19.432608</latitude_deg>
+      <longitude_deg>-99.133209</longitude_deg>
+      <elevation>2240.0</elevation>
+      <heading_deg>0.0</heading_deg>
+    </spherical_coordinates>
+
+    <!-- ======================================================================= -->
+    <!-- 1. CORREDOR TIPO VEREDA (1.5 m de ancho con bordillos laterales)         -->
+    <!-- ======================================================================= -->
+    <!-- Bordillo Izquierdo (y = +0.80 m, largo = 10 m, alto = 0.15 m) -->
+    <model name="curb_left">
+      <static>true</static>
+      <pose>5.0 0.825 0.075 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>10.0 0.15 0.15</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>10.0 0.15 0.15</size></box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.6 0.6 0.6 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Bordillo Derecho (y = -0.80 m, largo = 10 m, alto = 0.15 m) -->
+    <model name="curb_right">
+      <static>true</static>
+      <pose>5.0 -0.825 0.075 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>10.0 0.15 0.15</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>10.0 0.15 0.15</size></box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.6 0.6 0.6 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ======================================================================= -->
+    <!-- 2. RAMPA 10° DE PENDIENTE (Validación Filtro Complementario y Subida)    -->
+    <!-- ======================================================================= -->
+    <model name="ramp_10deg">
+      <static>true</static>
+      <!-- Largo de rampa = 3.0 m, ángulo = +10° (+0.1745 rad) -->
+      <!-- Centro en x = 12.0 m, y = 0.0 m, elevación media = 0.26 m -->
+      <pose>12.0 0.0 0.260 0 -0.174533 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>3.0 1.5 0.05</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>3.0 1.5 0.05</size></box>
+          </geometry>
+          <material>
+            <ambient>0.3 0.7 0.3 1</ambient>
+            <diffuse>0.4 0.8 0.4 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ======================================================================= -->
+    <!-- 3. RAMPA 18° DE PENDIENTE (Pendiente Máxima Nominal del Mini+ V6.2)       -->
+    <!-- ======================================================================= -->
+    <model name="ramp_18deg">
+      <static>true</static>
+      <!-- Largo de rampa = 2.5 m, ángulo = +18° (+0.3142 rad) -->
+      <!-- Centro en x = 16.0 m, y = 0.0 m, elevación media = 0.386 m -->
+      <pose>16.0 0.0 0.386 0 -0.314159 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>2.5 1.5 0.05</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>2.5 1.5 0.05</size></box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.3 0.2 1</ambient>
+            <diffuse>0.9 0.4 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ======================================================================= -->
+    <!-- 4. OBSTÁCULOS VERTICALES (Postes cilíndricos y cajas de prueba)          -->
+    <!-- ======================================================================= -->
+    <!-- Poste cilíndrico en x = 3.5 m, y = +0.25 m -->
+    <model name="obstacle_pole_1">
+      <static>true</static>
+      <pose>3.5 0.25 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder><radius>0.10</radius><length>1.0</length></cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>0.10</radius><length>1.0</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>0.9 0.1 0.1 1</ambient>
+            <diffuse>0.9 0.2 0.2 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Caja obstáculo en x = 7.0 m, y = -0.20 m -->
+    <model name="obstacle_box_1">
+      <static>true</static>
+      <pose>7.0 -0.20 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.40 0.40 0.50</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.40 0.40 0.50</size></box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.1 1</ambient>
+            <diffuse>0.9 0.9 0.2 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

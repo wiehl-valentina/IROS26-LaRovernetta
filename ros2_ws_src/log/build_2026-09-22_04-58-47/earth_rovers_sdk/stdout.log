@@ -1,0 +1,40 @@
+running egg_info
+creating ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info
+writing ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/PKG-INFO
+writing dependency_links to ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/dependency_links.txt
+writing entry points to ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/entry_points.txt
+writing requirements to ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/requires.txt
+writing top-level names to ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/top_level.txt
+writing manifest file '../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/SOURCES.txt'
+reading manifest file '../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/SOURCES.txt'
+writing manifest file '../build/earth_rovers_sdk/earth_rovers_sdk.egg-info/SOURCES.txt'
+running build
+running build_py
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib/earth_rovers_sdk
+copying earth_rovers_sdk/__init__.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib/earth_rovers_sdk
+copying earth_rovers_sdk/bridge_node.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib/earth_rovers_sdk
+running install
+running install_lib
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk
+copying /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib/earth_rovers_sdk/__init__.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk
+copying /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/build/lib/earth_rovers_sdk/bridge_node.py -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk
+byte-compiling /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk/__init__.py to __init__.cpython-310.pyc
+byte-compiling /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk/bridge_node.py to bridge_node.cpython-310.pyc
+running install_data
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/share/ament_index
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/share/ament_index/resource_index
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/share/ament_index/resource_index/packages
+copying resource/earth_rovers_sdk -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/share/ament_index/resource_index/packages
+copying package.xml -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/share/earth_rovers_sdk
+creating /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/share/earth_rovers_sdk/config
+copying config/accel_bias.json -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/share/earth_rovers_sdk/config
+copying config/mag_calibration.json -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/share/earth_rovers_sdk/config
+copying config/gyro_bias.json -> /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/share/earth_rovers_sdk/config
+running install_egg_info
+Copying ../build/earth_rovers_sdk/earth_rovers_sdk.egg-info to /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/python3.10/site-packages/earth_rovers_sdk-0.0.0-py3.10.egg-info
+running install_scripts
+Installing bridge_node script to /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/earth_rovers_sdk
+Installing earth_rover_bridge script to /home/pablolube/IROS26-LaRovernetta/ros2_ws_src/install/earth_rovers_sdk/lib/earth_rovers_sdk
+writing list of installed files to '/home/pablolube/IROS26-LaRovernetta/ros2_ws_src/build/earth_rovers_sdk/install.log'
