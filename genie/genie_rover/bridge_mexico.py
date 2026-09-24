@@ -1,5 +1,5 @@
-"""Bridge para el circuito de Mexico: SIN regimen cercano. Va por el camino
-como pueda, guiado por checkpoints secundarios GPS (la ruta grabada en
+"""Bridge para el circuito de Mexico: SIN regimen cercano ni frenado por obstaculos.
+Va por el camino como pueda, guiado por checkpoints secundarios GPS (la ruta grabada en
 genie/mexico_checkpoints_help/).
 
 Diferencias con bridge.Bridge:
@@ -10,10 +10,8 @@ Diferencias con bridge.Bridge:
    nunca disparan claim_checkpoint(). Cuando el oficial queda a menos de
    mexico.oficial_directo_m, se apunta directo a el.
 
-2. Obstaculo al frente. No frena, no retrocede, no hay regimen cercano ni
-   recuperacion por mapa/VLM. Avanza despacio hacia el lado mas libre
-   (primero el lado de la meta). Si los dos lados estan tapados, gira lento
-   en el lugar hacia la meta. Nunca marcha atras.
+2. Obstaculo al frente. IGNORADO COMPLETAMENTE: el robot sigue adelante sin
+   frenar, retroceder, ni esquivar.
 
 3. Planner sin camino. En vez de barrido/VLM, avanza despacio apuntando a la
    meta.
@@ -22,7 +20,7 @@ Diferencias con bridge.Bridge:
    ruta.estancado_s, la meta salta unos metros adelante: el obstaculo estaba
    sobre la ruta y hay que rodearlo.
 
-Requiere los dos hooks _compute_goal / _on_blocked en bridge.Bridge.
+Requiere el hook _compute_goal en bridge.Bridge.
 
 Uso (simulacro):
     python -m genie_rover.bridge_mexico --config configs/frodobot_rover.yaml \
@@ -56,8 +54,6 @@ from .route import RouteConfig, RouteFollower, cargar_ruta
 
 @dataclass
 class MexicoStats:
-    rodeos: int = 0
-    giros_bloqueado: int = 0
     avances_sin_camino: int = 0
     metas_ruta: int = 0
     metas_oficiales: int = 0
@@ -110,12 +106,8 @@ class BridgeMexico(Bridge):
 
         self.oficial_directo_m = float(mx.get("oficial_directo_m", 6.0))
         self.crawl_linear = float(mx.get("crawl_linear", 0.08))
-        self.crawl_angular_frac = float(mx.get("crawl_angular_frac", 0.7))
-        self.lado_libre_min = float(mx.get("lado_libre_min", 0.5))
-        self.lateral_m = float(mx.get("lateral_m", 0.6))
 
-        # Sin regimen cercano: el primer frame bloqueado ya va a _on_blocked,
-        # y el primer plan vacio ya va a _recover (que aca no gira en el lugar).
+        # Sin regimen cercano: ignora obstaculos, solo replanifica si plan vacio
         self.obstacle_persist_frames = 1
         self.recovery_after_empty = 1
 
@@ -186,53 +178,9 @@ class BridgeMexico(Bridge):
         self._write_dashboard(telem)
         return _Recto(self.goal_range_m), "derecho adelante (ruta terminada, sin checkpoint)"
 
-    # ------------------------------------------------------------ bloqueo
-
-    def _libre_lados(self, bev: np.ndarray, near_m: float = 0.25,
-                     far_m: float = 0.9, thresh: float = 0.4) -> tuple[float, float]:
-        """Fraccion transitable a izquierda y derecha en la franja frontal.
-        Misma ventana que front_is_blocked pero partida en dos y mas ancha.
-        Sin celdas observadas en un lado -> 0.5 (neutro)."""
-        h, w = bev.shape
-        r0 = max(0, h - 1 - int(far_m / self.resolution))
-        r1 = min(h, h - 1 - int(near_m / self.resolution) + 1)
-        c_mid = w // 2
-        c_lat = int(self.lateral_m / self.resolution)
-
-        def frac(patch: np.ndarray) -> float:
-            known = patch >= 0.0
-            if patch.size == 0 or not np.any(known):
-                return 0.5
-            return float(np.mean(patch[known] > thresh))
-
-        izq = frac(bev[r0:r1, max(0, c_mid - c_lat):c_mid])
-        der = frac(bev[r0:r1, c_mid + 1:min(w, c_mid + c_lat + 1)])
-        return izq, der
-
     def _on_blocked(self, bev: np.ndarray) -> None:
-        izq, der = self._libre_lados(bev)
-        pref = 1 if self._last_rel_deg >= 0 else -1          # +1 = derecha
-        libre = {-1: izq, 1: der}
-        self._plan_path_world = None                          # replanificar al salir
-        self._plan_pose = None
-
-        for lado in (pref, -pref):
-            if libre[lado] >= self.lado_libre_min:
-                ang = self.follower.angular_sign * lado * self.follower.turn_speed * self.crawl_angular_frac
-                ang = float(np.clip(ang, -self.follower.max_angular, self.follower.max_angular))
-                self.mx_stats.rodeos += 1
-                self._dash_state = f"rodeando obstaculo por {'der' if lado > 0 else 'izq'}"
-                self.send(DriveCommand(self.crawl_linear, ang,
-                                       f"bloqueado: rodeo por {'der' if lado > 0 else 'izq'} "
-                                       f"(libre izq {izq:.0%} der {der:.0%})"))
-                return
-
-        ang = self.follower.angular_sign * pref * self.follower.turn_speed
-        ang = float(np.clip(ang, -self.follower.max_angular, self.follower.max_angular))
-        self.mx_stats.giros_bloqueado += 1
-        self._dash_state = "bloqueado a ambos lados, girando"
-        self.send(DriveCommand(0.0, ang, "bloqueado a ambos lados: giro lento hacia la meta"))
-        self.heading_est.reset_track()   # girando en el lugar el track GPS no sirve
+        """Ignorar completamente obstáculos al frente."""
+        pass
 
     # --------------------------------------------------------- sin camino
 
@@ -324,8 +272,7 @@ class BridgeMexico(Bridge):
             print(f"  {self.ruta.descripcion()}  reenganches={self.ruta.reenganches}"
                   f"  terminada={self.ruta.terminada}")
         print(f"  metas: ruta={s.metas_ruta} oficial={s.metas_oficiales}")
-        print(f"  bloqueos: rodeos={s.rodeos} giros={s.giros_bloqueado}"
-              f"  avances sin camino={s.avances_sin_camino}")
+        print(f"  avances sin camino={s.avances_sin_camino}")
 
 
 def main() -> int:
