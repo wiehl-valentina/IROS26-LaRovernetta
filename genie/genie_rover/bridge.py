@@ -9,6 +9,12 @@ enviarlos. Para que el robot se mueva de verdad hace falta pasar --go.
     # de verdad
     python -m genie_rover.bridge --config configs/frodobot_rover.yaml --go \
         --start-mission --max-seconds 120 --debug-dir debug/run1
+
+    # con ruta de ayuda (puntos intermedios, NO son checkpoints: solo
+    # sirven para orientarse entre los oficiales, ver --ruta mas abajo y
+    # genie_rover/route.py). Se ve en el mapa del dashboard del SDK.
+    python -m genie_rover.bridge --config configs/frodobot_rover.yaml \
+        --ruta mi_ruta
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ import math
 import signal
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 import numpy as np
@@ -43,6 +49,7 @@ from .navigation import (
 from .odometry import Odometry, OdometryConfig, Pose
 from .perception import PerceptionPipeline
 from .persistent_map import MapConfig, PersistentMap
+from .route import DASHBOARD_JSON_DEFAULT, DashboardOverlay, RouteConfig, cargar_rutas, gps_valido
 from .sdk_client import Checkpoint, RoverClient, RoverError
 
 
@@ -62,7 +69,8 @@ class LoopStats:
 
 
 class Bridge:
-    def __init__(self, cfg: dict, dry_run: bool = True, debug_dir: str | None = None):
+    def __init__(self, cfg: dict, dry_run: bool = True, debug_dir: str | None = None,
+                 rutas: list[str] | None = None, dashboard_json: str | Path | None = None):
         self.cfg = cfg
         self.dry_run = bool(dry_run)
         self.debug_dir = Path(debug_dir) if debug_dir else None
@@ -91,6 +99,30 @@ class Bridge:
         )
         self.goal_range_m = float(nav.get("goal_range_m", 3.5))
         self.claim_radius_m = float(nav.get("claim_radius_m", 8.0))
+
+        # ---- ruta de ayuda (puntos intermedios, --ruta) --------------------
+        # Solo se activa si se pasa --ruta por linea de comando (o
+        # ruta.archivos en el config). NO son checkpoints: nunca se reclaman
+        # contra el SDK, solo sirven de meta local para orientarse entre
+        # checkpoints oficiales, y de referencia visual en el mapa del SDK
+        # (static/genie_waypoints.json, ver route.DashboardOverlay). El
+        # checkpoint oficial siempre tiene prioridad apenas esta a menos de
+        # ruta.oficial_directo_m.
+        ruta_cfg = cfg.get("ruta", {}) or {}
+        self.ruta_oficial_directo_m = float(ruta_cfg.get("oficial_directo_m", 6.0))
+        rcfg_names = {f.name for f in fields(RouteConfig)}
+        route_config = RouteConfig(**{k: v for k, v in ruta_cfg.items() if k in rcfg_names})
+        archivos_ruta = rutas if rutas else ruta_cfg.get("archivos", [])
+        self.ruta = cargar_rutas(archivos_ruta, route_config) if archivos_ruta else None
+        if self.ruta is not None:
+            print(f"[bridge] ruta de ayuda cargada: {self.ruta.total_m:.1f} m, "
+                  f"lookahead {route_config.lookahead_m:.1f} m")
+
+        self.dashboard: DashboardOverlay | None = None
+        if self.ruta is not None:
+            dash_path = dashboard_json or ruta_cfg.get("dashboard_json") or DASHBOARD_JSON_DEFAULT
+            self.dashboard = DashboardOverlay(
+                dash_path, periodo_s=float(ruta_cfg.get("dashboard_period_s", 1.0)))
 
         # ---- replanificacion por disparo espacial -------------------------
         # plan_on_bev (GeNIE) no corre en cada frame: solo cuando el robot
@@ -246,6 +278,67 @@ class Bridge:
                 return cp
         return None
 
+    def _compute_goal(self, telem, target: Checkpoint | None, heading: float | None):
+        """Meta local + descripcion para el log.
+
+        El checkpoint oficial (target) es el UNICO que se reclama con
+        claim_checkpoint(), apenas entra en claim_radius_m. Si ademas hay una
+        ruta de ayuda cargada (--ruta) y el oficial todavia esta lejos
+        (mas de ruta_oficial_directo_m), la meta local apunta en cambio al
+        punto lookahead de la ruta -- son solo referencia para orientarse,
+        nunca se reclaman ni cuentan como progreso de la mision. Tambien deja
+        escrito el overlay del mapa del SDK (self.dashboard) para que se vea
+        ahi la ruta y la meta actual.
+        """
+        gps_ok = gps_valido(telem.latitude, telem.longitude)
+        if self.ruta is not None and gps_ok:
+            self.ruta.update(telem.latitude, telem.longitude, time.time())
+
+        g_of = None
+        if target is not None and heading is not None:
+            g_of = goal_from_gps(telem.latitude, telem.longitude, heading,
+                                 target.latitude, target.longitude, self.goal_range_m)
+            if g_of.distance_m < self.claim_radius_m:
+                ok, msg = self.client.claim_checkpoint()
+                if ok:
+                    print(f"[bridge] ✓ checkpoint #{target.sequence} conseguido: {msg}")
+                    self.refresh_checkpoints()
+                else:
+                    print(f"[bridge] cerca del checkpoint ({g_of.distance_m:.1f} m) "
+                          f"pero rechazado: {msg}")
+
+        usar_oficial = g_of is not None and (
+            self.ruta is None or self.ruta.terminada
+            or g_of.distance_m <= self.ruta_oficial_directo_m)
+
+        if usar_oficial:
+            goal, desc = g_of, (f"cp#{target.sequence} a {g_of.distance_m:.0f} m, "
+                                f"rel {g_of.relative_bearing_deg:+.0f} grados")
+            dash_target = {"lat": target.latitude, "lon": target.longitude, "kind": "oficial"}
+            dash_estado = f"yendo al checkpoint oficial #{target.sequence}"
+        elif self.ruta is not None and gps_ok and heading is not None and not self.ruta.terminada:
+            lat_t, lon_t = self.ruta.objetivo()
+            goal = goal_from_gps(telem.latitude, telem.longitude, heading, lat_t, lon_t,
+                                 self.goal_range_m)
+            extra = f" | cp#{target.sequence} a {g_of.distance_m:.0f} m" if g_of else ""
+            desc = (f"{self.ruta.descripcion()}, rel {goal.relative_bearing_deg:+.0f} "
+                    f"grados{extra}")
+            dash_target = {"lat": lat_t, "lon": lon_t, "kind": "ruta"}
+            dash_estado = "siguiendo la ruta de ayuda"
+        else:
+            goal = type("G", (), {"x_right_m": 0.0, "y_forward_m": self.goal_range_m})()
+            motivo = ("sin fix GPS" if not gps_ok
+                      else "sin rumbo todavia" if heading is None
+                      else "sin meta GPS")
+            desc = f"derecho adelante ({motivo})"
+            dash_target = None
+            dash_estado = f"esperando: {motivo}"
+
+        if self.dashboard is not None:
+            self.dashboard.escribir(self.ruta, telem.latitude, telem.longitude, dash_estado,
+                                    dash_target, self._latest_scanned)
+        return goal, desc
+
     def run(self, max_seconds: float | None = None) -> None:
         signal.signal(signal.SIGINT, self.request_stop)
         signal.signal(signal.SIGTERM, self.request_stop)
@@ -258,6 +351,12 @@ class Bridge:
         else:
             print(f"[bridge] Objetivo: checkpoint #{target.sequence} "
                   f"({target.latitude}, {target.longitude})")
+
+        if self.dashboard is not None:
+            # Publicar la ruta en el mapa YA, antes del primer frame: si la
+            # camara o el GPS tardan, igual se ven los puntos intermedios.
+            self.dashboard.escribir(self.ruta, None, None, "arrancando", None,
+                                    self._latest_scanned, force=True)
 
         t_start = time.time()
         try:
@@ -293,6 +392,8 @@ class Bridge:
             if not self.dry_run:
                 self.client.stop()
                 self.client.stop()  # dos veces, por si se pierde un mensaje RTM
+            if self.dashboard is not None:
+                self.dashboard.apagar()
             self._print_summary()
 
     # -------------------------------------------------------------- un paso
@@ -314,22 +415,7 @@ class Bridge:
                                           telem.orientation, telem.timestamp)
 
         target = self.current_target()
-        if target is not None and heading is not None:
-            goal = goal_from_gps(telem.latitude, telem.longitude, heading,
-                                 target.latitude, target.longitude, self.goal_range_m)
-            if goal.distance_m < self.claim_radius_m:
-                ok, msg = self.client.claim_checkpoint()
-                if ok:
-                    print(f"[bridge] ✓ checkpoint #{target.sequence} conseguido: {msg}")
-                    self.refresh_checkpoints()
-                else:
-                    print(f"[bridge] cerca del checkpoint ({goal.distance_m:.1f} m) "
-                          f"pero rechazado: {msg}")
-            goal_desc = (f"cp#{target.sequence} a {goal.distance_m:.0f} m, "
-                         f"rel {goal.relative_bearing_deg:+.0f} grados")
-        else:
-            goal = type("G", (), {"x_right_m": 0.0, "y_forward_m": self.goal_range_m})()
-            goal_desc = "derecho adelante (sin meta GPS)"
+        goal, goal_desc = self._compute_goal(telem, target, heading)
 
         res = self.perception.process(rgb)
 
@@ -887,12 +973,21 @@ def main() -> int:
     ap.add_argument("--max-seconds", type=float, default=None,
                     help="cortar despues de N segundos (usalo siempre las primeras veces)")
     ap.add_argument("--debug-dir", default=None)
+    ap.add_argument("--ruta", nargs="*", default=[],
+                    help="activa la ruta de puntos de ayuda (NO son checkpoints, solo "
+                         "sirven para orientarse entre los oficiales): uno o mas archivos "
+                         "de genie/rutas/ (o el nombre solo), en orden. Sin esto el bridge "
+                         "se comporta como siempre.")
+    ap.add_argument("--dashboard-json", default=None,
+                    help="donde escribir el overlay para el mapa del SDK "
+                         "(por defecto earth-rovers-sdk/static/genie_waypoints.json)")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(Path(args.config).read_text())
     _check_placeholders(cfg)
 
-    bridge = Bridge(cfg, dry_run=not args.go, debug_dir=args.debug_dir)
+    bridge = Bridge(cfg, dry_run=not args.go, debug_dir=args.debug_dir,
+                    rutas=args.ruta, dashboard_json=args.dashboard_json)
 
     if args.start_mission:
         print("[bridge] iniciando mision ...")

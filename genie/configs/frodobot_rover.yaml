@@ -226,6 +226,18 @@ odometry:
   gps_correction: true
   min_gps_displacement_m: 1.0
 
+# Ruta de ayuda (puntos intermedios, NO son checkpoints): se activa pasando
+# --ruta al bridge (uno o mas archivos de genie/rutas/, o el nombre solo).
+# Mientras el checkpoint oficial este a mas de oficial_directo_m, la meta
+# local apunta al punto lookahead de la ruta en vez de ir derecho a ciegas;
+# apenas el oficial esta mas cerca, se apunta directo a el. Nunca se
+# reclaman: el claim() solo pasa contra el checkpoint oficial del SDK. Se ve
+# en el mapa del dashboard del SDK (static/genie_waypoints.json).
+ruta:
+  oficial_directo_m: 6.0
+  dashboard_period_s: 1.0
+  # lookahead_m: 4.0    # ver genie_rover/route.py:RouteConfig para el resto
+
 memory:
   enabled: true
   map_size_m: 8.0
