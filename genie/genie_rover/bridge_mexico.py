@@ -20,7 +20,7 @@ Diferencias con bridge.Bridge:
    ruta.estancado_s, la meta salta unos metros adelante: el obstaculo estaba
    sobre la ruta y hay que rodearlo.
 
-Requiere el hook _compute_goal en bridge.Bridge.
+Requiere el hook _compute_goal y el flag brake_on_obstacle en bridge.Bridge.
 
 Uso (simulacro):
     python -m genie_rover.bridge_mexico --config configs/frodobot_rover.yaml \
@@ -107,8 +107,8 @@ class BridgeMexico(Bridge):
         self.oficial_directo_m = float(mx.get("oficial_directo_m", 6.0))
         self.crawl_linear = float(mx.get("crawl_linear", 0.08))
 
-        # Sin regimen cercano: ignora obstaculos, solo replanifica si plan vacio
-        self.obstacle_persist_frames = 1
+        # Sin freno por obstaculo al frente: el frame sigue directo al planner.
+        self.brake_on_obstacle = False
         self.recovery_after_empty = 1
 
         self._last_rel_deg = 0.0
@@ -177,10 +177,6 @@ class BridgeMexico(Bridge):
         self._dash_state = "ruta terminada, sin checkpoint pendiente"
         self._write_dashboard(telem)
         return _Recto(self.goal_range_m), "derecho adelante (ruta terminada, sin checkpoint)"
-
-    def _on_blocked(self, bev: np.ndarray) -> None:
-        """Ignorar completamente obstáculos al frente."""
-        pass
 
     # --------------------------------------------------------- sin camino
 

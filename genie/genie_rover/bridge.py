@@ -188,6 +188,7 @@ class Bridge:
         self.vlm_recovery_timeout_s = float(safety.get("vlm_recovery_timeout_s", 4.0))
         self.vlm_recovery_min_confidence = float(safety.get("vlm_recovery_min_confidence", 0.35))
         self._consecutive_blocked = 0
+        self.brake_on_obstacle = True
 
         self.stats = LoopStats()
         # Muestras de (rumbo_gps - rumbo_brujula) para diagnosticar si el
@@ -356,7 +357,7 @@ class Bridge:
         # El chequeo de colision usa SIEMPRE la observacion fresca: si algo se
         # cruzo recien, no queremos que el promedio del mapa lo diluya. Esto
         # corre cada frame, sin esperar al disparo espacial de mas abajo.
-        if front_is_blocked(res.traversability, self.resolution):
+        if self.brake_on_obstacle and front_is_blocked(res.traversability, self.resolution):
             self.stats.blocked += 1
             self._consecutive_blocked += 1
             self._on_blocked(res.traversability)
@@ -549,7 +550,7 @@ class Bridge:
             try:
                 rgb, _ = self.client.front_frame()
                 res = self.perception.process(rgb)
-                if front_is_blocked(res.traversability, self.resolution):
+                if self.brake_on_obstacle and front_is_blocked(res.traversability, self.resolution):
                     print("[bridge] obstaculo durante el avance forzado, corto")
                     break
             except Exception:
