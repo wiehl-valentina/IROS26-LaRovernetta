@@ -9,6 +9,14 @@ enviarlos. Para que el robot se mueva de verdad hace falta pasar --go.
     # de verdad
     python -m genie_rover.bridge --config configs/frodobot_rover.yaml --go \
         --start-mission --max-seconds 120 --debug-dir debug/run1
+
+    # con ruta grabada como guia secundaria entre checkpoints oficiales
+    # (genie/rutas/mision2.json, ver genie_rover/route.py). Estos puntos son
+    # solo apoyo de navegacion: nunca se reclaman en el SDK y nunca
+    # condicionan el reached del checkpoint oficial, que sigue siendo lo
+    # unico que hace avanzar la mision.
+    python -m genie_rover.bridge --config configs/frodobot_rover.yaml \
+        --route genie/rutas/mision2.json
 """
 
 from __future__ import annotations
@@ -47,6 +55,13 @@ from .gps_guard import GpsGuard, GpsGuardStatus
 from .odometry import Odometry, OdometryConfig, Pose, estimate_roll_pitch, wrap_rad
 from .perception import PerceptionPipeline
 from .persistent_map import MapConfig, PersistentMap
+from .route import (
+    DASHBOARD_JSON_DEFAULT,
+    DashboardOverlay,
+    RouteConfig,
+    cargar_rutas,
+    gps_valido,
+)
 from .sdk_client import Checkpoint, RoverClient, RoverError
 from .velocity_governor import GovernorConfig, VelocityGovernor
 
@@ -97,7 +112,8 @@ def _safe_reset_recovery_state(b: Any) -> None:
 
 class Bridge:
     def __init__(self, cfg: dict, dry_run: bool = True, debug_dir: str | None = None,
-                 log_tilt: bool = False, route: list[str] | str | None = None):
+                 log_tilt: bool = False, route: list[str] | str | None = None,
+                 dashboard_json: str | None = None):
         self.cfg = cfg
         self.dry_run = bool(dry_run)
         self.debug_dir = Path(debug_dir) if debug_dir else None
@@ -171,26 +187,41 @@ class Bridge:
         self._tilt_ambiguo_px = 0
 
         # ---- ruta grabada como guia secundaria (apoyo sin claim) -------------
-        self.route_follower = None
-        self.dashboard_overlay = None
+        # Los puntos de ruta (genie/rutas/*.json) son SOLO apoyo de navegacion
+        # entre checkpoints oficiales: nunca se reclaman en el SDK y nunca
+        # condicionan el "reached" del oficial. Lo unico que hace avanzar la
+        # mision son los checkpoints oficiales (self._checkpoints /
+        # claim_checkpoint), evaluados siempre en _step contra el checkpoint
+        # real, sin pasar por la ruta. Ver _meta_con_ruta().
+        route_cfg_raw = cfg.get("route", {}) or {}
         route_names = []
         if route:
             route_names = [route] if isinstance(route, str) else list(route)
-        elif "route" in cfg and cfg["route"].get("files"):
-            route_names = cfg["route"]["files"]
+        elif route_cfg_raw.get("files"):
+            route_names = list(route_cfg_raw["files"])
 
-        if route_names:
-            from .route import cargar_rutas, RouteConfig, DashboardOverlay, DASHBOARD_JSON_DEFAULT
-            route_cfg = RouteConfig(**cfg.get("route", {}).get("config", {}))
-            self.route_follower = cargar_rutas(route_names, cfg=route_cfg)
-            if self.route_follower is not None:
-                print(f"[bridge] Guia de ruta activa: {len(self.route_follower.puntos)} waypoints, "
-                      f"{self.route_follower.total_m:.1f} m totales (apoyo sin reached)")
-                dash_path = cfg.get("route", {}).get("dashboard_path", DASHBOARD_JSON_DEFAULT)
-                try:
-                    self.dashboard_overlay = DashboardOverlay(dash_path)
-                except Exception as exc:
-                    print(f"[bridge] aviso: no se pudo iniciar DashboardOverlay: {exc}")
+        route_pt_cfg = RouteConfig(**{k: v for k, v in route_cfg_raw.get("config", {}).items()
+                                      if k in RouteConfig.__dataclass_fields__})
+        self.ruta = cargar_rutas(route_names, route_pt_cfg) if route_names else None
+        # Con el oficial mas cerca que esto, se va directo a el.
+        self.oficial_directo_m = float(route_cfg_raw.get("oficial_directo_m", 15.0))
+        # Mas lejos de la ruta que esto (arranque lejos, rodeo enorme): se
+        # ignora la ruta y se va al oficial. Se retoma sola al volver cerca.
+        self.ruta_abandono_m = float(route_cfg_raw.get("abandono_m", 15.0))
+        self._route_stats = {"metas_ruta": 0, "metas_oficial": 0, "ruta_ignorada": 0}
+        self._en_directo = False
+        if self.ruta is not None:
+            print(f"[ruta] total {self.ruta.total_m:.1f} m, {len(self.ruta.puntos)} puntos "
+                  "(apoyo sin reached), "
+                  f"lookahead {route_pt_cfg.lookahead_m:.1f} m, oficial directo < {self.oficial_directo_m:.1f} m")
+
+        dash = dashboard_json or route_cfg_raw.get("dashboard_path")
+        if dash is None and DASHBOARD_JSON_DEFAULT.parent.is_dir():
+            dash = DASHBOARD_JSON_DEFAULT
+        self.dashboard = (DashboardOverlay(dash, float(route_cfg_raw.get("dashboard_period_s", 1.0)))
+                          if dash else None)
+        self._dash_state = "arrancando"
+        self._dash_target: dict | None = None
 
         # ---- replanificacion por disparo espacial -------------------------
         # plan_on_bev (GeNIE) no corre en cada frame: solo cuando el robot
@@ -495,25 +526,97 @@ class Bridge:
                 return cp
         return None
 
+    def _meta_con_ruta(self, guard_status, heading, target, oficial_goal, goal, goal_desc):
+        """Decide si la meta local sale de la ruta grabada (secundaria, de
+        apoyo) o del checkpoint oficial. Devuelve (goal, goal_desc); sin ruta
+        cargada devuelve los mismos que recibe.
+
+        Se sigue la ruta mientras: no termino, el robot esta a menos de
+        abandono_m de ella y el oficial (si hay) esta a mas de
+        oficial_directo_m. El claim/reached NUNCA depende de esto: lo decide
+        siempre el bloque del checkpoint oficial en _step con la distancia
+        real al checkpoint.
+        """
+        lat, lon = guard_status.effective_lat, guard_status.effective_lon
+        fix_ok = gps_valido(lat, lon)
+
+        if self.ruta is not None and fix_ok:
+            # El progreso solo necesita posicion: se actualiza aunque todavia
+            # no haya rumbo, y tambien mientras se va directo al oficial.
+            self.ruta.update(lat, lon, time.time())
+
+        if target is not None:
+            self._dash_target = {"lat": target.latitude, "lon": target.longitude, "kind": "oficial"}
+            self._dash_state = f"yendo al checkpoint oficial #{target.sequence}"
+        else:
+            self._dash_target = None
+            self._dash_state = "sin checkpoint pendiente"
+
+        if self.ruta is None:
+            pass
+        elif not fix_ok or heading is None:
+            self._dash_state = "esperando " + ("fix GPS" if not fix_ok else "rumbo")
+        elif self.ruta.terminada:
+            self._dash_state += " (ruta terminada)"
+        elif self.ruta.desvio_m > self.ruta_abandono_m:
+            self._route_stats["ruta_ignorada"] += 1
+            self._dash_state += f" (lejos de la ruta: {self.ruta.desvio_m:.0f} m)"
+            goal_desc += f" | ruta ignorada (desvio {self.ruta.desvio_m:.0f} m)"
+        elif oficial_goal is not None and self._directo_al_oficial(oficial_goal.distance_m):
+            goal_desc += " | directo al oficial"
+        else:
+            lat_t, lon_t = self.ruta.objetivo()
+            goal = goal_from_gps(lat, lon, heading, lat_t, lon_t, self.goal_range_m)
+            self._last_goal = goal   # el recovery alinea contra la meta que se sigue
+            self._route_stats["metas_ruta"] += 1
+            self._dash_target = {"lat": lat_t, "lon": lon_t, "kind": "ruta"}
+            self._dash_state = "siguiendo la ruta"
+            extra = f" | cp#{target.sequence} a {oficial_goal.distance_m:.0f} m" if oficial_goal else ""
+            goal_desc = (f"{self.ruta.descripcion()}, rel {goal.relative_bearing_deg:+.0f} "
+                         f"grados{extra}")
+
+        if oficial_goal is not None and self._dash_target and self._dash_target["kind"] == "oficial":
+            self._route_stats["metas_oficial"] += 1
+
+        if self.dashboard is not None:
+            self.dashboard.escribir(self.ruta, lat if fix_ok else None, lon if fix_ok else None,
+                                    self._dash_state, self._dash_target, self._latest_scanned)
+        return goal, goal_desc
+
+    def _directo_al_oficial(self, dist_m: float) -> bool:
+        """Histeresis: se entra a ir directo al oficial a oficial_directo_m y
+        solo se sale al alejarse 3 m mas. Sin esto el ruido GPS alterna entre
+        ruta y oficial en cada fix cuando la distancia ronda el umbral."""
+        salida_m = self.oficial_directo_m + 3.0
+        self._en_directo = dist_m <= (salida_m if self._en_directo else self.oficial_directo_m)
+        return self._en_directo
+
     def run(self, max_seconds: float | None = None) -> None:
         signal.signal(signal.SIGINT, self.request_stop)
         signal.signal(signal.SIGTERM, self.request_stop)
 
         self.refresh_checkpoints()
         target = self.current_target()
-        rf = getattr(self, "route_follower", None)
-        if rf is not None:
-            print(f"[bridge] Guia de ruta activa: {len(rf.puntos)} checkpoints intermedios ({rf.total_m:.1f} m)")
+        if self.ruta is not None:
+            print(f"[bridge] Guia de ruta activa (secundaria, sin reached): {len(self.ruta.puntos)} "
+                  f"puntos ({self.ruta.total_m:.1f} m)")
             if target is not None:
                 print(f"[bridge] Destino final: checkpoint oficial #{target.sequence} ({target.latitude}, {target.longitude})")
             else:
-                print("[bridge] Guiando exclusivamente por ruta (sin checkpoint oficial).")
+                print("[bridge] Guiando por ruta hasta que aparezca un checkpoint oficial.")
         elif target is not None:
             print(f"[bridge] Objetivo: checkpoint #{target.sequence} "
                   f"({target.latitude}, {target.longitude})")
         else:
             print("[bridge] No hay checkpoint pendiente. Voy a navegar solo evitando "
                   "obstaculos, con la meta fija derecho adelante.")
+
+        if self.dashboard is not None:
+            # Publicar la ruta en el mapa YA: si la camara o el GPS tardan,
+            # igual se ven los puntos intermedios.
+            self.dashboard.escribir(self.ruta, None, None, "arrancando", None,
+                                    self._latest_scanned, force=True)
+            print(f"[ruta] overlay del mapa en {self.dashboard.path}")
 
         t_start = time.time()
         try:
@@ -542,10 +645,9 @@ class Bridge:
                     if sleep > 0:
                         time.sleep(sleep)
         finally:
-            dash = getattr(self, "dashboard_overlay", None)
-            if dash is not None:
+            if self.dashboard is not None:
                 try:
-                    dash.apagar()
+                    self.dashboard.apagar()
                 except Exception:
                     pass
             self._close_tilt_log()
@@ -621,12 +723,7 @@ class Bridge:
         target = self.current_target()
         reached = False
         dist_to_cp = 0.0
-
-        rf = getattr(self, "route_follower", None)
-        if rf is not None:
-            rf.update(guard_status.effective_lat, guard_status.effective_lon, now)
-
-        if target is not None:
+        if target is not None and heading is not None:
             # Si cambió el target, restaurar el radio geodésico nominal/base
             if self._last_target_sequence != target.sequence:
                 self._last_target_sequence = target.sequence
@@ -634,77 +731,35 @@ class Bridge:
                 self._dwell_start_time = None
                 self._dwell_target_seq = None
 
-            _, dist_to_cp = check_checkpoint_reached(
+            reached, dist_to_cp = check_checkpoint_reached(
                 guard_status.effective_lat,
                 guard_status.effective_lon,
                 target.latitude,
                 target.longitude,
                 self._current_checkpoint_radius_m,
             )
-
-        # Si hay ruta activa, el objetivo son los checkpoints intermedios de la ruta
-        use_route = (rf is not None and not rf.terminada)
-        if use_route and target is not None:
-            wp_idx = rf.indice_actual()
-            near_end = (wp_idx >= len(rf.puntos) - 1 or dist_to_cp <= self.goal_range_m)
-            reached = (near_end and dist_to_cp <= self._current_checkpoint_radius_m)
-        elif target is not None:
-            reached = (dist_to_cp <= self._current_checkpoint_radius_m)
-
-        if use_route and heading is not None:
-            route_lat, route_lon = rf.objetivo()
-            wp_idx = rf.indice_actual()
-            wp_target = rf.puntos[min(wp_idx, len(rf.puntos) - 1)]
-            _, dist_to_wp = check_checkpoint_reached(
-                guard_status.effective_lat,
-                guard_status.effective_lon,
-                wp_target.lat,
-                wp_target.lon,
-                radius_m=2.5,
-            )
-            if not hasattr(self, "_last_route_wp_idx"):
-                self._last_route_wp_idx = wp_idx
-            elif wp_idx > self._last_route_wp_idx:
-                print(f"[bridge] ✓ Checkpoint de ruta #{self._last_route_wp_idx + 1}/{len(rf.puntos)} superado, avanzando a #{wp_idx + 1}")
-                self._last_route_wp_idx = wp_idx
-
-            goal = goal_from_gps(guard_status.effective_lat, guard_status.effective_lon, heading,
-                                 route_lat, route_lon, self.goal_range_m)
-            self._last_goal = goal
-            cp_suffix = f" -> final cp#{target.sequence}" if target else ""
-            goal_desc = (f"ruta [{getattr(rf, 'nombre', 'guia')}] wp#{wp_idx + 1}/{len(rf.puntos)} a {dist_to_wp:.1f} m "
-                         f"({rf.descripcion()}) rel {goal.relative_bearing_deg:+.0f} grados{cp_suffix}")
-            target_dash = {
-                "sequence": wp_idx + 1,
-                "lat": route_lat,
-                "lon": route_lon,
-                "kind": "ruta",
-            }
-            if not reached or not guard_status.can_claim_checkpoints:
-                self._dwell_start_time = None
-                self._dwell_target_seq = None
-        elif target is not None and heading is not None:
             goal = goal_from_gps(guard_status.effective_lat, guard_status.effective_lon, heading,
                                  target.latitude, target.longitude, self.goal_range_m)
             self._last_goal = goal
-            desc_extra = " [ruta completada]" if (rf and rf.terminada) else ""
-            goal_desc = (f"cp#{target.sequence} a {goal.distance_m:.0f} m{desc_extra}, "
-                         f"rel {goal.relative_bearing_deg:+.0f} grados")
-            target_dash = {
-                "sequence": target.sequence,
-                "lat": target.latitude,
-                "lon": target.longitude,
-                "kind": "oficial",
-            }
             if not reached or not guard_status.can_claim_checkpoints:
                 self._dwell_start_time = None
                 self._dwell_target_seq = None
+
+            goal_desc = (f"cp#{target.sequence} a {goal.distance_m:.0f} m, "
+                         f"rel {goal.relative_bearing_deg:+.0f} grados")
         else:
             self._dwell_start_time = None
             self._dwell_target_seq = None
             goal = type("G", (), {"x_right_m": 0.0, "y_forward_m": self.goal_range_m})()
             goal_desc = "derecho adelante (sin meta GPS)"
-            target_dash = None
+
+        # Ruta grabada como guia secundaria: solo puede reemplazar la meta
+        # LOCAL (hacia donde apuntar ahora). El reclamo de checkpoint de mas
+        # abajo (reached, dist_to_cp) ya quedo fijado arriba contra el
+        # checkpoint oficial, sin pasar por la ruta.
+        oficial_goal = goal if (target is not None and heading is not None) else None
+        goal, goal_desc = self._meta_con_ruta(guard_status, heading, target, oficial_goal,
+                                              goal, goal_desc)
 
         roll = roll_pitch[0] if roll_pitch is not None else None
         pitch = roll_pitch[1] if roll_pitch is not None else None
@@ -780,20 +835,16 @@ class Bridge:
         blocked = self._is_front_blocked(res.traversability)
         self._last_front_blocked = blocked
 
-        dash = getattr(self, "dashboard_overlay", None)
-        if dash is not None:
-            estado = "bloqueado" if blocked else ("dwell" if self._dwell_start_time is not None else "nav")
-            dash_target = target_dash if ("target_dash" in locals() and target_dash is not None) else (
-                {"sequence": target.sequence, "lat": target.latitude, "lon": target.longitude, "kind": "oficial"} if target else None
-            )
+        if self.dashboard is not None:
+            estado = "bloqueado" if blocked else ("dwell" if self._dwell_start_time is not None else self._dash_state)
             try:
-                dash.escribir(
-                    ruta=rf,
-                    lat=guard_status.effective_lat,
-                    lon=guard_status.effective_lon,
-                    estado=estado,
-                    target=dash_target,
-                    checkpoints_done=getattr(self, "_latest_scanned", 0),
+                self.dashboard.escribir(
+                    self.ruta,
+                    guard_status.effective_lat,
+                    guard_status.effective_lon,
+                    estado,
+                    self._dash_target,
+                    self._latest_scanned,
                 )
             except Exception:
                 pass
@@ -2058,12 +2109,13 @@ class Bridge:
             print(f"  recortes de velocidad:  {getattr(s, 'governor_clamps', 0)}")
             print(f"  cortes Stop & Wait:     {getattr(s, 'governor_stops', 0)}")
 
-        rf = getattr(self, "route_follower", None)
-        if rf is not None:
-            print(f"  --- guia de ruta ---")
-            print(f"  {rf.descripcion()}")
-            print(f"  reenganches:            {rf.reenganches}")
-            print(f"  saltos por estancado:   {rf.saltos}")
+        if self.ruta is not None:
+            rs = self._route_stats
+            print(f"  --- ruta (secundaria, checkpoints intermedios) ---")
+            print(f"  {self.ruta.descripcion()}  reenganches={self.ruta.reenganches}  "
+                  f"terminada={self.ruta.terminada}")
+            print(f"  metas: ruta={rs['metas_ruta']}  oficial={rs['metas_oficial']}  "
+                  f"ruta ignorada por desvio={rs['ruta_ignorada']}")
 
         print(f"  errores:                {s.errors}")
         if getattr(self, "log_tilt", False) and getattr(self, "_tilt_csv_path", None):
@@ -2130,7 +2182,13 @@ def main() -> int:
     ap.add_argument("--log-tilt", action="store_true",
                     help="activar logging CSV de inclinacion y comandos a ~5 Hz (DIAG 2)")
     ap.add_argument("--route", "--rutas", nargs="+", default=None,
-                    help="uno o mas archivos de rutas grabadas (en genie/rutas/) como apoyo de navegacion sin reached")
+                    help="uno o mas archivos de rutas grabadas (en genie/rutas/), en orden. "
+                         "Son SOLO apoyo de navegacion entre checkpoints oficiales: nunca se "
+                         "reclaman en el SDK y nunca condicionan el reached del oficial. Sin "
+                         "esto se usa route.files del config")
+    ap.add_argument("--dashboard-json", default=None,
+                    help="donde escribir el overlay de ruta para el mapa del SDK "
+                         "(default: earth-rovers-sdk/static/genie_waypoints.json)")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(Path(args.config).read_text())
@@ -2142,6 +2200,7 @@ def main() -> int:
         debug_dir=args.debug_dir,
         log_tilt=args.log_tilt,
         route=args.route,
+        dashboard_json=args.dashboard_json,
     )
 
     if args.start_mission:

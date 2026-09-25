@@ -173,8 +173,19 @@ def _build_pre_claim_bridge_stub(target_seq: int = 1, pre_claim_dwell_s: float =
     stub._send_path_command = lambda path: True
     stub._maybe_dump_debug = lambda *a, **kw: None
 
+    # Sin ruta grabada ni overlay de dashboard: _meta_con_ruta debe devolver
+    # la meta oficial sin tocarla.
+    stub.ruta = None
+    stub.dashboard = None
+    stub._dash_state = "arrancando"
+    stub._dash_target = None
+    stub._route_stats = {"metas_ruta": 0, "metas_oficial": 0, "ruta_ignorada": 0}
+    stub._en_directo = False
+    stub.oficial_directo_m = 15.0
+    stub.ruta_abandono_m = 15.0
+
     # Vincular métodos reales de Bridge
-    for name in ["_step"]:
+    for name in ["_step", "_meta_con_ruta", "_directo_al_oficial"]:
         setattr(stub, name, types.MethodType(getattr(Bridge, name), stub))
 
     return stub
