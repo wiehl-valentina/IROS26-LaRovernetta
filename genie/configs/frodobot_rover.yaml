@@ -72,9 +72,9 @@ navigation:
   #   +1.0  si angular positivo hace girar a la DERECHA
   angular_sign: -1.0
 
-  max_linear: 0.4       # Origen: marian (era 1.0). Velocidad acotada para mayor control en pendiente.
-  max_angular: 0.4      # Origen: marian (era 0.45). Mayor autoridad angular para vencer roce lateral.
-  turn_speed: 0.4       # Origen: marian (era 0.40). Giro nominal calibrado con par suficiente.
+  max_linear: 0.3       # Origen: marian (era 1.0). Velocidad acotada para mayor control en pendiente.
+  max_angular: 0.3      # Origen: marian (era 0.45). Mayor autoridad angular para vencer roce lateral.
+  turn_speed: 0.3       # Origen: marian (era 0.40). Giro nominal calibrado con par suficiente.
   # Ganancia del giro: angular = kp_angular * radianes(error). Con 0.9 el
   # comando saturaba en max_angular apenas el error pasaba los 29 grados, y
   # como el planner devuelve tipicamente 40-70 grados, giraba SIEMPRE al
@@ -218,7 +218,7 @@ safety:
   # Recalibrado: bajado de 7 a 4 (conservador, recupera el baseline previo). A velocidad actual
   # (~0.45 m/s) y 5 Hz (0.2s/frame), 4 frames confirman en 0.8s recorriendo ~0.36m (contra 1.4s y 0.63m
   # que tardaba con 7), filtrando aún perturbaciones transitorias de cabeceo (1-2 frames) en rampa.
-  obstacle_persist_frames: 4
+  obstacle_persist_frames: 10
 
   # Chequeo frontal calibrado para pendientes (evita falsos obstaculos por deformacion IPM):
   # Origen: marian (calibrado para rampas y pasto sin falsos positivos).
