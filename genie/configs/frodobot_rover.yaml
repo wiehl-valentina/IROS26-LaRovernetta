@@ -50,6 +50,11 @@ camera:
   # Origen: marian (habilita IPM dinámico según inclinación medida).
   tilt_threshold_deg: 0.5
 
+  # Gate de ambigüedad de tilt para filtrar falsos obstáculos en pendiente
+  tilt_ambiguity_enabled: true
+  tilt_ambiguity_min_deg: 1.5   # ASUMIDO: por debajo de esto no se aplica (plano o ruido)
+  tilt_ambiguity_obstacle_thresh: 0.5   # ASUMIDO: score < esto = píxel de obstáculo candidato a descartar
+
 projection:
   ground_z: 0.0
   resolution_m_per_px: 0.03
@@ -67,9 +72,9 @@ navigation:
   #   +1.0  si angular positivo hace girar a la DERECHA
   angular_sign: -1.0
 
-  max_linear: 0.3       # Origen: marian (era 1.0). Velocidad acotada para mayor control en pendiente.
+  max_linear: 0.4       # Origen: marian (era 1.0). Velocidad acotada para mayor control en pendiente.
   max_angular: 0.4      # Origen: marian (era 0.45). Mayor autoridad angular para vencer roce lateral.
-  turn_speed: 0.45       # Origen: marian (era 0.40). Giro nominal calibrado con par suficiente.
+  turn_speed: 0.4       # Origen: marian (era 0.40). Giro nominal calibrado con par suficiente.
   # Ganancia del giro: angular = kp_angular * radianes(error). Con 0.9 el
   # comando saturaba en max_angular apenas el error pasaba los 29 grados, y
   # como el planner devuelve tipicamente 40-70 grados, giraba SIEMPRE al
@@ -77,7 +82,7 @@ navigation:
   # otro lado -> el zigzag que se ve en la traza del mapa. Con 0.45 recien
   # satura a los 57 grados, asi que en el rango normal responde proporcional
   # al error en vez de a todo o nada.
-  kp_angular: 0.45
+  kp_angular: 0.35
   lookahead_m: 1.5
   align_threshold_deg: 90.0
 
@@ -130,7 +135,7 @@ navigation:
   # (front_is_blocked) sigue frenando de inmediato, cada frame, sin esperar
   # a que se cumpla esta distancia.
   # ASUMIDO: replanificar cada 10 cm hacía que el ruido de heading cambie el camino continuamente.
-  replan_every_m: 0.5
+  replan_every_m: 1.0
   replan_min_remaining_m: 0.4
   # Red de seguridad temporal: replanificar igual si pasaron estos segundos
   # desde el ultimo plan, aunque no se haya cumplido el disparo por distancia

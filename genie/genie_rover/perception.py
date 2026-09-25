@@ -254,6 +254,12 @@ class PerceptionPipeline:
         self._cached_roll: float | None = None
         self._cached_pitch: float | None = None
 
+        # Gate de ambigüedad de tilt para descartar falsos obstáculos en pendiente
+        self.tilt_ambiguity_enabled = bool(cam.get("tilt_ambiguity_enabled", True))
+        self.tilt_ambiguity_min_deg = float(cam.get("tilt_ambiguity_min_deg", 1.5))
+        self.tilt_ambiguity_min_rad = math.radians(self.tilt_ambiguity_min_deg)
+        self.tilt_ambiguity_obstacle_thresh = float(cam.get("tilt_ambiguity_obstacle_thresh", 0.5))
+
         self.ground_z = float(proj.get("ground_z", 0.0))
         self.resolution = float(proj["resolution_m_per_px"])
         self.forward_range = float(proj["forward_range_m"])
@@ -344,6 +350,53 @@ class PerceptionPipeline:
             k[0, 0] /= d; k[0, 2] /= d
             k[1, 1] /= d; k[1, 2] /= d
 
+        tilt_ambiguo_px = 0
+        h_cam = abs(float(self.base_camera_pose[2, 3]) - float(self.ground_z))
+        distancia_confiable_m = float(self.max_ray)
+
+        if (self.tilt_ambiguity_enabled
+                and roll_rad is not None
+                and pitch_rad is not None
+                and max(abs(float(roll_rad)), abs(float(pitch_rad))) >= self.tilt_ambiguity_min_rad):
+            r = float(roll_rad)
+            p = float(pitch_rad)
+
+            denom = math.tan(math.atan(h_cam / self.max_ray) + abs(p))
+            if denom > 1e-6:
+                distancia_confiable_m = min(self.max_ray, h_cam / denom)
+
+            # Tres hipotesis: A = pose base, B1 = tilt(+r, +p), B2 = tilt(-r, -p)
+            pose_A = self.base_camera_pose
+            pose_B1 = camera_pose_with_tilt(self.base_camera_pose, r, p)
+            pose_B2 = camera_pose_with_tilt(self.base_camera_pose, -r, -p)
+
+            h_s, w_s = score.shape[:2]
+            fx = float(k[0, 0])
+            fy = float(k[1, 1])
+            cx = float(k[0, 2])
+            cy = float(k[1, 2])
+
+            ys, xs = np.indices((h_s, w_s), dtype=np.float64)
+            dirs_cam = np.stack([(xs - cx) / fx, (ys - cy) / fy, np.ones_like(xs)], axis=-1)
+
+            def _inval_or_far(pose_mat: np.ndarray) -> np.ndarray:
+                dirs_world = dirs_cam @ pose_mat[:3, :3].T
+                dz = dirs_world[..., 2]
+                valid = np.abs(dz) > 1e-8
+                scale = np.zeros_like(dz)
+                scale[valid] = (float(self.ground_z) - float(pose_mat[2, 3])) / dz[valid]
+                valid &= (scale > 0.0)
+                rel_xy = dirs_world[..., :2] * scale[..., None]
+                dist_xy = np.linalg.norm(rel_xy, axis=-1)
+                return (~valid) | (dist_xy > float(self.max_ray))
+
+            ambiguo = _inval_or_far(pose_A) | _inval_or_far(pose_B1) | _inval_or_far(pose_B2)
+            candidatos_anular = ambiguo & (score < self.tilt_ambiguity_obstacle_thresh)
+            tilt_ambiguo_px = int(np.sum(candidatos_anular))
+            if tilt_ambiguo_px > 0:
+                score = score.copy()
+                score[candidatos_anular] = np.nan
+
         bev, observed, stats = project_score_to_bev(
             score_map=score,
             camera_k=k,
@@ -354,6 +407,8 @@ class PerceptionPipeline:
             bev_side_range_m=self.side_range,
             max_ray_distance_m=self.max_ray,
         )
+        stats["tilt_ambiguo_px"] = int(tilt_ambiguo_px)
+        stats["distancia_confiable_m"] = float(distancia_confiable_m)
         if self._cached_roll is not None and self._cached_pitch is not None:
             stats["roll_deg"] = math.degrees(self._cached_roll)
             stats["pitch_deg"] = math.degrees(self._cached_pitch)
