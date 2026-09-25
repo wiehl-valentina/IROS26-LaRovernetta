@@ -552,6 +552,16 @@ class Bridge:
             self._dash_target = None
             self._dash_state = "sin checkpoint pendiente"
 
+        # Check conditions to go directly to official checkpoint
+        ir_directo_al_oficial = False
+        if oficial_goal is not None:
+            # Va al checkpoint oficial si esta a menos de 15m (oficial_directo_m)
+            if self._directo_al_oficial(oficial_goal.distance_m):
+                ir_directo_al_oficial = True
+            # O si el checkpoint oficial esta mas cerca que el proximo waypoint de la ruta
+            elif self.ruta is not None and oficial_goal.distance_m < getattr(self.ruta, 'dist_to_next_wp_m', float('inf')):
+                ir_directo_al_oficial = True
+
         if self.ruta is None:
             pass
         elif not fix_ok or heading is None:
@@ -562,7 +572,7 @@ class Bridge:
             self._route_stats["ruta_ignorada"] += 1
             self._dash_state += f" (lejos de la ruta: {self.ruta.desvio_m:.0f} m)"
             goal_desc += f" | ruta ignorada (desvio {self.ruta.desvio_m:.0f} m)"
-        elif oficial_goal is not None and self._directo_al_oficial(oficial_goal.distance_m):
+        elif ir_directo_al_oficial:
             goal_desc += " | directo al oficial"
         else:
             lat_t, lon_t = self.ruta.objetivo()
@@ -1305,8 +1315,9 @@ class Bridge:
             return False, "sin datos de inclinacion (asumo nivelado)"
         p_deg, r_deg = tilt
         thresh = getattr(self, "recovery_tilt_veto_deg", 8.0)
-        if p_deg >= thresh or r_deg >= thresh:
-            return True, (f"inclinacion excesiva (pitch={p_deg:.1f}°, roll={r_deg:.1f}° >= "
+        max_abs = max(abs(p_deg), abs(r_deg))
+        if max_abs >= thresh:
+            return True, (f"inclinacion excesiva (pitch={p_deg:.1f}°, roll={r_deg:.1f}° | max abs {max_abs:.1f}° >= "
                           f"umbral {thresh:.1f}°)")
         return False, f"inclinacion segura (pitch={p_deg:.1f}°, roll={r_deg:.1f}°)"
 
@@ -1533,9 +1544,9 @@ class Bridge:
                 print(f"[bridge]   inclinacion peligrosa detectada durante retroceso ({razon_tilt}), corto maniobra")
                 break
 
-            self.send(DriveCommand(self.retroceso_linear, 0.0, "retroceso (regimen cercano)"))
             t0 = time.time()
             while time.time() - t0 < step_s and not self._stop_requested:
+                self.send(DriveCommand(self.retroceso_linear, 0.0, "retroceso (regimen cercano)"))
                 time.sleep(0.1)
             self.send(DriveCommand(0.0, 0.0, "pausa de retroceso"))
 
@@ -2012,13 +2023,13 @@ class Bridge:
                 ang = float(np.clip(ang, -1.0, 1.0))
 
             progreso_str = f"girando hacia {heading_rel_deg:+.0f} grados (regimen cercano) [{girado_real_deg:.1f}°/{target_mag_deg:.0f}°]"
-            self.send(DriveCommand(0.0, ang, progreso_str))
             comandos_enviados += 1
             girado_teorico_deg += step_deg
 
             t0 = time.time()
             while time.time() - t0 < paso_s and not self._stop_requested:
-                time.sleep(0.05)
+                self.send(DriveCommand(0.0, ang, progreso_str))
+                time.sleep(0.1)
 
             t_telem = self.client.telemetry()
             pose = self.odometry.update(

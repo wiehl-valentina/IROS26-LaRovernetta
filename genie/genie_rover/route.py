@@ -97,6 +97,7 @@ class RouteConfig:
     estancado_s: float = 25.0           # sin progreso este tiempo -> saltar adelante
     salto_estancado_m: float = 2.0      # cuanto saltar
     min_sep_m: float = 0.3              # puntos mas juntos que esto se descartan
+    wp_reached_m: float = 1.0           # a esta distancia de un waypoint, se descarta y pasamos al siguiente
 
 
 class RouteFollower:
@@ -129,6 +130,9 @@ class RouteFollower:
         self._ult_avance_t: float | None = None
         self._ult_t: float | None = None
         self._buf: list[tuple[float, np.ndarray]] = []
+        
+        self._current_wp_index: int | None = None
+        self.dist_to_next_wp_m: float = float("inf")
 
     # ------------------------------------------------------------ geometria
 
@@ -184,8 +188,11 @@ class RouteFollower:
         dt = 0.2 if self._ult_t is None else max(0.0, t - self._ult_t)
         self._ult_t = t
 
+        if self._current_wp_index is None:
+            # Primer fix: forzamos arrancar siempre desde el primer waypoint (índice 0)
+            self._current_wp_index = 0
+
         if self.progreso_m is None:
-            # Primer fix: el robot puede arrancar a mitad de ruta.
             d, s_q = self._proyectar(p, 0.0, self.total_m)
             self.progreso_m = s_q
         else:
@@ -195,8 +202,6 @@ class RouteFollower:
                 self.progreso_m = min(s_q, self.progreso_m + c.vel_max_mps * dt + c.margen_avance_m)
 
         if d > c.fuera_de_ruta_m:
-            # Muy afuera (rodeo largo o GPS malo): buscar el punto mas cercano
-            # de TODO lo que queda por delante y engancharse ahi.
             d2, s2 = self._proyectar(p, self.progreso_m, self.total_m)
             if d2 < d:
                 d = d2
@@ -205,37 +210,31 @@ class RouteFollower:
                     self.reenganches += 1
         self.desvio_m = d
 
-        if self._ult_avance_t is None or self.progreso_m > self._ult_progreso + 0.5:
-            self._ult_progreso = self.progreso_m
-            self._ult_avance_t = t
-        elif t - self._ult_avance_t > c.estancado_s and not self.terminada:
-            # Algo tapa la ruta y no se puede pasar por ahi: tomar la
-            # siguiente miga de pan como meta.
-            self.progreso_m = min(self.total_m, self.progreso_m + c.salto_estancado_m)
-            self.saltos += 1
-            self._ult_progreso = self.progreso_m
-            self._ult_avance_t = t
+        # Manejo de descarte de waypoints si llegamos a ellos
+        if self._current_wp_index < len(self.puntos):
+            target_wp = self.xy[self._current_wp_index]
+            self.dist_to_next_wp_m = float(np.linalg.norm(p - target_wp))
+            if self.dist_to_next_wp_m <= c.wp_reached_m:
+                self._current_wp_index += 1
+                self.saltos += 1  # Reusamos para contar descartes
 
     @property
     def terminada(self) -> bool:
-        return self.progreso_m is not None and self.progreso_m >= self.total_m - self.cfg.fin_m
+        return self._current_wp_index is not None and self._current_wp_index >= len(self.puntos)
 
     def indice_actual(self) -> int:
-        """Indice (en self.puntos) del primer punto que todavia esta adelante."""
-        if self.progreso_m is None:
-            return 0
-        return int(min(len(self.s), np.searchsorted(self.s, self.progreso_m + 1e-6, side="right")))
+        return self._current_wp_index if self._current_wp_index is not None else 0
 
     def objetivo(self) -> tuple[float, float]:
-        """(lat, lon) del punto lookahead_m adelante del progreso."""
-        s = (self.progreso_m or 0.0) + self.cfg.lookahead_m
-        n, e = self.punto_en(s)
-        return self.to_latlon(float(n), float(e))
+        """(lat, lon) del siguiente waypoint activo, en orden."""
+        idx = min(self.indice_actual(), len(self.puntos) - 1)
+        p = self.puntos[idx]
+        return p.lat, p.lon
 
     def descripcion(self) -> str:
-        prog = self.progreso_m or 0.0
-        return (f"ruta {prog:.1f}/{self.total_m:.1f} m desvio {self.desvio_m:.1f} m"
-                + (f" saltos={self.saltos}" if self.saltos else ""))
+        idx = self.indice_actual()
+        total = len(self.puntos)
+        return (f"ruta wp {idx}/{total} desvio {self.desvio_m:.1f} m (wp_dist {self.dist_to_next_wp_m:.1f} m)")
 
 
 def cargar_rutas(nombres: list[str], cfg: RouteConfig | None = None) -> RouteFollower | None:

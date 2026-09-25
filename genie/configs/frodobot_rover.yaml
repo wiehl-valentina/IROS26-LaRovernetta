@@ -72,9 +72,9 @@ navigation:
   #   +1.0  si angular positivo hace girar a la DERECHA
   angular_sign: -1.0
 
-  max_linear: 0.3       # Origen: marian (era 1.0). Velocidad acotada para mayor control en pendiente.
-  max_angular: 0.3      # Origen: marian (era 0.45). Mayor autoridad angular para vencer roce lateral.
-  turn_speed: 0.3       # Origen: marian (era 0.40). Giro nominal calibrado con par suficiente.
+  max_linear: 0.4       # Origen: marian (era 1.0). Velocidad acotada para mayor control en pendiente.
+  max_angular: 0.5      # Origen: marian (era 0.45). Mayor autoridad angular para vencer roce lateral.
+  turn_speed: 0.5       # Origen: marian (era 0.40). Giro nominal calibrado con par suficiente.
   # Ganancia del giro: angular = kp_angular * radianes(error). Con 0.9 el
   # comando saturaba en max_angular apenas el error pasaba los 29 grados, y
   # como el planner devuelve tipicamente 40-70 grados, giraba SIEMPRE al
@@ -82,7 +82,7 @@ navigation:
   # otro lado -> el zigzag que se ve en la traza del mapa. Con 0.45 recien
   # satura a los 57 grados, asi que en el rango normal responde proporcional
   # al error en vez de a todo o nada.
-  kp_angular: 0.35
+  kp_angular: 0.45
   lookahead_m: 1.5
   align_threshold_deg: 90.0
 
@@ -135,7 +135,7 @@ navigation:
   # (front_is_blocked) sigue frenando de inmediato, cada frame, sin esperar
   # a que se cumpla esta distancia.
   # ASUMIDO: replanificar cada 10 cm hacía que el ruido de heading cambie el camino continuamente.
-  replan_every_m: 1.0
+  replan_every_m: 0.45
   replan_min_remaining_m: 0.4
   # Red de seguridad temporal: replanificar igual si pasaron estos segundos
   # desde el ultimo plan, aunque no se haya cumplido el disparo por distancia
@@ -200,7 +200,7 @@ safety:
   max_consecutive_turns: 4
   unstick_forward_s: 2.5
   unstick_min_clearance_m: 0.9  # ASUMIDO: clearance frontal mínimo requerido para avance forzado en _unstick
-  use_vlm_recovery: true
+  use_vlm_recovery: false
   vlm_recovery_timeout_s: 4.0
   vlm_recovery_min_confidence: 0.35
 
@@ -373,7 +373,7 @@ odometry:
 
 memory:
   enabled: true
-  map_size_m: 8.0
+  map_size_m: 12.0
   update_weight: 0.45
   decay_per_s: 0.08
   recenter_margin_m: 1.5

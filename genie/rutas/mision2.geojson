@@ -2112,20 +2112,6 @@
       "type": "Feature",
       "properties": {
         "sequence": 1,
-        "motivo": "inicio"
-      },
-      "geometry": {
-        "type": "Point",
-        "coordinates": [
-          -84.10586547851562,
-          9.79152584075928
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "sequence": 2,
         "motivo": "manual"
       },
       "geometry": {
@@ -2133,6 +2119,20 @@
         "coordinates": [
           -84.1059112548828,
           9.791563987731934
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "sequence": 2,
+        "motivo": "interpolado"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -84.10593032836914,
+          9.791555881500244
         ]
       }
     },
@@ -2154,13 +2154,13 @@
       "type": "Feature",
       "properties": {
         "sequence": 4,
-        "motivo": "manual"
+        "motivo": "interpolado"
       },
       "geometry": {
         "type": "Point",
         "coordinates": [
-          -84.10594940185547,
-          9.791547775268555
+          -84.10593032836914,
+          9.791560173034668
         ]
       }
     },
@@ -2182,13 +2182,13 @@
       "type": "Feature",
       "properties": {
         "sequence": 6,
-        "motivo": "manual"
+        "motivo": "interpolado"
       },
       "geometry": {
         "type": "Point",
         "coordinates": [
-          -84.1059112548828,
-          9.79157257080078
+          -84.10592651367188,
+          9.791604042053223
         ]
       }
     },
@@ -2210,6 +2210,34 @@
       "type": "Feature",
       "properties": {
         "sequence": 8,
+        "motivo": "interpolado"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -84.10594431559245,
+          9.791670163472492
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "sequence": 9,
+        "motivo": "interpolado"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -84.10594685872395,
+          9.791704813639322
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "sequence": 10,
         "motivo": "manual"
       },
       "geometry": {
@@ -2223,7 +2251,35 @@
     {
       "type": "Feature",
       "properties": {
-        "sequence": 9,
+        "sequence": 11,
+        "motivo": "interpolado"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -84.10594177246094,
+          9.791709899902342
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "sequence": 12,
+        "motivo": "interpolado"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -84.1059341430664,
+          9.791680335998535
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "sequence": 13,
         "motivo": "manual"
       },
       "geometry": {
@@ -2237,7 +2293,35 @@
     {
       "type": "Feature",
       "properties": {
-        "sequence": 10,
+        "sequence": 14,
+        "motivo": "interpolado"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -84.10592142740884,
+          9.791619300842285
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "sequence": 15,
+        "motivo": "interpolado"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -84.10591634114583,
+          9.791587829589842
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "sequence": 16,
         "motivo": "manual"
       },
       "geometry": {
@@ -2251,7 +2335,21 @@
     {
       "type": "Feature",
       "properties": {
-        "sequence": 11,
+        "sequence": 17,
+        "motivo": "interpolado"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -84.1059341430664,
+          9.791543960571289
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "sequence": 18,
         "motivo": "manual"
       },
       "geometry": {
@@ -2265,7 +2363,7 @@
     {
       "type": "Feature",
       "properties": {
-        "sequence": 12,
+        "sequence": 19,
         "motivo": "manual"
       },
       "geometry": {
