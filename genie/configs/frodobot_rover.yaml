@@ -115,6 +115,7 @@ navigation:
   use_ekf_udp: true
   ekf_staleness_s: 1.5
   ekf_weight: 1.0       # 1.0 = 100% EKF; < 1.0 = fusion circular ponderada con brujula
+  ekf_smooth_tau_s: 0.6 # ASUMIDO: constante de tiempo [s] para filtro exponencial circular de heading EKF
   commit_hold_s: 2.0
   commit_min_deg: 8.0
   commit_override_deg: 30.0
@@ -128,10 +129,8 @@ navigation:
   # moviendo en vez de quedarse "pensando" cada frame. Un obstaculo al frente
   # (front_is_blocked) sigue frenando de inmediato, cada frame, sin esperar
   # a que se cumpla esta distancia.
-  # Origen: marian (era 1.0). Disparo espacial a 0.1 m necesario en pendientes para
-  # corregir la trayectoria ante deformaciones de terreno. El compromiso anti-titubeo
-  # permanece protegido temporalmente por commit_hold_s (2.0 s).
-  replan_every_m: 0.1
+  # ASUMIDO: replanificar cada 10 cm hacía que el ruido de heading cambie el camino continuamente.
+  replan_every_m: 0.5
   replan_min_remaining_m: 0.4
   # Red de seguridad temporal: replanificar igual si pasaron estos segundos
   # desde el ultimo plan, aunque no se haya cumplido el disparo por distancia
@@ -143,8 +142,8 @@ navigation:
   # elegido, un error de rumbo mayor a align_threshold_deg hace CURVAR a esta
   # velocidad en vez de pivotear en el lugar (linear=0, que es avance neto
   # cero).
-  # Origen: marian (era 0.08). Subido a 0.45 para superar pendientes sin perder torque.
-  min_linear_while_planned: 0.45
+  # ASUMIDO: 0.45 > max_linear (0.3) hacía curvar a acelerador máximo con giro bang-bang -> sobrepaso y oscilación en pasillos. KK usa 0.08. Si el rover se frena en pendientes al curvar, revisar aparte (no subir este valor sin reportar).
+  min_linear_while_planned: 0.10
 planner:
   grid_size: 240
   # Costo de una celda nunca observada. Una celda OBSERVADA cuesta
@@ -349,6 +348,7 @@ odometry:
   ekf_heading_correction: true
   ekf_heading_max_age_s: 1.5
   heading_blend: 0.3
+  heading_blend_tau_s: 4.0   # ASUMIDO: constante de tiempo [s] para correccion temporal de deriva EKF (no por frame)
 
   # Estimacion de roll/pitch por acelerometro y proyeccion horizontal de guiñada:
   # En reposo nivelado |a| = 1.0403g (std=0.0038g), por lo que gate_norm_tol=0.08 y std=0.06 abren limpiamente.

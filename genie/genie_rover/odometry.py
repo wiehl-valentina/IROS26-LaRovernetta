@@ -32,7 +32,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .navigation import latlon_to_local_ne, wrap_deg, gps_quality
+try:
+    from .navigation import latlon_to_local_ne, wrap_deg, gps_quality
+except ImportError:
+    from navigation import latlon_to_local_ne, wrap_deg, gps_quality
 
 RPM_A_RAD_S = 2.0 * math.pi / 60.0
 
@@ -90,6 +93,7 @@ class OdometryConfig:
     ekf_heading_correction: bool = True
     ekf_heading_max_age_s: float = 1.5   # mismo criterio que ekf_staleness_s de navigation.py
     heading_blend: float = 0.3           # cuanto se acerca al EKF por ciclo; no saltar de golpe
+    heading_blend_tau_s: float = 4.0     # ASUMIDO: constante de tiempo [s] para correccion temporal de deriva EKF
     # Gating del acelerometro para estimacion de roll/pitch (doble condicion respecto a 1g)
     accel_gate_norm_tol: float = 0.08
     accel_gate_std_tol: float = 0.06
@@ -215,7 +219,10 @@ class Odometry:
         self.last_accel_norm: float | None = None
         self.tilt_gate_open: bool = False
         self.last_tilt_time: float | None = None
+        self.last_blend_nominal: float = cfg.heading_blend
+        self.last_tilt_factor: float = 1.0
         self.last_blend_effective: float = cfg.heading_blend
+        self._last_heading_correction_t: float | None = None
         self._pose_history: deque[tuple[float, Pose]] = deque(maxlen=500)
 
 
@@ -521,11 +528,28 @@ class Odometry:
 
         if self._origin_heading is None:
             self._origin_heading = (float(ekf_heading_deg) + math.degrees(self.pose.theta)) % 360.0
+            self._last_heading_correction_t = t_now
             return
-
 
         ekf_theta = math.radians(wrap_deg(self._origin_heading - float(ekf_heading_deg)))
         error = wrap_rad(ekf_theta - self.pose.theta)
+
+        # dt desde la última corrección aplicada
+        if self._last_heading_correction_t is None:
+            dt = 0.1
+        else:
+            dt = t_now - self._last_heading_correction_t
+            if dt > 2.0 or dt <= 0.0:
+                dt = 0.1
+
+        self._last_heading_correction_t = t_now
+
+        if self.cfg.heading_blend_tau_s <= 0.0:
+            blend_nominal = self.cfg.heading_blend
+        else:
+            blend_nominal = 1.0 - math.exp(-dt / self.cfg.heading_blend_tau_s)
+
+        self.last_blend_nominal = blend_nominal
 
         # Degradacion de confianza segun inclinacion estimada
         factor = tilt_confidence_factor(
@@ -534,7 +558,8 @@ class Odometry:
             tilt_start_deg=self.cfg.tilt_blend_start_deg,
             tilt_max_deg=self.cfg.tilt_blend_max_deg,
         )
-        blend_efectivo = self.cfg.heading_blend * factor
+        self.last_tilt_factor = factor
+        blend_efectivo = blend_nominal * factor
         self.last_blend_effective = blend_efectivo
 
         if blend_efectivo > 0.0:
@@ -561,7 +586,10 @@ class Odometry:
         self.last_accel_norm = None
         self.tilt_gate_open = False
         self.last_tilt_time = None
+        self.last_blend_nominal = self.cfg.heading_blend
+        self.last_tilt_factor = 1.0
         self.last_blend_effective = self.cfg.heading_blend
+        self._last_heading_correction_t = None
         self._pose_history.clear()
 
     def pose_at(self, timestamp: float) -> Pose:
@@ -791,8 +819,8 @@ def _self_test() -> None:
     assert abs(deriva_con_fix_deg) < 1e-6, f"con debiasing deberia ser exactamente 0, dio {deriva_con_fix_deg}"
 
     print("\n=== criterio 2: correccion gradual hacia heading EKF (sin saltos discontinuos) ===")
-    # Config con EKF correction habilitada, blend=0.3
-    cfg_ekf = OdometryConfig(gyro_yaw_bias_dps=0.0, ekf_heading_correction=True, heading_blend=0.3)
+    # Config con EKF correction habilitada, blend temporal con tau=4.0s (ASUMIDO)
+    cfg_ekf = OdometryConfig(gyro_yaw_bias_dps=0.0, ekf_heading_correction=True, heading_blend_tau_s=4.0)
     odo_ekf = Odometry(cfg_ekf)
     t = 100.0
     # Inicializacion: primera lectura a 345° con pose.theta = 0
@@ -804,19 +832,19 @@ def _self_test() -> None:
     odo_ekf.pose.theta = math.radians(15.0)
     theta_inicial = odo_ekf.pose.theta
 
-    # Primer ciclo de correccion: el heading EKF sigue reportando 345° (rumbo sin giro)
+    # Primer ciclo de correccion: dt = 0.1s, tau = 4.0s -> blend = 1 - exp(-0.1/4) = 0.02469 -> salto ~0.37° (~2.5%)
     t += 0.1
     odo_ekf.update(lote(t, rpm=(0, 0, 0, 0), gyro_dps=0.0), ekf_heading=345.0, ekf_timestamp=t, now=t)
     salto_1 = math.degrees(theta_inicial - odo_ekf.pose.theta)
-    print(f"  Ciclo 1: theta pasa de 15.00 a {math.degrees(odo_ekf.pose.theta):.2f} gr (reduccion de {salto_1:.2f} gr, ~30%)")
-    assert 4.0 < salto_1 < 5.0, f"esperaba reduccion suave de ~4.5 gr (30% de 15), dio {salto_1}"
+    print(f"  Ciclo 1: theta pasa de 15.00 a {math.degrees(odo_ekf.pose.theta):.2f} gr (reduccion de {salto_1:.2f} gr, ~2.5% con tau=4.0s)")
+    assert 0.30 < salto_1 < 0.45, f"esperaba reduccion suave de ~0.37 gr (2.5% de 15), dio {salto_1}"
 
-    # Corremos 15 ciclos mas: debe converger suavemente
-    for _ in range(15):
+    # Corremos 20 s (200 ciclos de 0.1s): debe converger suavemente hacia 0
+    for _ in range(200):
         t += 0.1
         odo_ekf.update(lote(t, rpm=(0, 0, 0, 0), gyro_dps=0.0), ekf_heading=345.0, ekf_timestamp=t, now=t)
     theta_final_deg = math.degrees(odo_ekf.pose.theta)
-    print(f"  Tras 16 ciclos: theta = {theta_final_deg:.4f} gr (convergencia completa hacia 0)")
+    print(f"  Tras 20 s de correccion: theta = {theta_final_deg:.4f} gr (convergencia completa hacia 0)")
     assert abs(theta_final_deg) < 0.1, f"deberia haber convergido a < 0.1 gr, dio {theta_final_deg}"
 
     # Verificamos tambien el caso stale (> ekf_heading_max_age_s): NO debe corregir
@@ -826,6 +854,15 @@ def _self_test() -> None:
     odo_ekf.update(lote(t, rpm=(0, 0, 0, 0), gyro_dps=0.0), ekf_heading=345.0, ekf_timestamp=t_stale, now=t)
     print(f"  Con dato EKF stale (age=5.1s): theta={math.degrees(odo_ekf.pose.theta):.2f} gr (sin cambios)")
     assert abs(math.degrees(odo_ekf.pose.theta) - 10.0) < 1e-6, "no debe corregir si el dato esta stale"
+
+    # Verificamos compatibilidad retrospectiva con tau <= 0 (modo legacy con blend=0.3)
+    cfg_legacy = OdometryConfig(gyro_yaw_bias_dps=0.0, ekf_heading_correction=True, heading_blend=0.3, heading_blend_tau_s=0.0)
+    odo_legacy = Odometry(cfg_legacy)
+    odo_legacy.update(lote(100.0, rpm=(0, 0, 0, 0), gyro_dps=0.0), ekf_heading=345.0, ekf_timestamp=100.0, now=100.0)
+    odo_legacy.pose.theta = math.radians(15.0)
+    odo_legacy.update(lote(100.1, rpm=(0, 0, 0, 0), gyro_dps=0.0), ekf_heading=345.0, ekf_timestamp=100.1, now=100.1)
+    salto_legacy = math.degrees(math.radians(15.0) - odo_legacy.pose.theta)
+    assert 4.0 < salto_legacy < 5.0, f"esperaba salto legacy ~4.5 gr, dio {salto_legacy}"
 
     print("\n=== criterio 3: simulacion del escenario real del log (130 iteraciones en reposo) ===")
     np.random.seed(42)
@@ -907,6 +944,7 @@ def _self_test() -> None:
     cfg_blend = OdometryConfig(
         gyro_yaw_bias_dps=0.0,
         heading_blend=0.30,
+        heading_blend_tau_s=4.0,
         tilt_blend_start_deg=5.0,
         tilt_blend_max_deg=20.0,
     )
@@ -923,12 +961,12 @@ def _self_test() -> None:
     t += 0.1
     odo_blend.update(lote_p15, ekf_heading=345.0, ekf_timestamp=t, now=t)
 
-    blend_nom = cfg_blend.heading_blend
+    blend_nom = odo_blend.last_blend_nominal
     blend_efec = odo_blend.last_blend_effective
-    print(f"  blend nominal:   {blend_nom:.3f}")
+    print(f"  blend nominal:   {blend_nom:.4f}")
     print(f"  blend efectivo:  {blend_efec:.4f} (factor = {blend_efec / blend_nom:.2f})")
     assert blend_efec < blend_nom, f"blend efectivo ({blend_efec}) deberia ser menor que el nominal ({blend_nom})"
-    assert abs(blend_efec - 0.075) < 0.005, f"esperaba blend_efectivo ~0.075, dio {blend_efec}"
+    assert abs(blend_efec / blend_nom - 0.25) < 1e-4, f"esperaba degradacion al 25% (factor 0.25), dio {blend_efec / blend_nom}"
 
     print("\n=== proyeccion horizontal de giro 3D en rampa de 15° ===")
     cfg_proj = OdometryConfig(gyro_yaw_bias_dps=0.0, use_tilt_projection=True)

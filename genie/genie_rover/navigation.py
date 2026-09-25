@@ -137,7 +137,8 @@ class HeadingEstimator:
                  hdop_reject: float = 0.080,
                  use_ekf_udp: bool = True,
                  ekf_staleness_s: float = 1.5,
-                 ekf_weight: float = 1.0):
+                 ekf_weight: float = 1.0,
+                 ekf_smooth_tau_s: float = 0.6):
         self.min_disp = float(min_displacement_m)
         self.buf: deque[tuple[float, float, float, float]] = deque(maxlen=int(history))
         self.offset = float(orientation_offset_deg)
@@ -150,6 +151,8 @@ class HeadingEstimator:
         self.use_ekf_udp = bool(use_ekf_udp)
         self.ekf_staleness_s = float(ekf_staleness_s)
         self.ekf_weight = float(ekf_weight)
+        self.ekf_smooth_tau_s = float(ekf_smooth_tau_s)  # ASUMIDO: constante de tiempo [s] para filtro circular
+        self._last_ekf_filter_t: float | None = None
 
         self._heading: float | None = None
         self._uncertainty: float | None = None
@@ -222,9 +225,24 @@ class HeadingEstimator:
                 self._gyro_heading = (self._heading + gyro_dps * dt) % 360.0
                 self._gyro_sigma = math.sqrt((self._uncertainty or self.compass_sigma)**2 + (self.gyro_drift_rate**2) * dt)
 
-        # 5. Modo EKF puro si está disponible y fresco
+        # 5. Modo EKF puro si está disponible y fresco (con filtro exponencial circular por tiempo)
         if ekf_valid and self.last_ekf_heading is not None and self.ekf_weight >= 1.0:
-            self._heading = wrap_deg(self.last_ekf_heading) % 360.0
+            raw_heading = wrap_deg(self.last_ekf_heading) % 360.0
+            if self.ekf_smooth_tau_s <= 0.0:
+                filtered_heading = raw_heading
+            elif self._last_ekf_filter_t is None or self._heading is None:
+                filtered_heading = raw_heading
+            else:
+                dt_ekf = t - self._last_ekf_filter_t
+                if dt_ekf > 2.0 or dt_ekf <= 0.0:
+                    filtered_heading = raw_heading
+                else:
+                    alpha = 1.0 - math.exp(-dt_ekf / self.ekf_smooth_tau_s)
+                    delta = wrap_deg(raw_heading - self._heading)
+                    filtered_heading = (self._heading + alpha * delta) % 360.0
+
+            self._last_ekf_filter_t = t
+            self._heading = filtered_heading
             self._uncertainty = 2.0
             self._source = "ekf_udp"
             self._gyro_heading = self._heading
@@ -325,6 +343,7 @@ class HeadingEstimator:
     def reset_track(self) -> None:
         """Llamar despues de girar en el lugar: el track viejo ya no aplica."""
         self.buf.clear()
+        self._last_ekf_filter_t = None
         if self._heading is not None:
             self._gyro_heading = self._heading
             self._gyro_sigma = self._uncertainty or self.compass_sigma

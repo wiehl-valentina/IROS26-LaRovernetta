@@ -114,6 +114,7 @@ class Bridge:
             use_ekf_udp=nav.get("use_ekf_udp", True),
             ekf_staleness_s=nav.get("ekf_staleness_s", 1.5),
             ekf_weight=nav.get("ekf_weight", 1.0),
+            ekf_smooth_tau_s=float(nav.get("ekf_smooth_tau_s", 0.6)),  # ASUMIDO
         )
         self.follower = PathFollower(
             lookahead_m=nav.get("lookahead_m", 1.0),
@@ -187,6 +188,7 @@ class Bridge:
                 ekf_heading_correction=bool(odo_cfg.get("ekf_heading_correction", True)),
                 ekf_heading_max_age_s=float(odo_cfg.get("ekf_heading_max_age_s", 1.5)),
                 heading_blend=float(odo_cfg.get("heading_blend", 0.3)),
+                heading_blend_tau_s=float(odo_cfg.get("heading_blend_tau_s", 4.0)),  # ASUMIDO
                 accel_gate_norm_tol=float(odo_cfg.get("accel_gate_norm_tol", 0.08)),
                 accel_gate_std_tol=float(odo_cfg.get("accel_gate_std_tol", 0.06)),
                 gyro_bias_x_dps=float(odo_cfg.get("gyro_bias_x_dps", 0.0831)),
@@ -580,7 +582,7 @@ class Bridge:
             if not self.odometry.tilt_gate_open:
                 norm_str = f"{self.odometry.last_accel_norm:.2f}g" if self.odometry.last_accel_norm is not None else "?g"
                 nota_tilt = f"  tilt=GATE_CLOSED(|a|={norm_str})"
-            elif abs(p_deg) >= 3.0 or abs(r_deg) >= 3.0 or self.odometry.last_blend_effective < (self.odometry.cfg.heading_blend - 1e-4):
+            elif abs(p_deg) >= 3.0 or abs(r_deg) >= 3.0 or self.odometry.last_blend_effective < (self.odometry.last_blend_nominal - 1e-4):
                 nota_tilt = f"  tilt={p_deg:+.1f}°p/{r_deg:+.1f}°r(blend={self.odometry.last_blend_effective:.2f})"
 
         nota_bev_tilt = ""
