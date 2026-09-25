@@ -338,6 +338,7 @@ class Bridge:
         self._turn_sign_history: list[float] = []
         self.max_consecutive_turns = int(safety.get("max_consecutive_turns", 6))
         self.unstick_forward_s = float(safety.get("unstick_forward_s", 1.2))
+        self.unstick_min_clearance_m = float(safety.get("unstick_min_clearance_m", 0.9))  # ASUMIDO: clearance frontal mínimo requerido para avance forzado en _unstick
 
         # Histeresis de lado de esquive. Aunque ahora se replanifica por
         # disparo espacial (no cada frame), cada replanificacion sigue
@@ -357,12 +358,12 @@ class Bridge:
     def _is_front_blocked(self, bev: np.ndarray) -> bool:
         return front_is_blocked(
             bev,
-            self.resolution,
-            near_m=self.front_near_m,
-            far_m=self.front_far_m,
-            half_width_m=self.front_half_width_m,
-            traversable_thresh=self.front_traversable_thresh,
-            min_free_ratio=self.front_min_free_ratio,
+            getattr(self, "resolution", 0.03),
+            near_m=getattr(self, "front_near_m", 0.40),
+            far_m=getattr(self, "front_far_m", 1.25),
+            half_width_m=getattr(self, "front_half_width_m", 0.22),
+            traversable_thresh=getattr(self, "front_traversable_thresh", 0.26),
+            min_free_ratio=getattr(self, "front_min_free_ratio", 0.35),
         )
 
     def request_stop(self, *_a) -> None:
@@ -830,15 +831,54 @@ class Bridge:
         return True
 
     def _unstick(self) -> None:
-        """Rompe el ciclo de giros sin avance.
+        """Rompe el ciclo de giros sin avance o avanza en salida frontal despejada.
 
-        Avanza en linea recta un momento, ignorando el planner. Es seguro
-        porque front_is_blocked ya se evaluo en esta misma iteracion y dio
-        libre: si hubiera algo delante, no habriamos llegado hasta aca.
+        Verifica antes de avanzar y durante el avance que exista clearance frontal
+        suficiente en observaciones frescas para evitar colisiones con obstáculos cercanos.
         """
         self.stats.unstucks += 1
         giros = getattr(self, "_consecutive_turns", 0)
         unstick_s = float(getattr(self, "unstick_forward_s", 1.2))
+        min_clearance = float(getattr(self, "unstick_min_clearance_m", 0.9))
+
+        # 1. Chequeo preventivo de clearance antes del avance forzado
+        try:
+            pose_now = None
+            if self.odometry is not None:
+                t_telem = self.client.telemetry()
+                pose_now = self.odometry.update(
+                    t_telem.raw,
+                    ekf_heading=getattr(t_telem, "ekf_heading", None),
+                    ekf_timestamp=getattr(t_telem, "ekf_heading_time", None),
+                )
+            rgb, _ = self.client.front_frame()
+            roll_pitch = self.odometry.current_roll_pitch() if (self.odometry is not None and hasattr(self.odometry, "current_roll_pitch")) else None
+            r = roll_pitch[0] if roll_pitch is not None else None
+            p = roll_pitch[1] if roll_pitch is not None else None
+            res = self.perception.process(rgb, roll_rad=r, pitch_rad=p)
+            if getattr(self, "use_map", True) and self.pmap is not None and pose_now is not None and hasattr(res, "observed"):
+                self.pmap.integrate(res.traversability, res.observed, pose_now,
+                                    self.forward_range, self.side_range, t=time.time())
+
+            init_clearance = front_clearance_m(
+                res.traversability,
+                getattr(self, "resolution", 0.03),
+                near_m=getattr(self, "front_near_m", 0.40),
+                max_check_m=1.2,
+                half_width_m=getattr(self, "front_half_width_m", 0.22),
+                traversable_thresh=getattr(self, "front_traversable_thresh", 0.26),
+                min_free_ratio=getattr(self, "front_min_free_ratio", 0.35),
+            )
+            blocked = self._is_front_blocked(res.traversability)
+            if blocked or init_clearance < min_clearance:
+                print(f"[bridge] avance forzado CANCELADO: clearance={init_clearance:.2f} m")
+                _safe_reset_recovery_state(self)
+                return
+        except Exception as e:
+            print(f"[bridge] avance forzado CANCELADO: error al verificar clearance ({e})")
+            _safe_reset_recovery_state(self)
+            return
+
         if giros > 0:
             sentido = sum(self._turn_sign_history)
             print(f"[bridge] ATASCADO: {giros} giros seguidos sin avanzar "
@@ -866,11 +906,21 @@ class Bridge:
                 r = roll_pitch[0] if roll_pitch is not None else None
                 p = roll_pitch[1] if roll_pitch is not None else None
                 res = self.perception.process(rgb, roll_rad=r, pitch_rad=p)
-                if self.use_map and self.pmap is not None and pose_now is not None:
+                if getattr(self, "use_map", True) and self.pmap is not None and pose_now is not None and hasattr(res, "observed"):
                     self.pmap.integrate(res.traversability, res.observed, pose_now,
                                         self.forward_range, self.side_range, t=time.time())
-                if self._is_front_blocked(res.traversability):
-                    print("[bridge] obstaculo durante el avance forzado, corto")
+
+                loop_clearance = front_clearance_m(
+                    res.traversability,
+                    getattr(self, "resolution", 0.03),
+                    near_m=getattr(self, "front_near_m", 0.40),
+                    max_check_m=1.2,
+                    half_width_m=getattr(self, "front_half_width_m", 0.22),
+                    traversable_thresh=getattr(self, "front_traversable_thresh", 0.26),
+                    min_free_ratio=getattr(self, "front_min_free_ratio", 0.35),
+                )
+                if self._is_front_blocked(res.traversability) or loop_clearance < min_clearance:
+                    print(f"[bridge] obstaculo durante el avance forzado (clearance={loop_clearance:.2f} m), corto")
                     break
             except Exception:
                 break
@@ -1071,12 +1121,12 @@ class Bridge:
         pose = self.odometry.pose
         clearance = front_clearance_m(
             bev,
-            self.resolution,
-            near_m=self.front_near_m,
+            getattr(self, "resolution", 0.03),
+            near_m=getattr(self, "front_near_m", 0.40),
             max_check_m=1.2,
-            half_width_m=self.front_half_width_m,
-            traversable_thresh=self.front_traversable_thresh,
-            min_free_ratio=self.front_min_free_ratio,
+            half_width_m=getattr(self, "front_half_width_m", 0.22),
+            traversable_thresh=getattr(self, "front_traversable_thresh", 0.26),
+            min_free_ratio=getattr(self, "front_min_free_ratio", 0.35),
         )
         print(f"[bridge] REGIMEN CERCANO: {self._consecutive_blocked} frames bloqueado "
               f"seguidos, clearance={clearance:.2f} m")
@@ -1120,7 +1170,10 @@ class Bridge:
         else:
             print("[bridge]   detras no parece seguro (o sin datos suficientes), salteo el retroceso")
 
-        self._recover_informado()
+        try:
+            self._recover_informado(excluir_frente=True)
+        except TypeError:
+            self._recover_informado()
         _safe_reset_recovery_state(self)
 
     def _map_free_and_coverage(self, pose: Pose, heading_rel_deg: float,
@@ -1217,7 +1270,7 @@ class Bridge:
 
         self.send(DriveCommand(0.0, 0.0, "fin del retroceso"))
 
-    def _evaluar_candidatos_recovery_mapa(self, veto_tilt: bool, razon_tilt: str) -> dict | None:
+    def _evaluar_candidatos_recovery_mapa(self, veto_tilt: bool, razon_tilt: str, excluir_frente: bool = False) -> dict | None:
         """Evalúa los rumbos candidatos en self.recovery_headings_deg usando el mapa
         persistente y la ponderación bilateral hacia la meta (Score = w_clearance * libre + w_goal * align).
         Devuelve el mejor candidato (dict) o None si ninguno es viable.
@@ -1242,6 +1295,11 @@ class Bridge:
             # Si hay inclinacion peligrosa, vetamos el rumbo 180° (atras) por riesgo de vuelco
             if veto_tilt and is_180:
                 print(f"[bridge]   rumbo 180° VETADO por pendiente ({razon_tilt})")
+                continue
+
+            # Excluir rumbo 0° si el recovery viene de un frente bloqueado (régimen cercano)
+            if excluir_frente and abs(h_flt) < 1e-6:
+                print("[bridge]   rumbo 0° OMITIDO (recovery por frente bloqueado)")
                 continue
 
             # Anti-bucle para rumbo 0°: Si ya tuvimos recuperaciones consecutivas por planes vacios
@@ -1435,7 +1493,7 @@ class Bridge:
         self.send(DriveCommand(0.0, 0.0, "fin de escaneo 360"))
         return False
 
-    def _recover_informado(self) -> None:
+    def _recover_informado(self, excluir_frente: bool = False) -> None:
         """Cascada de recuperación informada en 4 niveles:
         (1) Mapa persistente inicial (bilateral ponderado hacia la meta)
         (2) Escaneo 360° continuo con corte anticipado -> reintento de mapa con datos frescos
@@ -1448,7 +1506,14 @@ class Bridge:
 
         # NIVEL 1: Mapa persistente inicial
         eval_fn = getattr(self, "_evaluar_candidatos_recovery_mapa", None)
-        candidato = eval_fn(veto_tilt, razon_tilt) if eval_fn is not None else Bridge._evaluar_candidatos_recovery_mapa(self, veto_tilt, razon_tilt)
+        if eval_fn is not None:
+            try:
+                candidato = eval_fn(veto_tilt, razon_tilt, excluir_frente=excluir_frente)
+            except TypeError:
+                candidato = eval_fn(veto_tilt, razon_tilt)
+        else:
+            candidato = Bridge._evaluar_candidatos_recovery_mapa(self, veto_tilt, razon_tilt, excluir_frente=excluir_frente)
+
         if candidato is not None:
             mejor_heading = candidato["heading"]
             mejor_libre = candidato["libre_pct"]
@@ -1504,7 +1569,13 @@ class Bridge:
 
             # Reintento del mapa con datos frescos (Paso 4)
             print("[bridge] [REINTENTO MAPA] evaluando rumbos con mapa persistente repoblado tras escaneo 360°...")
-            candidato_reintento = eval_fn(veto_tilt, razon_tilt) if eval_fn is not None else Bridge._evaluar_candidatos_recovery_mapa(self, veto_tilt, razon_tilt)
+            if eval_fn is not None:
+                try:
+                    candidato_reintento = eval_fn(veto_tilt, razon_tilt, excluir_frente=excluir_frente)
+                except TypeError:
+                    candidato_reintento = eval_fn(veto_tilt, razon_tilt)
+            else:
+                candidato_reintento = Bridge._evaluar_candidatos_recovery_mapa(self, veto_tilt, razon_tilt, excluir_frente=excluir_frente)
             if candidato_reintento is not None:
                 mejor_heading = candidato_reintento["heading"]
                 mejor_libre = candidato_reintento["libre_pct"]

@@ -88,12 +88,25 @@ def _build_stub(image_path: str, use_vlm: bool, timeout_s: float, min_confidence
     stub.send = _send
     stub._sent = sent
 
+    stub.use_recovery_scan = False
+    stub.recovery_tilt_veto_deg = 8.0
+    stub._stop_requested = False
+    stub._consecutive_turns = 0
+    stub._turn_sign_history = []
+    stub._consecutive_empty_recoveries = 0
+    stub.recovery_turn_speed = 0.35
+    stub.recovery_deg_per_s = 60.0
+    stub.recovery_step_deg = 30.0
+
     # _recover() -> _recover_informado() -> _map_free_and_coverage /
     # _girar_hacia / _preguntar_vlm / _barrido_ciego, todas llamadas por
     # self. El stub no es una instancia real de Bridge: hay que atarlas.
     for name in ("_recover_informado", "_map_free_and_coverage", "_girar_hacia",
-                "_preguntar_vlm", "_barrido_ciego"):
-        setattr(stub, name, types.MethodType(getattr(Bridge, name), stub))
+                 "_preguntar_vlm", "_barrido_ciego", "_is_tilt_too_steep_for_recovery",
+                 "_get_estimated_tilt_deg", "_unstick", "_safe_reset_recovery_state",
+                 "_evaluar_candidatos_recovery_mapa", "_escanear_360", "_get_goal_relative_bearing_deg"):
+        if hasattr(Bridge, name):
+            setattr(stub, name, types.MethodType(getattr(Bridge, name), stub))
 
     return stub
 

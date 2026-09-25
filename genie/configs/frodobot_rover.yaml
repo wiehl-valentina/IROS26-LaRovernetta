@@ -194,6 +194,7 @@ safety:
   loop_period_s: 0.2
   max_consecutive_turns: 4
   unstick_forward_s: 2.5
+  unstick_min_clearance_m: 0.9  # ASUMIDO: clearance frontal mínimo requerido para avance forzado en _unstick
   use_vlm_recovery: true
   vlm_recovery_timeout_s: 4.0
   vlm_recovery_min_confidence: 0.35
