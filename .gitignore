@@ -108,3 +108,4 @@ genie/debug
 genie/debug/Gaborone/00001_mapa.png
 ML_model/.venv-data
 ros2_ws_src
+earth-rovers-sdk

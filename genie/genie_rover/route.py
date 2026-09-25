@@ -33,7 +33,12 @@ R_TIERRA_M = 6371000.0
 
 # genie/genie_rover/route.py -> raiz del repo
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RUTAS_DIR = REPO_ROOT / "rutas"
+RUTAS_DIRS = [
+    REPO_ROOT / "genie" / "rutas",
+    REPO_ROOT / "rutas",
+    Path.cwd() / "genie" / "rutas",
+    Path.cwd() / "rutas",
+]
 DASHBOARD_JSON_DEFAULT = REPO_ROOT / "earth-rovers-sdk" / "static" / "genie_waypoints.json"
 
 
@@ -41,13 +46,18 @@ def resolver_ruta(nombre: str | Path) -> Path:
     """Acepta una ruta tal cual, relativa al directorio actual o a la raiz
     del repo, o solo el nombre de un archivo de rutas/ (con o sin .json)."""
     p = Path(nombre).expanduser()
-    candidatos = [p, REPO_ROOT / p, RUTAS_DIR / p]
+    candidatos = [p, REPO_ROOT / p]
+    for d in RUTAS_DIRS:
+        candidatos.append(d / p)
+        if not p.suffix:
+            candidatos.append(d / f"{p}.json")
+            candidatos.append(d / f"{p}.geojson")
     if not p.suffix:
-        candidatos += [RUTAS_DIR / f"{p}.json", RUTAS_DIR / f"{p}.geojson"]
+        candidatos += [p.with_suffix(".json"), p.with_suffix(".geojson")]
     for c in candidatos:
         if c.is_file():
-            return c
-    raise FileNotFoundError(f"No encuentro la ruta '{nombre}' (busque tambien en {RUTAS_DIR})")
+            return c.resolve()
+    raise FileNotFoundError(f"No encuentro la ruta '{nombre}' (busque en {RUTAS_DIRS})")
 
 
 @dataclass
@@ -239,7 +249,9 @@ def cargar_rutas(nombres: list[str], cfg: RouteConfig | None = None) -> RouteFol
         puntos += pts
     if not puntos:
         return None
-    return RouteFollower(puntos, cfg)
+    follower = RouteFollower(puntos, cfg)
+    follower.nombre = "+".join(nombres)
+    return follower
 
 
 def gps_valido(lat: float | None, lon: float | None) -> bool:

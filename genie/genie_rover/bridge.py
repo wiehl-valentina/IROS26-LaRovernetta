@@ -96,7 +96,8 @@ def _safe_reset_recovery_state(b: Any) -> None:
 
 
 class Bridge:
-    def __init__(self, cfg: dict, dry_run: bool = True, debug_dir: str | None = None, log_tilt: bool = False):
+    def __init__(self, cfg: dict, dry_run: bool = True, debug_dir: str | None = None,
+                 log_tilt: bool = False, route: list[str] | str | None = None):
         self.cfg = cfg
         self.dry_run = bool(dry_run)
         self.debug_dir = Path(debug_dir) if debug_dir else None
@@ -163,6 +164,33 @@ class Bridge:
         self.pre_claim_dwell_s = float(nav.get("pre_claim_dwell_s", 2.0))
         self._dwell_start_time: float | None = None
         self._dwell_target_seq: int | None = None
+
+        # ---- telemetria de inclinacion y gate de ambiguedad ----------------
+        self.front_far_m = float(nav.get("front_far_m", 1.25))
+        self._dist_confiable_m = self.front_far_m
+        self._tilt_ambiguo_px = 0
+
+        # ---- ruta grabada como guia secundaria (apoyo sin claim) -------------
+        self.route_follower = None
+        self.dashboard_overlay = None
+        route_names = []
+        if route:
+            route_names = [route] if isinstance(route, str) else list(route)
+        elif "route" in cfg and cfg["route"].get("files"):
+            route_names = cfg["route"]["files"]
+
+        if route_names:
+            from .route import cargar_rutas, RouteConfig, DashboardOverlay, DASHBOARD_JSON_DEFAULT
+            route_cfg = RouteConfig(**cfg.get("route", {}).get("config", {}))
+            self.route_follower = cargar_rutas(route_names, cfg=route_cfg)
+            if self.route_follower is not None:
+                print(f"[bridge] Guia de ruta activa: {len(self.route_follower.puntos)} waypoints, "
+                      f"{self.route_follower.total_m:.1f} m totales (apoyo sin reached)")
+                dash_path = cfg.get("route", {}).get("dashboard_path", DASHBOARD_JSON_DEFAULT)
+                try:
+                    self.dashboard_overlay = DashboardOverlay(dash_path)
+                except Exception as exc:
+                    print(f"[bridge] aviso: no se pudo iniciar DashboardOverlay: {exc}")
 
         # ---- replanificacion por disparo espacial -------------------------
         # plan_on_bev (GeNIE) no corre en cada frame: solo cuando el robot
@@ -473,12 +501,19 @@ class Bridge:
 
         self.refresh_checkpoints()
         target = self.current_target()
-        if target is None:
-            print("[bridge] No hay checkpoint pendiente. Voy a navegar solo evitando "
-                  "obstaculos, con la meta fija derecho adelante.")
-        else:
+        rf = getattr(self, "route_follower", None)
+        if rf is not None:
+            print(f"[bridge] Guia de ruta activa: {len(rf.puntos)} checkpoints intermedios ({rf.total_m:.1f} m)")
+            if target is not None:
+                print(f"[bridge] Destino final: checkpoint oficial #{target.sequence} ({target.latitude}, {target.longitude})")
+            else:
+                print("[bridge] Guiando exclusivamente por ruta (sin checkpoint oficial).")
+        elif target is not None:
             print(f"[bridge] Objetivo: checkpoint #{target.sequence} "
                   f"({target.latitude}, {target.longitude})")
+        else:
+            print("[bridge] No hay checkpoint pendiente. Voy a navegar solo evitando "
+                  "obstaculos, con la meta fija derecho adelante.")
 
         t_start = time.time()
         try:
@@ -507,6 +542,12 @@ class Bridge:
                     if sleep > 0:
                         time.sleep(sleep)
         finally:
+            dash = getattr(self, "dashboard_overlay", None)
+            if dash is not None:
+                try:
+                    dash.apagar()
+                except Exception:
+                    pass
             self._close_tilt_log()
             # Este freno es lo mas importante del archivo: el SDK mantiene el
             # ultimo comando indefinidamente, asi que si salimos sin frenar el
@@ -580,7 +621,12 @@ class Bridge:
         target = self.current_target()
         reached = False
         dist_to_cp = 0.0
-        if target is not None and heading is not None:
+
+        rf = getattr(self, "route_follower", None)
+        if rf is not None:
+            rf.update(guard_status.effective_lat, guard_status.effective_lon, now)
+
+        if target is not None:
             # Si cambió el target, restaurar el radio geodésico nominal/base
             if self._last_target_sequence != target.sequence:
                 self._last_target_sequence = target.sequence
@@ -588,31 +634,84 @@ class Bridge:
                 self._dwell_start_time = None
                 self._dwell_target_seq = None
 
-            reached, dist_to_cp = check_checkpoint_reached(
+            _, dist_to_cp = check_checkpoint_reached(
                 guard_status.effective_lat,
                 guard_status.effective_lon,
                 target.latitude,
                 target.longitude,
                 self._current_checkpoint_radius_m,
             )
+
+        # Si hay ruta activa, el objetivo son los checkpoints intermedios de la ruta
+        use_route = (rf is not None and not rf.terminada)
+        if use_route and target is not None:
+            wp_idx = rf.indice_actual()
+            near_end = (wp_idx >= len(rf.puntos) - 1 or dist_to_cp <= self.goal_range_m)
+            reached = (near_end and dist_to_cp <= self._current_checkpoint_radius_m)
+        elif target is not None:
+            reached = (dist_to_cp <= self._current_checkpoint_radius_m)
+
+        if use_route and heading is not None:
+            route_lat, route_lon = rf.objetivo()
+            wp_idx = rf.indice_actual()
+            wp_target = rf.puntos[min(wp_idx, len(rf.puntos) - 1)]
+            _, dist_to_wp = check_checkpoint_reached(
+                guard_status.effective_lat,
+                guard_status.effective_lon,
+                wp_target.lat,
+                wp_target.lon,
+                radius_m=2.5,
+            )
+            if not hasattr(self, "_last_route_wp_idx"):
+                self._last_route_wp_idx = wp_idx
+            elif wp_idx > self._last_route_wp_idx:
+                print(f"[bridge] ✓ Checkpoint de ruta #{self._last_route_wp_idx + 1}/{len(rf.puntos)} superado, avanzando a #{wp_idx + 1}")
+                self._last_route_wp_idx = wp_idx
+
             goal = goal_from_gps(guard_status.effective_lat, guard_status.effective_lon, heading,
-                                 target.latitude, target.longitude, self.goal_range_m)
+                                 route_lat, route_lon, self.goal_range_m)
             self._last_goal = goal
+            cp_suffix = f" -> final cp#{target.sequence}" if target else ""
+            goal_desc = (f"ruta [{getattr(rf, 'nombre', 'guia')}] wp#{wp_idx + 1}/{len(rf.puntos)} a {dist_to_wp:.1f} m "
+                         f"({rf.descripcion()}) rel {goal.relative_bearing_deg:+.0f} grados{cp_suffix}")
+            target_dash = {
+                "sequence": wp_idx + 1,
+                "lat": route_lat,
+                "lon": route_lon,
+                "kind": "ruta",
+            }
             if not reached or not guard_status.can_claim_checkpoints:
                 self._dwell_start_time = None
                 self._dwell_target_seq = None
-
-            goal_desc = (f"cp#{target.sequence} a {goal.distance_m:.0f} m, "
+        elif target is not None and heading is not None:
+            goal = goal_from_gps(guard_status.effective_lat, guard_status.effective_lon, heading,
+                                 target.latitude, target.longitude, self.goal_range_m)
+            self._last_goal = goal
+            desc_extra = " [ruta completada]" if (rf and rf.terminada) else ""
+            goal_desc = (f"cp#{target.sequence} a {goal.distance_m:.0f} m{desc_extra}, "
                          f"rel {goal.relative_bearing_deg:+.0f} grados")
+            target_dash = {
+                "sequence": target.sequence,
+                "lat": target.latitude,
+                "lon": target.longitude,
+                "kind": "oficial",
+            }
+            if not reached or not guard_status.can_claim_checkpoints:
+                self._dwell_start_time = None
+                self._dwell_target_seq = None
         else:
             self._dwell_start_time = None
             self._dwell_target_seq = None
             goal = type("G", (), {"x_right_m": 0.0, "y_forward_m": self.goal_range_m})()
             goal_desc = "derecho adelante (sin meta GPS)"
+            target_dash = None
 
         roll = roll_pitch[0] if roll_pitch is not None else None
         pitch = roll_pitch[1] if roll_pitch is not None else None
         res = self.perception.process(rgb, roll_rad=roll, pitch_rad=pitch)
+        front_far = float(getattr(self, "front_far_m", 1.25))
+        self._dist_confiable_m = float(res.stats.get("distancia_confiable_m", front_far))
+        self._tilt_ambiguo_px = int(res.stats.get("tilt_ambiguo_px", 0))
 
         # Integrar en el mapa persistente y planificar sobre el acumulado.
         # Esto corre SIEMPRE, a la frecuencia del frame: es lo que permite
@@ -664,9 +763,15 @@ class Bridge:
         if "pitch_deg" in res.stats and "roll_deg" in res.stats:
             nota_bev_tilt = f" [cam_tilt={res.stats['pitch_deg']:+.1f}°p/{res.stats['roll_deg']:+.1f}°r]"
 
+        nota_dconf = ""
+        dist_conf = getattr(self, "_dist_confiable_m", front_far)
+        tilt_amb_px = getattr(self, "_tilt_ambiguo_px", 0)
+        if tilt_amb_px > 0 or dist_conf < (front_far - 1e-3):
+            nota_dconf = f"  tilt_amb={tilt_amb_px}px dconf={dist_conf:.2f}m"
+
         print(f"[{self.stats.iterations:04d}] rumbo={heading if heading is None else round(heading)} "
               f"({self.heading_est.source})  meta: {goal_desc}  "
-              f"celdas BEV={res.stats['bev_observed_cells']:.0f}{nota_bev_tilt}{nota_mapa}{nota_desac}{nota_tilt}")
+              f"celdas BEV={res.stats['bev_observed_cells']:.0f}{nota_bev_tilt}{nota_mapa}{nota_desac}{nota_tilt}{nota_dconf}")
 
 
         # El chequeo de colision usa SIEMPRE la observacion fresca: si algo se
@@ -674,6 +779,24 @@ class Bridge:
         # corre cada frame, sin esperar al disparo espacial de mas abajo.
         blocked = self._is_front_blocked(res.traversability)
         self._last_front_blocked = blocked
+
+        dash = getattr(self, "dashboard_overlay", None)
+        if dash is not None:
+            estado = "bloqueado" if blocked else ("dwell" if self._dwell_start_time is not None else "nav")
+            dash_target = target_dash if ("target_dash" in locals() and target_dash is not None) else (
+                {"sequence": target.sequence, "lat": target.latitude, "lon": target.longitude, "kind": "oficial"} if target else None
+            )
+            try:
+                dash.escribir(
+                    ruta=rf,
+                    lat=guard_status.effective_lat,
+                    lon=guard_status.effective_lon,
+                    estado=estado,
+                    target=dash_target,
+                    checkpoints_done=getattr(self, "_latest_scanned", 0),
+                )
+            except Exception:
+                pass
         if blocked:
             self.stats.blocked += 1
             self._consecutive_blocked += 1
@@ -1935,6 +2058,13 @@ class Bridge:
             print(f"  recortes de velocidad:  {getattr(s, 'governor_clamps', 0)}")
             print(f"  cortes Stop & Wait:     {getattr(s, 'governor_stops', 0)}")
 
+        rf = getattr(self, "route_follower", None)
+        if rf is not None:
+            print(f"  --- guia de ruta ---")
+            print(f"  {rf.descripcion()}")
+            print(f"  reenganches:            {rf.reenganches}")
+            print(f"  saltos por estancado:   {rf.saltos}")
+
         print(f"  errores:                {s.errors}")
         if getattr(self, "log_tilt", False) and getattr(self, "_tilt_csv_path", None):
             print(f"  log de inclinacion (CSV): {self._tilt_csv_path}")
@@ -1999,12 +2129,20 @@ def main() -> int:
     ap.add_argument("--debug-dir", default=None)
     ap.add_argument("--log-tilt", action="store_true",
                     help="activar logging CSV de inclinacion y comandos a ~5 Hz (DIAG 2)")
+    ap.add_argument("--route", "--rutas", nargs="+", default=None,
+                    help="uno o mas archivos de rutas grabadas (en genie/rutas/) como apoyo de navegacion sin reached")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(Path(args.config).read_text())
     _check_placeholders(cfg)
 
-    bridge = Bridge(cfg, dry_run=not args.go, debug_dir=args.debug_dir, log_tilt=args.log_tilt)
+    bridge = Bridge(
+        cfg,
+        dry_run=not args.go,
+        debug_dir=args.debug_dir,
+        log_tilt=args.log_tilt,
+        route=args.route,
+    )
 
     if args.start_mission:
         print("[bridge] iniciando mision ...")
