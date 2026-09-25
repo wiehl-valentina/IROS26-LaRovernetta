@@ -148,8 +148,9 @@ def test_gyro_bias_compensation(ros_context):
 
 
 def test_backwards_compatibility_without_imu(ros_context):
-    """Verifica que si no hay mensajes IMU, el nodo sigue publicando el compás directo como antes."""
+    """Verifica que si no hay mensajes IMU y realign_alpha=1.0, el nodo publica compás directo."""
     node = EkfHeadingBridge()
+    node.realign_alpha = 1.0
 
     published = []
     node.heading_pub.publish = lambda m: published.append(m.data)
@@ -164,5 +165,27 @@ def test_backwards_compatibility_without_imu(ros_context):
     assert len(published) == 2
     assert math.isclose(published[0], 45.0, abs_tol=0.1)
     assert math.isclose(published[1], 48.0, abs_tol=0.1)
+
+    node.destroy_node()
+
+
+def test_smoothing_with_realign_alpha(ros_context):
+    """Verifica el suavizado exponencial cuando realign_alpha < 1.0 (default 0.20)."""
+    node = EkfHeadingBridge()
+
+    published = []
+    node.heading_pub.publish = lambda m: published.append(m.data)
+
+    base_t = 100.0
+    odom0 = make_odom_msg(heading_deg=45.0, stamp_sec=base_t)
+    node._on_odom(odom0)
+
+    odom1 = make_odom_msg(heading_deg=48.0, stamp_sec=base_t + 2.0)
+    node._on_odom(odom1)
+
+    assert len(published) == 2
+    assert math.isclose(published[0], 45.0, abs_tol=0.1)
+    expected = 45.0 + node.realign_alpha * (48.0 - 45.0)
+    assert math.isclose(published[1], expected, abs_tol=0.1)
 
     node.destroy_node()

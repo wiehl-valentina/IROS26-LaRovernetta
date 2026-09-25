@@ -43,8 +43,12 @@ echo "  • SDK URL:       $SDK_URL"
 echo "  • Destino UDP:   $TARGET_IP:$TARGET_PORT"
 echo "===================================================================="
 
-# 3. Limpiar contenedor previo si quedó huérfano
+# 3. Limpiar contenedor previo si quedó huérfano (por nombre y por ancestro de imagen)
 docker rm -f larovernetta_ekf >/dev/null 2>&1 || true
+for cid in $(docker ps -aq --filter "ancestor=larovernetta/ekf:jazzy" 2>/dev/null); do
+    echo "[info] Limpiando contenedor EKF huérfano o duplicado ($cid)..."
+    docker rm -f "$cid" >/dev/null 2>&1 || true
+done
 
 # 4. Ejecución del contenedor
 exec docker run --rm --network host --name larovernetta_ekf \

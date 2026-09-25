@@ -30,7 +30,8 @@ class EkfHeadingBridge(Node):
         self.declare_parameter("gyro_bias_z", 0.0)
         self.declare_parameter("q_gyro_deg_s", 0.5)  # Crecimiento de incertidumbre: 0.5° / sqrt(s)
         self.declare_parameter("base_compass_uncertainty_deg", 3.0)  # Incertidumbre base del compás
-        self.declare_parameter("realign_alpha", 1.0)  # 1.0 = referencia absoluta directa al compás
+        # ASUMIDO: realign_alpha bajado de 1.0 a 0.20 para evitar salto instantáneo de yaw ante corrección de cuerda GPS
+        self.declare_parameter("realign_alpha", 0.20)
 
         self.gyro_bias_z = float(self.get_parameter("gyro_bias_z").value)
         self.q_gyro_deg_s = float(self.get_parameter("q_gyro_deg_s").value)
@@ -98,6 +99,7 @@ class EkfHeadingBridge(Node):
             self.heading_uncertainty_deg = self.base_compass_uncertainty_deg
         else:
             # Re-alineación al recibir actualización absoluta del compás/EKF
+            # ASUMIDO: Si realign_alpha < 1.0 (0.20), filtra exponencialmente la discontinuidad de rumbo en varios mensajes
             if self.realign_alpha >= 1.0:
                 self.current_heading_deg = compass_heading_deg
             else:

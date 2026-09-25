@@ -196,11 +196,10 @@ class EarthRoverBridge(Node):
         # Parámetros del Detector de Saturación Magnética y Gating de Brújula (Fase 1)
         # Origen de valores:
         # - mag_norm_reference: 3330.0 raw counts (medido en Test A en reposo, 2026-09-10; media = 3331.3 counts)
-        # - mag_gross_factor_min / mag_gross_factor_max: [0.3, 2.5] factores relativos a mag_norm_reference
-        #   para saturación bruta (física: el campo terrestre + hard-iron jamás excede ~1.5 - 2.0x ref;
-        #   en sitio saturado con interferencia ferromagnética se midió norma = 12221.7 counts = 3.67x ref).
-        #   Expresar los límites relativos a la referencia garantiza portabilidad universal entre sitios y sensores.
-        # - mag_tol_inner_factor / mag_tol_outer_factor: [0.20, 0.50] banda de tolerancia relativa suave (20% y 50%)
+        # - mag_gross_factor_min / mag_gross_factor_max: [0.15, 3.0] (ASUMIDO: ensanchados de [0.3, 2.5]
+        #   para evitar falso descarte por descalibración de hard-iron entre rovers).
+        # - mag_tol_inner_factor / mag_tol_outer_factor: [0.25, 0.80] (ASUMIDO: tol_outer relajado de 0.50 a 0.80
+        #   para que el gating no descarte el compás cuando el offset no aplica a esta unidad).
         # - mag_tilt_level_deg / slope_deg: [6.0, 18.0] umbrales de inclinación (roll/pitch).
         #   Cerca de nivel (<6°), la norma es confiable. En pendiente (>18°), el sesgo hard-iron altera la norma
         #   y se reduce su peso.
@@ -210,10 +209,10 @@ class EarthRoverBridge(Node):
         # - mag_calib_samples_needed: 10 muestras consecutivas a nivel y reposo para calibrar mag_norm_reference
         # - mag_untrusted_yaw_covariance: 1.0e6 rad^2 (penalización para descarte de facto en robot_localization)
         self.declare_parameter("mag_norm_reference", 3330.0)
-        self.declare_parameter("mag_gross_factor_min", 0.3)
-        self.declare_parameter("mag_gross_factor_max", 2.5)
-        self.declare_parameter("mag_tol_inner_factor", 0.20)
-        self.declare_parameter("mag_tol_outer_factor", 0.50)
+        self.declare_parameter("mag_gross_factor_min", 0.15)  # ASUMIDO: relajado de 0.3 a 0.15
+        self.declare_parameter("mag_gross_factor_max", 3.0)   # ASUMIDO: relajado de 2.5 a 3.0
+        self.declare_parameter("mag_tol_inner_factor", 0.25)  # ASUMIDO: de 0.20 a 0.25
+        self.declare_parameter("mag_tol_outer_factor", 0.80)  # ASUMIDO: relajado de 0.50 a 0.80
         self.declare_parameter("mag_tilt_level_deg", 6.0)
         self.declare_parameter("mag_tilt_slope_deg", 18.0)
         self.declare_parameter("mag_tilt_weight_min", 0.15)
@@ -656,14 +655,15 @@ class EarthRoverBridge(Node):
                     )
 
         # 2. Umbrales relativos a mag_norm_reference (garantizan portabilidad universal)
+        # ASUMIDO: Umbrales relativos relajados (gross: [0.15, 3.0], tol_outer: 0.80) para trade-off:
+        # menos rechazo de compás a costa de aceptar más ruido cuando el hard-iron no aplica a la unidad.
         gross_min = self._mag_gross_factor_min * self._mag_norm_reference
         gross_max = self._mag_gross_factor_max * self._mag_norm_reference
         tol_inner = self._mag_tol_inner_factor * self._mag_norm_reference
         tol_outer = self._mag_tol_outer_factor * self._mag_norm_reference
 
-        # Si la norma excede gross_max (ej. 2.5x ref) o cae bajo gross_min (ej. 0.3x ref),
+        # Si la norma excede gross_max (ej. 3.0x ref) o cae bajo gross_min (ej. 0.15x ref),
         # estamos ante SATURACIÓN FERROMAGNÉTICA BRUTA o fallo de sensor.
-        # Esto NUNCA puede ser atribuido al tilt (el campo terrestre más hard-iron jamás supera ~1.5 - 2.0x ref).
         is_gross_saturation = (norm_m < gross_min or norm_m > gross_max)
 
         delta_norm = abs(norm_m - self._mag_norm_reference)
@@ -725,7 +725,8 @@ class EarthRoverBridge(Node):
         nominal_cov = self._imu_orientation_covariance[8]
         cov_yaw = nominal_cov + ((1.0 - self._mag_confidence_score) ** 2) * self._mag_untrusted_yaw_covariance
 
-        is_trusted = (self._mag_confidence_score > 0.6) and (not is_gross_saturation)
+        # ASUMIDO: Umbral de confianza relajado de 0.6 a 0.35 en concordancia con el ensanchamiento de tol_outer
+        is_trusted = (self._mag_confidence_score > 0.35) and (not is_gross_saturation)
 
         diag_payload = {
             "mag_norm": round(norm_m, 2),
@@ -1197,7 +1198,7 @@ class EarthRoverBridge(Node):
 
             imu_ori_cov = list(self._imu_orientation_covariance)
             imu_ori_cov[8] = cov_yaw
-            if mag_conf < 0.4:
+            if mag_conf < 0.25:  # ASUMIDO: relajado de 0.4 a 0.25 para evitar castigo espurio en roll/pitch
                 # Si la confianza es muy baja o nula (saturación/congelamiento),
                 # penalizar masivamente roll y pitch de orientación para que robot_localization
                 # ignore la actitud magnética corrupta por completo.
