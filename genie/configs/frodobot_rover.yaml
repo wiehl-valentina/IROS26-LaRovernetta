@@ -415,3 +415,6 @@ gps_guard:
   # ASUMIDO: Umbral de rechazo por HDOP. Telemetría de Test D registró ~0.012 (óptimo).
   # Debe calibrarse empíricamente en sitios con multicamino o cielo obstruido.
   hdop_reject: 0.080
+
+debug:
+  log_tilt: false  # ASUMIDO: logging CSV de inclinación a ~5 Hz desactivado por defecto (DIAG 2)

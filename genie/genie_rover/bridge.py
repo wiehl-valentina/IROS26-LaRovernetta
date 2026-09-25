@@ -14,6 +14,7 @@ enviarlos. Para que el robot se mueva de verdad hace falta pasar --go.
 from __future__ import annotations
 
 import argparse
+import csv
 import math
 import signal
 import sys
@@ -95,12 +96,35 @@ def _safe_reset_recovery_state(b: Any) -> None:
 
 
 class Bridge:
-    def __init__(self, cfg: dict, dry_run: bool = True, debug_dir: str | None = None):
+    def __init__(self, cfg: dict, dry_run: bool = True, debug_dir: str | None = None, log_tilt: bool = False):
         self.cfg = cfg
         self.dry_run = bool(dry_run)
         self.debug_dir = Path(debug_dir) if debug_dir else None
         if self.debug_dir:
             self.debug_dir.mkdir(parents=True, exist_ok=True)
+
+        debug_cfg = cfg.get("debug", {}) if isinstance(cfg.get("debug"), dict) else {}
+        self.log_tilt = bool(log_tilt or debug_cfg.get("log_tilt", False))
+        self._tilt_csv_file = None
+        self._tilt_csv_writer = None
+        self._tilt_csv_path: Path | None = None
+        self._last_tilt_log_time = 0.0
+        self._last_front_blocked = False
+        self._last_cmd: DriveCommand | None = None
+
+        if self.log_tilt:
+            tilt_dir = self.debug_dir if self.debug_dir else Path("debug")
+            tilt_dir.mkdir(parents=True, exist_ok=True)
+            self._tilt_csv_path = tilt_dir / "tilt_log.csv"
+            try:
+                self._tilt_csv_file = open(self._tilt_csv_path, "w", newline="", buffering=1)
+                self._tilt_csv_writer = csv.writer(self._tilt_csv_file)
+                self._tilt_csv_writer.writerow(["timestamp", "pitch_deg", "roll_deg", "linear", "angular", "front_is_blocked"])
+                print(f"[bridge] DIAG 2: log CSV de inclinacion activo en {self._tilt_csv_path}")
+            except Exception as exc:
+                print(f"[bridge] error al inicializar tilt_log.csv: {exc}")
+                self._tilt_csv_file = None
+                self._tilt_csv_writer = None
 
         self.client = RoverClient(cfg["rover"]["base_url"], timeout=cfg["rover"].get("timeout_s", 5.0))
         self.perception = PerceptionPipeline(cfg)
@@ -370,16 +394,65 @@ class Bridge:
         print("\n[bridge] parada solicitada, frenando ...")
         self._stop_requested = True
 
+    def _maybe_log_tilt(self, linear: float, angular: float, front_blocked: bool) -> None:
+        """DIAG 2: Log CSV de inclinación y comandos a ~5 Hz."""
+        if not getattr(self, "log_tilt", False) or getattr(self, "_tilt_csv_writer", None) is None:
+            return
+        now = time.time()
+        # Rate limit a ~5 Hz (periodo nominal 0.20s; permitimos log si dt >= 0.18s) # ASUMIDO: intervalo de muestreo ~5 Hz
+        if (now - getattr(self, "_last_tilt_log_time", 0.0)) < 0.18:
+            return
+        self._last_tilt_log_time = now
+
+        pitch_deg = None
+        roll_deg = None
+        if getattr(self, "odometry", None) is not None and hasattr(self.odometry, "current_roll_pitch"):
+            rp = self.odometry.current_roll_pitch()
+            if rp is not None:
+                roll_deg = round(math.degrees(rp[0]), 2)
+                pitch_deg = round(math.degrees(rp[1]), 2)
+            elif getattr(self.odometry, "last_pitch", None) is not None:
+                pitch_deg = round(math.degrees(self.odometry.last_pitch), 2)
+                roll_deg = round(math.degrees(self.odometry.last_roll), 2) if getattr(self.odometry, "last_roll", None) is not None else 0.0
+
+        try:
+            self._tilt_csv_writer.writerow([
+                f"{now:.3f}",
+                f"{pitch_deg:.2f}" if pitch_deg is not None else "",
+                f"{roll_deg:.2f}" if roll_deg is not None else "",
+                f"{linear:.2f}",
+                f"{angular:.2f}",
+                str(front_blocked),
+            ])
+            self._tilt_csv_file.flush()
+        except Exception:
+            pass
+
+    def _close_tilt_log(self) -> None:
+        if getattr(self, "_tilt_csv_file", None) is not None:
+            try:
+                self._tilt_csv_file.flush()
+                self._tilt_csv_file.close()
+            except Exception:
+                pass
+            self._tilt_csv_file = None
+            self._tilt_csv_writer = None
+
+    def __del__(self) -> None:
+        self._close_tilt_log()
+
     def send(self, cmd: DriveCommand) -> None:
+        self._last_cmd = cmd
+        self._maybe_log_tilt(cmd.linear, cmd.angular, getattr(self, "_last_front_blocked", False))
         if hasattr(self, "gps_guard") and self.gps_guard is not None:
             if self.gps_guard.level == 3:
                 cmd = DriveCommand(0.0, 0.0, f"[GPS_GUARD Nivel 3 Parada Emergencia] {cmd.reason}")
             elif self.gps_guard.level == 2:
                 scaled_lin = float(np.clip(cmd.linear * self.gps_guard.degraded_linear_scale, -1.0, 1.0))
                 cmd = DriveCommand(scaled_lin, cmd.angular, f"[GPS_GUARD Nivel 2 Degradado x{self.gps_guard.degraded_linear_scale:.1f}] {cmd.reason}")
-        tag = "DRY-RUN" if self.dry_run else "ENVIADO"
+        tag = "DRY-RUN" if getattr(self, "dry_run", True) else "ENVIADO"
         print(f"  [{tag}] linear={cmd.linear:+.2f} angular={cmd.angular:+.2f}  {cmd.reason}")
-        if not self.dry_run:
+        if not getattr(self, "dry_run", True) and hasattr(self, "client"):
             self.client.control(cmd.linear, cmd.angular)
 
     def refresh_checkpoints(self) -> None:
@@ -434,6 +507,7 @@ class Bridge:
                     if sleep > 0:
                         time.sleep(sleep)
         finally:
+            self._close_tilt_log()
             # Este freno es lo mas importante del archivo: el SDK mantiene el
             # ultimo comando indefinidamente, asi que si salimos sin frenar el
             # rover se sigue moviendo solo.
@@ -598,7 +672,9 @@ class Bridge:
         # El chequeo de colision usa SIEMPRE la observacion fresca: si algo se
         # cruzo recien, no queremos que el promedio del mapa lo diluya. Esto
         # corre cada frame, sin esperar al disparo espacial de mas abajo.
-        if self._is_front_blocked(res.traversability):
+        blocked = self._is_front_blocked(res.traversability)
+        self._last_front_blocked = blocked
+        if blocked:
             self.stats.blocked += 1
             self._consecutive_blocked += 1
             # Si había un dwell pre-reclamo en curso, se aborta inmediatamente por presencia de obstáculo
@@ -607,7 +683,7 @@ class Bridge:
                 self._dwell_start_time = None
                 self._dwell_target_seq = None
             if self._consecutive_blocked >= self.obstacle_persist_frames and self.use_map:
-                self._retroceso_y_recover(res.traversability)
+                self._retroceso_y_recover(res.traversability, rgb=rgb)
             else:
                 self.send(DriveCommand(0.0, 0.0, "OBSTACULO al frente"))
             return
@@ -1104,7 +1180,7 @@ class Bridge:
 
     # ---------------------------------------------------------- regimen cercano
 
-    def _retroceso_y_recover(self, bev: np.ndarray) -> None:
+    def _retroceso_y_recover(self, bev: np.ndarray, rgb: np.ndarray | None = None) -> None:
         """Regimen cercano (guia tecnica S04): por debajo de ~0.6 m el BEV
         instantaneo ya no es una fuente de informacion valida para planificar
         -- el obstaculo tapa la mayor parte del campo visual y la distorsion
@@ -1128,8 +1204,55 @@ class Bridge:
             traversable_thresh=getattr(self, "front_traversable_thresh", 0.26),
             min_free_ratio=getattr(self, "front_min_free_ratio", 0.35),
         )
-        print(f"[bridge] REGIMEN CERCANO: {self._consecutive_blocked} frames bloqueado "
-              f"seguidos, clearance={clearance:.2f} m")
+
+        # DIAG 1: Log de activación del régimen cercano (clearance, mapa -90..+90, mitades BEV)
+        rumbos_diag = [-90.0, -45.0, 0.0, 45.0, 90.0]
+        mapa_strs = []
+        radius_m = float(getattr(self, "heading_search_radius_m", 1.5))
+        for h_deg in rumbos_diag:
+            try:
+                l_pct, c_pct = self._map_free_and_coverage(pose, heading_rel_deg=h_deg, radius_m=radius_m)
+            except Exception:
+                l_pct, c_pct = 0.0, 0.0
+            mapa_strs.append(f"{h_deg:+.0f}°(lib={l_pct:.0f}%/cob={c_pct:.0f}%)")
+        mapa_diag_str = " ".join(mapa_strs)
+
+        h, w = bev.shape
+        res_m = float(getattr(self, "resolution", 0.03))
+        # ASUMIDO: Franja cercana de 0.4 m a 1.25 m para diagnóstico de cordones y paso lateral
+        r_near = h - 1 - int(round(0.40 / res_m))
+        r_far = max(0, h - 1 - int(round(1.25 / res_m)))
+        r0 = max(0, min(h - 1, min(r_far, r_near)))
+        r1 = max(1, min(h, max(r_far, r_near) + 1))
+        band = bev[r0:r1, :]
+        mid = w // 2
+        trav_thresh = float(getattr(self, "front_traversable_thresh", 0.26))
+        left_half = band[:, :mid]
+        right_half = band[:, mid:]
+        bev_izq_pct = float(np.mean(left_half > trav_thresh)) * 100.0 if left_half.size > 0 else 0.0
+        bev_der_pct = float(np.mean(right_half > trav_thresh)) * 100.0 if right_half.size > 0 else 0.0
+
+        print(f"[bridge] REGIMEN CERCANO: {self._consecutive_blocked} frames bloqueado seguidos, clearance={clearance:.2f} m | "
+              f"mapa: [{mapa_diag_str}] | "
+              f"bev_fresco[0.4-1.25m]: izq={bev_izq_pct:.0f}% der={bev_der_pct:.0f}%")
+
+        # DIAG 1: Guardar frame RGB y BEV del instante en debug_dir
+        if getattr(self, "debug_dir", None):
+            try:
+                from PIL import Image
+                n = getattr(self.stats, "iterations", 0)
+                debug_path = Path(self.debug_dir)
+                debug_path.mkdir(parents=True, exist_ok=True)
+                if rgb is None and hasattr(self, "client") and hasattr(self.client, "front_frame"):
+                    try:
+                        rgb, _ = self.client.front_frame()
+                    except Exception:
+                        rgb = None
+                if rgb is not None:
+                    Image.fromarray(rgb).save(debug_path / f"{n:05d}_rgb.jpg", quality=80)
+                np.save(debug_path / f"{n:05d}_bev.npy", bev)
+            except Exception as exc:
+                print(f"[bridge] no pude escribir debug de regimen cercano: {exc}")
 
         veto_tilt, razon_tilt = self._is_tilt_too_steep_for_recovery()
 
@@ -1813,6 +1936,8 @@ class Bridge:
             print(f"  cortes Stop & Wait:     {getattr(s, 'governor_stops', 0)}")
 
         print(f"  errores:                {s.errors}")
+        if getattr(self, "log_tilt", False) and getattr(self, "_tilt_csv_path", None):
+            print(f"  log de inclinacion (CSV): {self._tilt_csv_path}")
         self._print_heading_diagnosis()
 
     def _print_heading_diagnosis(self) -> None:
@@ -1872,12 +1997,14 @@ def main() -> int:
     ap.add_argument("--max-seconds", type=float, default=None,
                     help="cortar despues de N segundos (usalo siempre las primeras veces)")
     ap.add_argument("--debug-dir", default=None)
+    ap.add_argument("--log-tilt", action="store_true",
+                    help="activar logging CSV de inclinacion y comandos a ~5 Hz (DIAG 2)")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(Path(args.config).read_text())
     _check_placeholders(cfg)
 
-    bridge = Bridge(cfg, dry_run=not args.go, debug_dir=args.debug_dir)
+    bridge = Bridge(cfg, dry_run=not args.go, debug_dir=args.debug_dir, log_tilt=args.log_tilt)
 
     if args.start_mission:
         print("[bridge] iniciando mision ...")
